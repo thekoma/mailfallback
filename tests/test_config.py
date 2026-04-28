@@ -3,7 +3,7 @@ from mailfallback.config import Settings
 
 def test_default_settings():
     s = Settings()
-    assert s.database_url == "sqlite:///data/config/mailfallback.db"
+    assert s.database_url == "sqlite:////data/config/mailfallback.db"
     assert s.mbsync_binary == "mbsync"
     assert s.oidc_enabled is False
 

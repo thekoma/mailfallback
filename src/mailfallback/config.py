@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     model_config = {"env_prefix": "MAILFALLBACK_"}
 
-    database_url: str = "sqlite:///data/config/mailfallback.db"
+    database_url: str = "sqlite:////data/config/mailfallback.db"
     secret_key: str = "change-me-in-production"
     session_secret: str = "change-me-session-secret"
 
