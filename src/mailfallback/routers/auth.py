@@ -1,6 +1,7 @@
 # src/mailfallback/routers/auth.py
 import json
 
+from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
+from mailfallback.models import User, UserRole
 from mailfallback.security import encrypt_credentials
 from mailfallback.services.oauth2 import build_google_auth_url, exchange_google_code
 from mailfallback.services.user_service import authenticate_user
@@ -70,3 +72,54 @@ async def google_oauth_callback(
     db.commit()
 
     return RedirectResponse(f"/accounts/{account_id}")
+
+
+oauth = OAuth()
+
+if settings.oidc_enabled:
+    oauth.register(
+        name="oidc",
+        client_id=settings.oidc_client_id,
+        client_secret=settings.oidc_client_secret,
+        server_metadata_url=settings.oidc_discovery_url,
+        client_kwargs={"scope": "openid email profile groups"},
+    )
+
+
+@router.get("/auth/oidc/login")
+async def oidc_login(request: Request):
+    if not settings.oidc_enabled:
+        raise HTTPException(status_code=404, detail="OIDC not enabled")
+    redirect_uri = str(request.url_for("oidc_callback"))
+    return await oauth.oidc.authorize_redirect(request, redirect_uri)
+
+
+@router.get("/auth/oidc/callback")
+async def oidc_callback(request: Request, db: Session = Depends(get_db)):
+    if not settings.oidc_enabled:
+        raise HTTPException(status_code=404, detail="OIDC not enabled")
+
+    token = await oauth.oidc.authorize_access_token(request)
+    userinfo = token.get("userinfo", {})
+
+    sub = userinfo.get("sub")
+    username = userinfo.get("preferred_username") or userinfo.get("email", sub)
+    groups = userinfo.get("groups", [])
+
+    if settings.oidc_admin_group in groups:
+        role = UserRole.admin
+    else:
+        role = UserRole.user
+
+    user = db.query(User).filter(User.oidc_subject == sub).first()
+    if not user:
+        user = User(username=username, oidc_subject=sub, role=role)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    else:
+        user.role = role
+        db.commit()
+
+    request.session["user_id"] = user.id
+    return RedirectResponse("/")
