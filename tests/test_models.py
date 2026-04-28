@@ -11,7 +11,6 @@ from mailfallback.models import (
     SyncState,
     User,
     UserRole,
-    account_owners,
 )
 
 

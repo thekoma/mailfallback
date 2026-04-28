@@ -1,7 +1,7 @@
 # tests/test_integration.py
 from unittest.mock import patch
 
-from mailfallback.models import JobStatus, SyncState, UserRole
+from mailfallback.models import UserRole
 from mailfallback.services.account_service import assign_owner, create_account
 from mailfallback.services.user_service import create_user
 

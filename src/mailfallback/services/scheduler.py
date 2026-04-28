@@ -28,7 +28,7 @@ def _run_scheduled_sync(account_id: str) -> None:
 def sync_scheduler_jobs(db: Session) -> None:
     existing_job_ids = {j.id for j in scheduler.get_jobs()}
 
-    accounts = db.query(Account).filter(Account.enabled == True).all()
+    accounts = db.query(Account).filter(Account.enabled).all()
     active_job_ids = set()
 
     for account in accounts:

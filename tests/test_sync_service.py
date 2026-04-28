@@ -3,7 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from mailfallback.db import Base
-from mailfallback.models import Account, JobStatus, SyncJob
+from mailfallback.models import Account, JobStatus
 from mailfallback.services.sync_service import create_sync_job, get_job, list_jobs_for_account
 
 
@@ -36,7 +36,7 @@ def test_create_job():
 def test_dedup_pending_job():
     session = make_session()
     account = _make_account(session)
-    job1 = create_sync_job(session, account.id, source="api")
+    create_sync_job(session, account.id, source="api")
     job2 = create_sync_job(session, account.id, source="scheduler")
     assert job2 is None
 

@@ -8,7 +8,7 @@ def _login(client, username, password):
 
 
 def test_admin_creates_account(client, db_session):
-    admin = create_user(db_session, "admin", "pass", UserRole.admin)
+    create_user(db_session, "admin", "pass", UserRole.admin)
     _login(client, "admin", "pass")
     resp = client.post("/api/accounts", json={
         "name": "Gmail",
@@ -33,10 +33,10 @@ def test_user_cannot_create_account(client, db_session):
 
 def test_user_sees_only_own_accounts(client, db_session):
     from mailfallback.services.account_service import assign_owner, create_account
-    admin = create_user(db_session, "admin", "pass", UserRole.admin)
+    create_user(db_session, "admin", "pass", UserRole.admin)
     user = create_user(db_session, "user1", "pass", UserRole.user)
     a1 = create_account(db_session, "Gmail", "imap.gmail.com", 993, "app_password", "/data/gmail")
-    a2 = create_account(db_session, "Work", "imap.work.com", 993, "app_password", "/data/work")
+    create_account(db_session, "Work", "imap.work.com", 993, "app_password", "/data/work")
     assign_owner(db_session, a1.id, user.id)
 
     _login(client, "user1", "pass")
@@ -60,7 +60,7 @@ def test_admin_sees_all_accounts(client, db_session):
 
 def test_assign_and_remove_owner(client, db_session):
     from mailfallback.services.account_service import create_account
-    admin = create_user(db_session, "admin", "pass", UserRole.admin)
+    create_user(db_session, "admin", "pass", UserRole.admin)
     user = create_user(db_session, "user1", "pass", UserRole.user)
     account = create_account(db_session, "Gmail", "imap.gmail.com", 993, "app_password", "/data/gmail")
 

@@ -2,7 +2,7 @@
 from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
-from mailfallback.models import Account, User, UserRole, account_owners
+from mailfallback.models import Account, User, UserRole
 from mailfallback.security import decrypt_credentials, encrypt_credentials
 
 
