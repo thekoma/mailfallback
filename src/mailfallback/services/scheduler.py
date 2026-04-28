@@ -1,0 +1,78 @@
+# src/mailfallback/services/scheduler.py
+import logging
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from sqlalchemy.orm import Session
+
+from mailfallback.db import SessionLocal
+from mailfallback.models import Account
+from mailfallback.services.sync_service import create_sync_job
+from mailfallback.services.sync_worker import execute_sync_job
+
+logger = logging.getLogger(__name__)
+
+scheduler = BackgroundScheduler()
+
+
+def _run_scheduled_sync(account_id: str) -> None:
+    db = SessionLocal()
+    try:
+        job = create_sync_job(db, account_id, source="scheduler")
+        if job:
+            execute_sync_job(db, job.id)
+    finally:
+        db.close()
+
+
+def sync_scheduler_jobs(db: Session) -> None:
+    existing_job_ids = {j.id for j in scheduler.get_jobs()}
+
+    accounts = db.query(Account).filter(Account.enabled == True).all()
+    active_job_ids = set()
+
+    for account in accounts:
+        job_id = f"sync_{account.id}"
+        active_job_ids.add(job_id)
+
+        if not account.sync_schedule:
+            continue
+
+        parts = account.sync_schedule.split()
+        if len(parts) != 5:
+            logger.warning("Invalid cron for account %s: %s", account.name, account.sync_schedule)
+            continue
+
+        trigger = CronTrigger(
+            minute=parts[0],
+            hour=parts[1],
+            day=parts[2],
+            month=parts[3],
+            day_of_week=parts[4],
+        )
+
+        if job_id in existing_job_ids:
+            scheduler.reschedule_job(job_id, trigger=trigger)
+        else:
+            scheduler.add_job(
+                _run_scheduled_sync,
+                trigger=trigger,
+                id=job_id,
+                args=[account.id],
+                replace_existing=True,
+            )
+
+    for job_id in existing_job_ids - active_job_ids:
+        if job_id.startswith("sync_"):
+            scheduler.remove_job(job_id)
+
+
+def start_scheduler(db: Session) -> None:
+    sync_scheduler_jobs(db)
+    if not scheduler.running:
+        scheduler.start()
+
+
+def stop_scheduler() -> None:
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
