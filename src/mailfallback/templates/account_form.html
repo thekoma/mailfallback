@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Add Account — Mailfallback{% endblock %}
+{% block content %}
+<h2>Add Email Account</h2>
+<form method="post" action="/accounts/new">
+    <label for="name">Account Name</label>
+    <input type="text" id="name" name="name" placeholder="Gmail Personal" required>
+
+    <label for="imap_host">IMAP Host</label>
+    <input type="text" id="imap_host" name="imap_host" placeholder="imap.gmail.com" required>
+
+    <label for="imap_port">IMAP Port</label>
+    <input type="number" id="imap_port" name="imap_port" value="993">
+
+    <label for="auth_type">Authentication</label>
+    <select id="auth_type" name="auth_type">
+        <option value="app_password">App Password</option>
+        <option value="oauth2">OAuth2 (Gmail)</option>
+    </select>
+
+    <label for="credentials">Password / App Password</label>
+    <input type="password" id="credentials" name="credentials">
+
+    <label for="maildir_path">Maildir Path</label>
+    <input type="text" id="maildir_path" name="maildir_path" placeholder="/data/mailboxes/gmail" required>
+
+    <label for="sync_schedule">Sync Schedule (cron)</label>
+    <input type="text" id="sync_schedule" name="sync_schedule" value="0 */6 * * *">
+
+    <button type="submit">Create Account</button>
+</form>
+{% endblock %}

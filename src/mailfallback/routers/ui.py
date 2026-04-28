@@ -7,7 +7,12 @@ from sqlalchemy.orm import Session
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
 from mailfallback.models import User
-from mailfallback.services.account_service import get_accounts_for_user
+from mailfallback.services.account_service import (
+    create_account,
+    get_account,
+    get_accounts_for_user,
+)
+from mailfallback.services.sync_service import list_jobs_for_account
 from mailfallback.services.user_service import authenticate_user
 
 router = APIRouter(tags=["ui"])
@@ -67,4 +72,62 @@ def accounts_table_partial(request: Request, db: Session = Depends(get_db)):
         request=request,
         name="partials/accounts_table.html",
         context={"accounts": accounts},
+    )
+
+
+@router.get("/accounts/new", response_class=HTMLResponse)
+def account_form(request: Request, db: Session = Depends(get_db)):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return RedirectResponse("/login")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/")
+    return templates.TemplateResponse(
+        request=request,
+        name="account_form.html",
+        context={"user": user},
+    )
+
+
+@router.post("/accounts/new")
+async def account_form_submit(request: Request, db: Session = Depends(get_db)):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return RedirectResponse("/login", status_code=303)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+
+    form = await request.form()
+    create_account(
+        db,
+        name=form["name"],
+        imap_host=form["imap_host"],
+        imap_port=int(form["imap_port"]),
+        auth_type=form["auth_type"],
+        maildir_path=form["maildir_path"],
+        credentials=form.get("credentials") or None,
+        sync_schedule=form.get("sync_schedule", "0 */6 * * *"),
+    )
+    return RedirectResponse("/", status_code=303)
+
+
+@router.get("/accounts/{account_id}", response_class=HTMLResponse)
+def account_detail(account_id: str, request: Request, db: Session = Depends(get_db)):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return RedirectResponse("/login")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return RedirectResponse("/login")
+
+    account = get_account(db, account_id, user)
+    if not account:
+        return RedirectResponse("/")
+    jobs = list_jobs_for_account(db, account_id, limit=20)
+    return templates.TemplateResponse(
+        request=request,
+        name="account_detail.html",
+        context={"user": user, "account": account, "jobs": jobs},
     )

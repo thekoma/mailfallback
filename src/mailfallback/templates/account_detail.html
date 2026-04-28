@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ account.name }} — Mailfallback{% endblock %}
+{% block content %}
+<h2>{{ account.name }}</h2>
+
+<div hx-get="/partials/account-status/{{ account.id }}" hx-trigger="every 5s" hx-swap="innerHTML">
+    <table>
+        <tr><td>Host</td><td>{{ account.imap_host }}:{{ account.imap_port }}</td></tr>
+        <tr><td>Status</td><td><span class="sync-{{ account.sync_state.value }}">{{ account.sync_state.value }}</span></td></tr>
+        <tr><td>Last Sync</td><td>{{ account.last_sync_at.strftime('%Y-%m-%d %H:%M:%S') if account.last_sync_at else 'Never' }}</td></tr>
+        <tr><td>Schedule</td><td>{{ account.sync_schedule }}</td></tr>
+        <tr><td>Maildir</td><td>{{ account.maildir_path }}</td></tr>
+        <tr><td>Enabled</td><td>{{ 'Yes' if account.enabled else 'No' }}</td></tr>
+    </table>
+</div>
+
+{% if account.last_error %}
+<details>
+    <summary>Last Error</summary>
+    <pre>{{ account.last_error }}</pre>
+</details>
+{% endif %}
+
+<div style="display: flex; gap: 1rem; margin: 1rem 0;">
+    <button hx-post="/api/sync/{{ account.id }}" hx-swap="none"
+        {% if account.sync_state.value == 'syncing' %}disabled{% endif %}>
+        Sync Now
+    </button>
+</div>
+
+<h3>Sync History</h3>
+<table>
+    <thead>
+        <tr><th>Time</th><th>Source</th><th>Status</th><th>Exit Code</th><th>Log</th></tr>
+    </thead>
+    <tbody>
+        {% for job in jobs %}
+        <tr>
+            <td>{{ job.requested_at.strftime('%Y-%m-%d %H:%M') if job.requested_at else '' }}</td>
+            <td>{{ job.source }}</td>
+            <td>{{ job.status.value }}</td>
+            <td>{{ job.exit_code if job.exit_code is not none else '-' }}</td>
+            <td>{% if job.log %}<details><summary>View</summary><pre>{{ job.log }}</pre></details>{% endif %}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}
