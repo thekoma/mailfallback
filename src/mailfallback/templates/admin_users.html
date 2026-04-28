@@ -9,34 +9,95 @@
 
 <table>
     <thead>
-        <tr><th>Username</th><th>Role</th><th>Accounts</th><th style="text-align: right;">Actions</th></tr>
+        <tr>
+            <th>Username</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>Accounts</th>
+            <th style="text-align: right;">Actions</th>
+        </tr>
     </thead>
     <tbody>
         {% for u in users %}
-        <tr>
+        <tr {% if not u.enabled %}style="opacity: 0.5;"{% endif %}>
             <td>{{ u.username }}</td>
-            <td>{{ u.role.value }}</td>
+            <td>
+                {% if u.role.value == "admin" %}
+                <span class="badge" style="background:#dbeafe;color:#1e40af;">
+                    <i data-lucide="shield" style="width:12px;height:12px;"></i> admin
+                </span>
+                {% else %}
+                <span class="badge" style="background:#f3f4f6;color:#374151;">
+                    <i data-lucide="user" style="width:12px;height:12px;"></i> user
+                </span>
+                {% endif %}
+            </td>
+            <td>
+                {% if u.enabled %}
+                <span class="badge badge-idle"><i data-lucide="check-circle" style="width:12px;height:12px;"></i> Active</span>
+                {% else %}
+                <span class="badge badge-disabled"><i data-lucide="pause-circle" style="width:12px;height:12px;"></i> Disabled</span>
+                {% endif %}
+            </td>
             <td>{{ u.accounts | length }}</td>
             <td>
                 <div class="actions" style="justify-content: flex-end;">
+                    <button class="icon-btn" title="Edit User"
+                        onclick="var el = document.getElementById('edit-{{ u.id }}'); el.style.display = el.style.display === 'none' ? '' : 'none'">
+                        <i data-lucide="pencil" style="width:16px;height:16px;"></i>
+                    </button>
                     <button class="icon-btn" title="Change Password"
-                        onclick="document.getElementById('pw-{{ u.id }}').style.display = document.getElementById('pw-{{ u.id }}').style.display === 'none' ? '' : 'none'">
+                        onclick="var el = document.getElementById('pw-{{ u.id }}'); el.style.display = el.style.display === 'none' ? '' : 'none'">
                         <i data-lucide="key-round" style="width:16px;height:16px;"></i>
                     </button>
-                    {% if u.username != 'admin' %}
-                    <button class="icon-btn danger" title="Delete User"
-                        hx-delete="/api/admin/users/{{ u.id }}"
-                        hx-confirm="Delete user {{ u.username }}?"
-                        hx-swap="none"
-                        hx-on::after-request="location.reload()">
-                        <i data-lucide="trash-2" style="width:16px;height:16px;"></i>
-                    </button>
+                    {% if u.id != user.id %}
+                    {% if u.enabled %}
+                    <form method="post" action="/admin/users/{{ u.id }}/toggle" style="margin:0;">
+                        <button type="submit" class="icon-btn" title="Disable User">
+                            <i data-lucide="user-x" style="width:16px;height:16px;"></i>
+                        </button>
+                    </form>
+                    {% else %}
+                    <form method="post" action="/admin/users/{{ u.id }}/toggle" style="margin:0;">
+                        <button type="submit" class="icon-btn success" title="Enable User">
+                            <i data-lucide="user-check" style="width:16px;height:16px;"></i>
+                        </button>
+                    </form>
+                    {% endif %}
+                    <form method="post" action="/admin/users/{{ u.id }}/delete" style="margin:0;"
+                        onsubmit="return confirm('Delete user {{ u.username }}? This cannot be undone.')">
+                        <button type="submit" class="icon-btn danger" title="Delete User">
+                            <i data-lucide="trash-2" style="width:16px;height:16px;"></i>
+                        </button>
+                    </form>
                     {% endif %}
                 </div>
             </td>
         </tr>
+        <!-- Edit row -->
+        <tr id="edit-{{ u.id }}" style="display: none;">
+            <td colspan="5">
+                <form method="post" action="/admin/users/{{ u.id }}/edit" style="display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 200px;">
+                        <label for="username_{{ u.id }}">Username</label>
+                        <input type="text" id="username_{{ u.id }}" name="username" value="{{ u.username }}">
+                    </div>
+                    <div style="min-width: 150px;">
+                        <label for="role_{{ u.id }}">Role</label>
+                        <select id="role_{{ u.id }}" name="role">
+                            <option value="user" {% if u.role.value == "user" %}selected{% endif %}>User</option>
+                            <option value="admin" {% if u.role.value == "admin" %}selected{% endif %}>Admin</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="icon-btn primary">
+                        <i data-lucide="save" style="width:16px;height:16px;"></i> Save
+                    </button>
+                </form>
+            </td>
+        </tr>
+        <!-- Password row -->
         <tr id="pw-{{ u.id }}" style="display: none;">
-            <td colspan="4">
+            <td colspan="5">
                 <form method="post" action="/admin/users/{{ u.id }}/password" style="display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap;">
                     {% if not admin_verified %}
                     <div style="flex: 1; min-width: 200px;">

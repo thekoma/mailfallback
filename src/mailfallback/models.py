@@ -56,6 +56,7 @@ class User(Base):
     password_hash = Column(String, nullable=True)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.user)
     oidc_subject = Column(String, nullable=True, unique=True)
+    enabled = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     accounts = relationship("Account", secondary=account_owners, back_populates="owners")

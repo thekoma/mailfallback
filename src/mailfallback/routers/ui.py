@@ -19,7 +19,9 @@ from mailfallback.services.user_service import (
     authenticate_user,
     change_password,
     create_user,
+    delete_user,
     list_users,
+    update_user,
 )
 
 router = APIRouter(tags=["ui"])
@@ -262,6 +264,72 @@ async def admin_change_user_password(
         request.session["admin_pw_verified_at"] = time.time()
 
     change_password(db, target_user_id, new_password)
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@router.post("/admin/users/{target_user_id}/edit")
+async def admin_edit_user(
+    target_user_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return RedirectResponse("/login", status_code=303)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+
+    form = await request.form()
+    updates = {}
+    username = form.get("username", "").strip()
+    if username:
+        updates["username"] = username
+    role = form.get("role")
+    if role in ("admin", "user"):
+        updates["role"] = role
+    if updates:
+        update_user(db, target_user_id, **updates)
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@router.post("/admin/users/{target_user_id}/toggle")
+async def admin_toggle_user(
+    target_user_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return RedirectResponse("/login", status_code=303)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    if target_user_id == user.id:
+        return RedirectResponse("/admin/users", status_code=303)
+
+    target = db.query(User).filter(User.id == target_user_id).first()
+    if target:
+        update_user(db, target_user_id, enabled=not target.enabled)
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@router.post("/admin/users/{target_user_id}/delete")
+async def admin_delete_user(
+    target_user_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return RedirectResponse("/login", status_code=303)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    if target_user_id == user.id:
+        return RedirectResponse("/admin/users", status_code=303)
+
+    delete_user(db, target_user_id)
     return RedirectResponse("/admin/users", status_code=303)
 
 

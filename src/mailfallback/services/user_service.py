@@ -17,6 +17,8 @@ def authenticate_user(db: Session, username: str, password: str) -> User | None:
     user = db.query(User).filter(User.username == username).first()
     if not user or not user.password_hash:
         return None
+    if not user.enabled:
+        return None
     if not verify_password(password, user.password_hash):
         return None
     return user
@@ -35,6 +37,26 @@ def change_password(db: Session, user_id: str, new_password: str) -> bool:
     if not user:
         return False
     user.password_hash = hash_password(new_password)
+    db.commit()
+    return True
+
+
+def update_user(db: Session, user_id: str, **kwargs) -> User | None:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return None
+    for key, value in kwargs.items():
+        setattr(user, key, value)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def delete_user(db: Session, user_id: str) -> bool:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return False
+    db.delete(user)
     db.commit()
     return True
 
