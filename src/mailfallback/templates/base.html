@@ -70,7 +70,8 @@
             <li><a href="/admin/users"><i data-lucide="users" style="width:16px;height:16px;vertical-align:middle;margin-right:0.2rem;"></i>Users</a></li>
             <li><a href="/settings"><i data-lucide="settings" style="width:16px;height:16px;vertical-align:middle;margin-right:0.2rem;"></i>Settings</a></li>
             {% endif %}
-            <li><a href="#" hx-post="/api/auth/logout" hx-target="body"><i data-lucide="log-out" style="width:16px;height:16px;vertical-align:middle;margin-right:0.2rem;"></i>{{ user.username }}</a></li>
+            <li><a href="/profile"><i data-lucide="user" style="width:16px;height:16px;vertical-align:middle;margin-right:0.2rem;"></i>{{ user.username }}</a></li>
+            <li><a href="#" hx-post="/api/auth/logout" hx-target="body"><i data-lucide="log-out" style="width:16px;height:16px;vertical-align:middle;margin-right:0.2rem;"></i>Logout</a></li>
             {% endif %}
         </ul>
     </nav>

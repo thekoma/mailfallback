@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Users — Mailfallback{% endblock %}
 {% block content %}
-<h2>User Management</h2>
+<h2><i data-lucide="users" style="width:24px;height:24px;vertical-align:middle;margin-right:0.3rem;"></i>User Management</h2>
 
 <table>
     <thead>
-        <tr><th>Username</th><th>Role</th><th>Accounts</th><th>Actions</th></tr>
+        <tr><th>Username</th><th>Role</th><th>Accounts</th><th style="text-align: right;">Actions</th></tr>
     </thead>
     <tbody>
         {% for u in users %}
@@ -14,16 +14,43 @@
             <td>{{ u.role.value }}</td>
             <td>{{ u.accounts | length }}</td>
             <td>
-                {% if u.username != 'admin' %}
-                <button hx-delete="/api/admin/users/{{ u.id }}" hx-confirm="Delete user {{ u.username }}?" hx-swap="none" hx-on::after-request="location.reload()">Delete</button>
-                {% endif %}
+                <div class="actions" style="justify-content: flex-end;">
+                    <button class="icon-btn" title="Change Password"
+                        onclick="document.getElementById('pw-{{ u.id }}').style.display = document.getElementById('pw-{{ u.id }}').style.display === 'none' ? '' : 'none'">
+                        <i data-lucide="key-round" style="width:16px;height:16px;"></i>
+                    </button>
+                    {% if u.username != 'admin' %}
+                    <button class="icon-btn danger" title="Delete User"
+                        hx-delete="/api/admin/users/{{ u.id }}"
+                        hx-confirm="Delete user {{ u.username }}?"
+                        hx-swap="none"
+                        hx-on::after-request="location.reload()">
+                        <i data-lucide="trash-2" style="width:16px;height:16px;"></i>
+                    </button>
+                    {% endif %}
+                </div>
+            </td>
+        </tr>
+        <tr id="pw-{{ u.id }}" style="display: none;">
+            <td colspan="4">
+                <form method="post" action="/admin/users/{{ u.id }}/password" style="display: flex; gap: 0.5rem; align-items: end;">
+                    <div style="flex: 1;">
+                        <label for="new_password_{{ u.id }}">New password for {{ u.username }}</label>
+                        <input type="password" id="new_password_{{ u.id }}" name="new_password" required minlength="6" placeholder="Min 6 characters">
+                    </div>
+                    <button type="submit" class="icon-btn primary">
+                        <i data-lucide="save" style="width:16px;height:16px;"></i> Save
+                    </button>
+                </form>
             </td>
         </tr>
         {% endfor %}
     </tbody>
 </table>
 
-<h3>Add User</h3>
+<hr>
+
+<h3><i data-lucide="user-plus" style="width:20px;height:20px;vertical-align:middle;margin-right:0.3rem;"></i>Add User</h3>
 <form method="post" action="/admin/users/new">
     <div style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 1rem; align-items: end;">
         <div>
@@ -32,7 +59,7 @@
         </div>
         <div>
             <label for="password">Password</label>
-            <input type="password" id="password" name="password" required>
+            <input type="password" id="password" name="password" required minlength="6">
         </div>
         <div>
             <label for="role">Role</label>
@@ -41,7 +68,9 @@
                 <option value="admin">Admin</option>
             </select>
         </div>
-        <button type="submit">Add</button>
+        <button type="submit" class="icon-btn primary">
+            <i data-lucide="user-plus" style="width:16px;height:16px;"></i> Add
+        </button>
     </div>
 </form>
 {% endblock %}

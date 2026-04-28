@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
 from mailfallback.models import Account, User
+from mailfallback.security import verify_password
 from mailfallback.services.account_service import (
     create_account,
     get_account,
@@ -14,7 +15,12 @@ from mailfallback.services.account_service import (
     update_account,
 )
 from mailfallback.services.sync_service import list_jobs_for_account
-from mailfallback.services.user_service import authenticate_user, create_user, list_users
+from mailfallback.services.user_service import (
+    authenticate_user,
+    change_password,
+    create_user,
+    list_users,
+)
 
 router = APIRouter(tags=["ui"])
 
@@ -155,6 +161,88 @@ async def account_edit_submit(account_id: str, request: Request, db: Session = D
             updates[key] = int(val) if key == "imap_port" else val
     update_account(db, account_id, user, **updates)
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+
+
+@router.get("/profile", response_class=HTMLResponse)
+def profile_page(request: Request, db: Session = Depends(get_db)):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return RedirectResponse("/login")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return RedirectResponse("/login")
+    return templates.TemplateResponse(
+        request=request,
+        name="profile.html",
+        context={"user": user, "error": None, "success": None},
+    )
+
+
+@router.post("/profile/password")
+async def profile_change_password(request: Request, db: Session = Depends(get_db)):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return RedirectResponse("/login", status_code=303)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    form = await request.form()
+    current = form["current_password"]
+    new = form["new_password"]
+    confirm = form["confirm_password"]
+
+    if not user.password_hash or not verify_password(current, user.password_hash):
+        return templates.TemplateResponse(
+            request=request,
+            name="profile.html",
+            context={"user": user, "error": "Current password is incorrect", "success": None},
+        )
+    if new != confirm:
+        return templates.TemplateResponse(
+            request=request,
+            name="profile.html",
+            context={"user": user, "error": "New passwords do not match", "success": None},
+        )
+    if len(new) < 6:
+        return templates.TemplateResponse(
+            request=request,
+            name="profile.html",
+            context={
+                "user": user,
+                "error": "Password must be at least 6 characters",
+                "success": None,
+            },
+        )
+
+    change_password(db, user.id, new)
+    return templates.TemplateResponse(
+        request=request,
+        name="profile.html",
+        context={"user": user, "error": None, "success": "Password updated successfully"},
+    )
+
+
+@router.post("/admin/users/{target_user_id}/password")
+async def admin_change_user_password(
+    target_user_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return RedirectResponse("/login", status_code=303)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+
+    form = await request.form()
+    new_password = form["new_password"]
+    if len(new_password) < 6:
+        return RedirectResponse("/admin/users", status_code=303)
+
+    change_password(db, target_user_id, new_password)
+    return RedirectResponse("/admin/users", status_code=303)
 
 
 @router.get("/admin/users", response_class=HTMLResponse)

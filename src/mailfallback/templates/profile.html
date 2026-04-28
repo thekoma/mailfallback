@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Profile — Mailfallback{% endblock %}
+{% block content %}
+<h2><i data-lucide="user" style="width:24px;height:24px;vertical-align:middle;margin-right:0.3rem;"></i>Profile</h2>
+
+<table>
+    <tr><td><i data-lucide="at-sign" style="width:16px;height:16px;vertical-align:middle;margin-right:0.3rem;"></i>Username</td><td>{{ user.username }}</td></tr>
+    <tr><td><i data-lucide="shield" style="width:16px;height:16px;vertical-align:middle;margin-right:0.3rem;"></i>Role</td><td>{{ user.role.value }}</td></tr>
+    <tr><td><i data-lucide="mail" style="width:16px;height:16px;vertical-align:middle;margin-right:0.3rem;"></i>Accounts</td><td>{{ user.accounts | length }}</td></tr>
+</table>
+
+<hr>
+
+<h3><i data-lucide="key-round" style="width:20px;height:20px;vertical-align:middle;margin-right:0.3rem;"></i>Change Password</h3>
+
+{% if error %}
+<p style="color: var(--pico-color-red-500);">{{ error }}</p>
+{% endif %}
+{% if success %}
+<p style="color: var(--pico-color-green-500);">{{ success }}</p>
+{% endif %}
+
+<form method="post" action="/profile/password" style="max-width: 400px;">
+    <label for="current_password">Current Password</label>
+    <input type="password" id="current_password" name="current_password" required>
+
+    <label for="new_password">New Password</label>
+    <input type="password" id="new_password" name="new_password" required minlength="6">
+
+    <label for="confirm_password">Confirm New Password</label>
+    <input type="password" id="confirm_password" name="confirm_password" required minlength="6">
+
+    <button type="submit">
+        <i data-lucide="save" style="width:16px;height:16px;vertical-align:middle;margin-right:0.3rem;"></i>Update Password
+    </button>
+</form>
+{% endblock %}

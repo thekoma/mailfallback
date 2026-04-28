@@ -30,6 +30,15 @@ def list_users(db: Session) -> list[User]:
     return db.query(User).all()
 
 
+def change_password(db: Session, user_id: str, new_password: str) -> bool:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return False
+    user.password_hash = hash_password(new_password)
+    db.commit()
+    return True
+
+
 def ensure_admin_exists(db: Session) -> None:
     admin = db.query(User).filter(User.role == UserRole.admin).first()
     if not admin:
