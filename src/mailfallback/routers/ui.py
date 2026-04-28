@@ -101,17 +101,20 @@ async def account_form_submit(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/", status_code=303)
 
     form = await request.form()
-    create_account(
+    auth_type = form["auth_type"]
+    account = create_account(
         db,
         name=form["name"],
         email_address=form.get("email_address", ""),
         imap_host=form["imap_host"],
         imap_port=int(form["imap_port"]),
-        auth_type=form["auth_type"],
+        auth_type=auth_type,
         maildir_path=form["maildir_path"],
         credentials=form.get("credentials") or None,
         sync_schedule=form.get("sync_schedule", "0 */6 * * *"),
     )
+    if auth_type == "oauth2":
+        return RedirectResponse(f"/auth/google/start?account_id={account.id}", status_code=303)
     return RedirectResponse("/", status_code=303)
 
 
