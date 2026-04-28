@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Settings — Mailfallback{% endblock %}
+{% block content %}
+<h2>Settings</h2>
+
+<h3>Config Export/Import</h3>
+<div style="display: flex; gap: 1rem;">
+    <a href="/api/config/export" role="button" class="outline">Export Config (JSON)</a>
+</div>
+
+<h3>System Info</h3>
+<table>
+    <tr><td>Total Accounts</td><td>{{ total_accounts }}</td></tr>
+    <tr><td>Total Users</td><td>{{ total_users }}</td></tr>
+    <tr><td>OIDC Enabled</td><td>{{ 'Yes' if oidc_enabled else 'No' }}</td></tr>
+</table>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Users — Mailfallback{% endblock %}
+{% block content %}
+<h2>User Management</h2>
+
+<table>
+    <thead>
+        <tr><th>Username</th><th>Role</th><th>Accounts</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+        {% for u in users %}
+        <tr>
+            <td>{{ u.username }}</td>
+            <td>{{ u.role.value }}</td>
+            <td>{{ u.accounts | length }}</td>
+            <td>
+                {% if u.username != 'admin' %}
+                <button hx-delete="/api/admin/users/{{ u.id }}" hx-confirm="Delete user {{ u.username }}?" hx-swap="none" hx-on::after-request="location.reload()">Delete</button>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<h3>Add User</h3>
+<form method="post" action="/admin/users/new">
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 1rem; align-items: end;">
+        <div>
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" required>
+        </div>
+        <div>
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required>
+        </div>
+        <div>
+            <label for="role">Role</label>
+            <select id="role" name="role">
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+            </select>
+        </div>
+        <button type="submit">Add</button>
+    </div>
+</form>
+{% endblock %}

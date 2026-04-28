@@ -6,14 +6,14 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
-from mailfallback.models import User
+from mailfallback.models import Account, User
 from mailfallback.services.account_service import (
     create_account,
     get_account,
     get_accounts_for_user,
 )
 from mailfallback.services.sync_service import list_jobs_for_account
-from mailfallback.services.user_service import authenticate_user
+from mailfallback.services.user_service import authenticate_user, create_user, list_users
 
 router = APIRouter(tags=["ui"])
 
@@ -130,4 +130,55 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
         request=request,
         name="account_detail.html",
         context={"user": user, "account": account, "jobs": jobs},
+    )
+
+
+@router.get("/admin/users", response_class=HTMLResponse)
+def admin_users_page(request: Request, db: Session = Depends(get_db)):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return RedirectResponse("/login")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/")
+    users = list_users(db)
+    return templates.TemplateResponse(
+        request=request,
+        name="admin_users.html",
+        context={"request": request, "user": user, "users": users},
+    )
+
+
+@router.post("/admin/users/new")
+async def admin_create_user(request: Request, db: Session = Depends(get_db)):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return RedirectResponse("/login", status_code=303)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+
+    form = await request.form()
+    create_user(db, form["username"], form["password"], form["role"])
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@router.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request, db: Session = Depends(get_db)):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return RedirectResponse("/login")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/")
+    return templates.TemplateResponse(
+        request=request,
+        name="settings.html",
+        context={
+            "request": request,
+            "user": user,
+            "total_accounts": db.query(Account).count(),
+            "total_users": db.query(User).count(),
+            "oidc_enabled": settings.oidc_enabled,
+        },
     )
