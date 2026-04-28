@@ -1,0 +1,28 @@
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Host</th>
+            <th>Status</th>
+            <th>Last Sync</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for account in accounts %}
+        <tr>
+            <td><a href="/accounts/{{ account.id }}">{{ account.name }}</a></td>
+            <td>{{ account.imap_host }}</td>
+            <td><span class="sync-{{ account.sync_state.value }}">{{ account.sync_state.value }}</span></td>
+            <td>{{ account.last_sync_at.strftime('%Y-%m-%d %H:%M') if account.last_sync_at else 'Never' }}</td>
+            <td>
+                <button
+                    hx-post="/api/sync/{{ account.id }}"
+                    hx-swap="none"
+                    {% if account.sync_state.value == 'syncing' %}disabled{% endif %}
+                >Sync Now</button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>

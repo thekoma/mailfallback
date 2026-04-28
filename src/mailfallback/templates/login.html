@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Login — Mailfallback{% endblock %}
+{% block content %}
+<article style="max-width: 400px; margin: 0 auto;">
+    <header>
+        <h2>Login</h2>
+    </header>
+    {% if error %}
+    <p style="color: var(--pico-color-red-500);">{{ error }}</p>
+    {% endif %}
+    <form method="post" action="/login">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" required>
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" required>
+        <button type="submit">Login</button>
+    </form>
+    {% if oidc_enabled %}
+    <hr>
+    <a href="/auth/oidc/login" role="button" class="secondary outline" style="width:100%; text-align:center;">Login with SSO</a>
+    {% endif %}
+</article>
+{% endblock %}

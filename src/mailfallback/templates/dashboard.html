@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Mailfallback{% endblock %}
+{% block content %}
+<h2>Email Accounts</h2>
+
+{% if not accounts %}
+<p>No accounts configured yet. <a href="/accounts/new">Add one</a>.</p>
+{% else %}
+<div hx-get="/partials/accounts-table" hx-trigger="every 5s" hx-swap="innerHTML">
+    {% include "partials/accounts_table.html" %}
+</div>
+{% endif %}
+{% endblock %}

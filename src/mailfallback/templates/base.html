@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Mailfallback{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <style>
+        .sync-idle { color: var(--pico-color-green-500); }
+        .sync-syncing { color: var(--pico-color-amber-500); }
+        .sync-error { color: var(--pico-color-red-500); }
+        nav { margin-bottom: 2rem; }
+    </style>
+</head>
+<body>
+    <nav class="container">
+        <ul>
+            <li><strong>Mailfallback</strong></li>
+        </ul>
+        <ul>
+            {% if user %}
+            <li><a href="/">Dashboard</a></li>
+            <li><a href="/accounts/new">Add Account</a></li>
+            {% if user.role.value == "admin" %}
+            <li><a href="/admin/users">Users</a></li>
+            <li><a href="/settings">Settings</a></li>
+            {% endif %}
+            <li><a href="#" hx-post="/api/auth/logout" hx-target="body">Logout ({{ user.username }})</a></li>
+            {% endif %}
+        </ul>
+    </nav>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>
