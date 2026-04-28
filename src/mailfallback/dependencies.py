@@ -1,5 +1,5 @@
 # src/mailfallback/dependencies.py
-from typing import Generator
+from collections.abc import Generator
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session

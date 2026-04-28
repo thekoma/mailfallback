@@ -2,7 +2,7 @@
 import os
 import subprocess
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
@@ -21,12 +21,12 @@ def execute_sync_job(db: Session, job_id: str) -> None:
     if not account:
         job.status = JobStatus.failed
         job.log = "Account not found"
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(UTC)
         db.commit()
         return
 
     job.status = JobStatus.running
-    job.started_at = datetime.now(timezone.utc)
+    job.started_at = datetime.now(UTC)
     account.sync_state = SyncState.syncing
     db.commit()
 
@@ -66,12 +66,12 @@ def execute_sync_job(db: Session, job_id: str) -> None:
 
         job.exit_code = result.returncode
         job.log = (result.stdout + "\n" + result.stderr).strip()
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(UTC)
 
         if result.returncode == 0:
             job.status = JobStatus.completed
             account.sync_state = SyncState.idle
-            account.last_sync_at = datetime.now(timezone.utc)
+            account.last_sync_at = datetime.now(UTC)
             account.last_error = None
         else:
             job.status = JobStatus.failed
@@ -81,14 +81,14 @@ def execute_sync_job(db: Session, job_id: str) -> None:
     except subprocess.TimeoutExpired:
         job.status = JobStatus.failed
         job.log = "Sync timed out after 3600 seconds"
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(UTC)
         account.sync_state = SyncState.error
         account.last_error = job.log
 
     except Exception as e:
         job.status = JobStatus.failed
         job.log = str(e)
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(UTC)
         account.sync_state = SyncState.error
         account.last_error = str(e)
 

@@ -35,9 +35,11 @@ def test_successful_sync():
     account, job = _make_account_and_job(session)
 
     mock_result = type("Result", (), {"returncode": 0, "stdout": "synced ok", "stderr": ""})()
-    with patch("mailfallback.services.sync_worker.subprocess.run", return_value=mock_result):
-        with patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"):
-            execute_sync_job(session, job.id)
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.run", return_value=mock_result),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"),
+    ):
+        execute_sync_job(session, job.id)
 
     session.refresh(job)
     session.refresh(account)
@@ -53,9 +55,11 @@ def test_failed_sync():
     account, job = _make_account_and_job(session)
 
     mock_result = type("Result", (), {"returncode": 1, "stdout": "", "stderr": "auth failed"})()
-    with patch("mailfallback.services.sync_worker.subprocess.run", return_value=mock_result):
-        with patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"):
-            execute_sync_job(session, job.id)
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.run", return_value=mock_result),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"),
+    ):
+        execute_sync_job(session, job.id)
 
     session.refresh(job)
     session.refresh(account)
@@ -79,9 +83,11 @@ def test_sync_sets_running_state():
         captured_state["job_status"] = job.status
         return type("Result", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    with patch("mailfallback.services.sync_worker.subprocess.run", side_effect=capture_state):
-        with patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"):
-            execute_sync_job(session, job.id)
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.run", side_effect=capture_state),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"),
+    ):
+        execute_sync_job(session, job.id)
 
     assert captured_state["account_state"] == SyncState.syncing
     assert captured_state["job_status"] == JobStatus.running

@@ -58,15 +58,18 @@ async def google_oauth_callback(
         raise HTTPException(status_code=400, detail="No account in session")
 
     from mailfallback.models import Account, AuthType
+
     account = db.query(Account).filter(Account.id == account_id).first()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 
-    token_data = json.dumps({
-        "access_token": token["access_token"],
-        "refresh_token": token.get("refresh_token", ""),
-        "token_type": token.get("token_type", "Bearer"),
-    })
+    token_data = json.dumps(
+        {
+            "access_token": token["access_token"],
+            "refresh_token": token.get("refresh_token", ""),
+            "token_type": token.get("token_type", "Bearer"),
+        }
+    )
     account.credentials = encrypt_credentials(token_data, settings.secret_key)
     account.auth_type = AuthType.oauth2
     db.commit()
@@ -106,10 +109,7 @@ async def oidc_callback(request: Request, db: Session = Depends(get_db)):
     username = userinfo.get("preferred_username") or userinfo.get("email", sub)
     groups = userinfo.get("groups", [])
 
-    if settings.oidc_admin_group in groups:
-        role = UserRole.admin
-    else:
-        role = UserRole.user
+    role = UserRole.admin if settings.oidc_admin_group in groups else UserRole.user
 
     user = db.query(User).filter(User.oidc_subject == sub).first()
     if not user:

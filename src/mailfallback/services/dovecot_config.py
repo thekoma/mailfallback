@@ -20,9 +20,7 @@ def generate_dovecot_userdb(accounts_by_user: dict[str, list[dict]]) -> str:
                     f":namespace/{acc['name']}/location=maildir:{maildir}"
                 )
             namespaces = " ".join(namespace_parts)
-            lines.append(
-                f"{username}::::::userdb_mail=maildir:{first_maildir} {namespaces}"
-            )
+            lines.append(f"{username}::::::userdb_mail=maildir:{first_maildir} {namespaces}")
 
     return "\n".join(lines)
 

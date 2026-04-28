@@ -1,5 +1,5 @@
 # tests/test_dovecot_config.py
-from mailfallback.services.dovecot_config import generate_dovecot_userdb, generate_dovecot_passdb
+from mailfallback.services.dovecot_config import generate_dovecot_passdb, generate_dovecot_userdb
 
 
 def test_generate_userdb_single_account():

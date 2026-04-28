@@ -36,6 +36,7 @@ def test_full_sync_flow(client, db_session):
     mock_result = type("Result", (), {"returncode": 0, "stdout": "synced", "stderr": ""})()
     with patch("mailfallback.services.sync_worker.subprocess.run", return_value=mock_result):
         from mailfallback.services.sync_worker import execute_sync_job
+
         execute_sync_job(db_session, job_id)
 
     resp = client.get(f"/api/sync/jobs/{job_id}")
@@ -66,6 +67,7 @@ def test_full_sync_flow_failure(client, db_session):
     mock_result = type("Result", (), {"returncode": 1, "stdout": "", "stderr": "auth error"})()
     with patch("mailfallback.services.sync_worker.subprocess.run", return_value=mock_result):
         from mailfallback.services.sync_worker import execute_sync_job
+
         execute_sync_job(db_session, job_id)
 
     resp = client.get(f"/api/sync/jobs/{job_id}")

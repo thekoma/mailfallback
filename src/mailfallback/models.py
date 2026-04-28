@@ -1,7 +1,7 @@
 # src/mailfallback/models.py
 import enum
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String, Table, Text
 from sqlalchemy.orm import relationship
@@ -10,30 +10,30 @@ from mailfallback.db import Base
 
 
 def _utcnow():
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _new_uuid():
     return str(uuid.uuid4())
 
 
-class UserRole(str, enum.Enum):
+class UserRole(enum.StrEnum):
     admin = "admin"
     user = "user"
 
 
-class AuthType(str, enum.Enum):
+class AuthType(enum.StrEnum):
     oauth2 = "oauth2"
     app_password = "app_password"
 
 
-class SyncState(str, enum.Enum):
+class SyncState(enum.StrEnum):
     idle = "idle"
     syncing = "syncing"
     error = "error"
 
 
-class JobStatus(str, enum.Enum):
+class JobStatus(enum.StrEnum):
     pending = "pending"
     running = "running"
     completed = "completed"

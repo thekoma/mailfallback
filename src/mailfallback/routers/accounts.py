@@ -36,7 +36,11 @@ class OwnerAssign(BaseModel):
 
 
 @router.post("")
-def create(body: AccountCreate, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+def create(
+    body: AccountCreate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     account = account_service.create_account(db, **body.model_dump())
     return {"id": account.id, "name": account.name}
 
@@ -110,7 +114,7 @@ def assign_owner(
     try:
         account_service.assign_owner(db, account_id, body.user_id)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from None
     return {"ok": True}
 
 

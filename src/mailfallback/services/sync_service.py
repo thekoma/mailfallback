@@ -27,9 +27,7 @@ def get_job(db: Session, job_id: str) -> SyncJob | None:
     return db.query(SyncJob).filter(SyncJob.id == job_id).first()
 
 
-def list_jobs_for_account(
-    db: Session, account_id: str, limit: int = 50
-) -> list[SyncJob]:
+def list_jobs_for_account(db: Session, account_id: str, limit: int = 50) -> list[SyncJob]:
     return (
         db.query(SyncJob)
         .filter(SyncJob.account_id == account_id)

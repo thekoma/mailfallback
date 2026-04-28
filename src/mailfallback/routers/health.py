@@ -65,15 +65,11 @@ def metrics(db: Session = Depends(get_db)):
     accounts = db.query(Account).all()
     ACCOUNTS_TOTAL.set(len(accounts))
 
-    pending = (
-        db.query(SyncJob).filter(SyncJob.status == JobStatus.pending).count()
-    )
+    pending = db.query(SyncJob).filter(SyncJob.status == JobStatus.pending).count()
     JOBS_PENDING.set(pending)
 
     for account in accounts:
         if account.last_sync_at:
-            SYNC_LAST_SUCCESS.labels(account=account.name).set(
-                account.last_sync_at.timestamp()
-            )
+            SYNC_LAST_SUCCESS.labels(account=account.name).set(account.last_sync_at.timestamp())
 
     return generate_latest(registry).decode()

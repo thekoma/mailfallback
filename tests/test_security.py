@@ -1,5 +1,10 @@
 # tests/test_security.py
-from mailfallback.security import decrypt_credentials, encrypt_credentials, hash_password, verify_password
+from mailfallback.security import (
+    decrypt_credentials,
+    encrypt_credentials,
+    hash_password,
+    verify_password,
+)
 
 
 def test_password_hash_and_verify():
@@ -22,6 +27,6 @@ def test_encrypt_decrypt_with_different_keys():
     encrypted = encrypt_credentials("data", "key1")
     try:
         decrypt_credentials(encrypted, "key2")
-        assert False, "Should have raised an exception"
+        raise AssertionError("Should have raised an exception")
     except Exception:
         pass
