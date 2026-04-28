@@ -1,0 +1,12 @@
+# docker/Dockerfile.mbsync
+FROM alpine:3.20
+
+RUN apk add --no-cache isync ca-certificates curl
+
+COPY docker/token_helper.sh /usr/local/bin/token_helper
+RUN chmod +x /usr/local/bin/token_helper
+
+RUN adduser -D mbsync
+USER mbsync
+
+ENTRYPOINT ["sleep", "infinity"]

@@ -1,0 +1,51 @@
+# docker-compose.yml
+services:
+  mailfallback:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - config:/data/config
+      # Map mailbox volumes per account:
+      # - /mnt/nas1/gmail:/data/mailboxes/gmail
+      # - /mnt/nas2/work:/data/mailboxes/work
+    environment:
+      - MAILFALLBACK_SECRET_KEY=change-me-in-production
+      - MAILFALLBACK_SESSION_SECRET=change-me-session-secret
+      # For PostgreSQL:
+      # - MAILFALLBACK_DATABASE_URL=postgresql://user:pass@db:5432/mailfallback
+    depends_on:
+      - mbsync
+
+  mbsync:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.mbsync
+    volumes:
+      - config:/data/config:ro
+      # Same mailbox volumes as mailfallback:
+      # - /mnt/nas1/gmail:/data/mailboxes/gmail
+      # - /mnt/nas2/work:/data/mailboxes/work
+
+  # Optional: Dovecot for read-only IMAP access
+  # dovecot:
+  #   image: dovecot/dovecot:2.3
+  #   volumes:
+  #     - config:/data/config:ro
+  #     # Same mailbox volumes:
+  #     # - /mnt/nas1/gmail:/data/mailboxes/gmail
+  #   ports:
+  #     - "143:143"
+
+  # Optional: Webmail
+  # webmail:
+  #   image: djmaze/snappymail:latest
+  #   ports:
+  #     - "8888:8888"
+  #   depends_on:
+  #     - dovecot
+
+volumes:
+  config:
