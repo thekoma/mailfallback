@@ -3,6 +3,10 @@
 {% block content %}
 <h2><i data-lucide="users" style="width:24px;height:24px;vertical-align:middle;margin-right:0.3rem;"></i>User Management</h2>
 
+{% if error == "invalid_admin_password" %}
+<p style="color: var(--pico-color-red-500);"><i data-lucide="alert-circle" style="width:16px;height:16px;vertical-align:middle;margin-right:0.3rem;"></i>Admin password is incorrect.</p>
+{% endif %}
+
 <table>
     <thead>
         <tr><th>Username</th><th>Role</th><th>Accounts</th><th style="text-align: right;">Actions</th></tr>
@@ -33,8 +37,16 @@
         </tr>
         <tr id="pw-{{ u.id }}" style="display: none;">
             <td colspan="4">
-                <form method="post" action="/admin/users/{{ u.id }}/password" style="display: flex; gap: 0.5rem; align-items: end;">
-                    <div style="flex: 1;">
+                <form method="post" action="/admin/users/{{ u.id }}/password" style="display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap;">
+                    {% if not admin_verified %}
+                    <div style="flex: 1; min-width: 200px;">
+                        <label for="admin_password_{{ u.id }}">
+                            <i data-lucide="shield-check" style="width:14px;height:14px;vertical-align:middle;margin-right:0.2rem;"></i>Your admin password
+                        </label>
+                        <input type="password" id="admin_password_{{ u.id }}" name="admin_password" required placeholder="Confirm your identity">
+                    </div>
+                    {% endif %}
+                    <div style="flex: 1; min-width: 200px;">
                         <label for="new_password_{{ u.id }}">New password for {{ u.username }}</label>
                         <input type="password" id="new_password_{{ u.id }}" name="new_password" required minlength="6" placeholder="Min 6 characters">
                     </div>
@@ -42,6 +54,9 @@
                         <i data-lucide="save" style="width:16px;height:16px;"></i> Save
                     </button>
                 </form>
+                {% if admin_verified %}
+                <small style="color: var(--pico-muted-color);"><i data-lucide="check-circle" style="width:12px;height:12px;vertical-align:middle;"></i> Identity verified</small>
+                {% endif %}
             </td>
         </tr>
         {% endfor %}

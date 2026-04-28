@@ -223,6 +223,18 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
     )
 
 
+ADMIN_PW_COOLDOWN = 15 * 60
+
+
+def _admin_pw_verified(request: Request) -> bool:
+    verified_at = request.session.get("admin_pw_verified_at")
+    if not verified_at:
+        return False
+    import time
+
+    return (time.time() - verified_at) < ADMIN_PW_COOLDOWN
+
+
 @router.post("/admin/users/{target_user_id}/password")
 async def admin_change_user_password(
     target_user_id: str,
@@ -241,6 +253,14 @@ async def admin_change_user_password(
     if len(new_password) < 6:
         return RedirectResponse("/admin/users", status_code=303)
 
+    if not _admin_pw_verified(request):
+        admin_password = form.get("admin_password", "")
+        if not admin_password or not verify_password(admin_password, user.password_hash):
+            return RedirectResponse("/admin/users?error=invalid_admin_password", status_code=303)
+        import time
+
+        request.session["admin_pw_verified_at"] = time.time()
+
     change_password(db, target_user_id, new_password)
     return RedirectResponse("/admin/users", status_code=303)
 
@@ -254,10 +274,16 @@ def admin_users_page(request: Request, db: Session = Depends(get_db)):
     if not user or user.role.value != "admin":
         return RedirectResponse("/")
     users = list_users(db)
+    error = request.query_params.get("error")
     return templates.TemplateResponse(
         request=request,
         name="admin_users.html",
-        context={"request": request, "user": user, "users": users},
+        context={
+            "user": user,
+            "users": users,
+            "admin_verified": _admin_pw_verified(request),
+            "error": error,
+        },
     )
 
 
