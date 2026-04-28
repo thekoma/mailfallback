@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
 from mailfallback.config import settings
-from mailfallback.routers import accounts, auth
+from mailfallback.routers import accounts, auth, sync
 
 
 def create_app() -> FastAPI:
@@ -11,6 +11,7 @@ def create_app() -> FastAPI:
     app.add_middleware(SessionMiddleware, secret_key=settings.session_secret)
     app.include_router(auth.router)
     app.include_router(accounts.router)
+    app.include_router(sync.router)
 
     @app.get("/healthz")
     async def healthz():
