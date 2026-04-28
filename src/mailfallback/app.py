@@ -1,7 +1,9 @@
 # src/mailfallback/app.py
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from mailfallback.config import settings
@@ -24,8 +26,18 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Mailfallback", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="MailFallBack",
+        description="Self-hosted email backup service",
+        version="0.1.0",
+        lifespan=lifespan,
+    )
     app.add_middleware(SessionMiddleware, secret_key=settings.session_secret)
+
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
     app.include_router(ui.router)
     app.include_router(auth.router)
     app.include_router(accounts.router)

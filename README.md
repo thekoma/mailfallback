@@ -1,10 +1,19 @@
-# Mailfallback
+<p align="center">
+  <img src="src/mailfallback/static/logo.svg" alt="MFB Logo" width="128">
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![CI](https://github.com/thekoma/mailfallback/actions/workflows/ci.yml/badge.svg)](https://github.com/thekoma/mailfallback/actions/workflows/ci.yml)
-[![Release](https://github.com/thekoma/mailfallback/actions/workflows/release.yml/badge.svg)](https://github.com/thekoma/mailfallback/actions/workflows/release.yml)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fthekoma%2Fmailfallback-blue?logo=docker)](https://github.com/thekoma/mailfallback/pkgs/container/mailfallback)
+<h1 align="center">MailFallBack</h1>
+<p align="center"><strong>MFB</strong> — Your email safety net</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="https://github.com/thekoma/mailfallback/actions/workflows/ci.yml"><img src="https://github.com/thekoma/mailfallback/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/thekoma/mailfallback/actions/workflows/release.yml"><img src="https://github.com/thekoma/mailfallback/actions/workflows/release.yml/badge.svg" alt="Release"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.12+-blue.svg" alt="Python 3.12+"></a>
+  <a href="https://github.com/thekoma/mailfallback/pkgs/container/mailfallback"><img src="https://img.shields.io/badge/docker-ghcr.io%2Fthekoma%2Fmailfallback-blue?logo=docker" alt="Docker"></a>
+</p>
+
+---
 
 Self-hosted email backup service with a web UI. Wraps [mbsync/isync](https://isync.sourceforge.io/) to back up your email and provides read-only webmail access via Dovecot as a fallback in case you lose access to your provider.
 

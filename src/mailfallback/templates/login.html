@@ -1,9 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Login — Mailfallback{% endblock %}
+{% block title %}Login — MailFallBack{% endblock %}
 {% block content %}
 <article style="max-width: 400px; margin: 0 auto;">
-    <header>
-        <h2>Login</h2>
+    <header style="text-align: center;">
+        <img src="/static/logo.svg" alt="MFB" style="height: 64px; margin-bottom: 0.5rem;">
+        <h2 style="margin-bottom: 0;">MailFallBack</h2>
+        <small style="color: var(--pico-muted-color);">Your email safety net</small>
     </header>
     {% if error %}
     <p style="color: var(--pico-color-red-500);">{{ error }}</p>
