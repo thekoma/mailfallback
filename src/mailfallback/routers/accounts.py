@@ -12,6 +12,7 @@ router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
 class AccountCreate(BaseModel):
     name: str
+    email_address: str = ""
     imap_host: str
     imap_port: int = 993
     auth_type: str = "app_password"
@@ -22,6 +23,7 @@ class AccountCreate(BaseModel):
 
 class AccountUpdate(BaseModel):
     name: str | None = None
+    email_address: str | None = None
     imap_host: str | None = None
     imap_port: int | None = None
     sync_schedule: str | None = None
@@ -63,6 +65,7 @@ def get(account_id: str, user: User = Depends(get_current_user), db: Session = D
     return {
         "id": account.id,
         "name": account.name,
+        "email_address": account.email_address,
         "imap_host": account.imap_host,
         "imap_port": account.imap_port,
         "auth_type": account.auth_type.value,

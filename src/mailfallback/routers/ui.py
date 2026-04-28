@@ -11,6 +11,7 @@ from mailfallback.services.account_service import (
     create_account,
     get_account,
     get_accounts_for_user,
+    update_account,
 )
 from mailfallback.services.sync_service import list_jobs_for_account
 from mailfallback.services.user_service import authenticate_user, create_user, list_users
@@ -103,6 +104,7 @@ async def account_form_submit(request: Request, db: Session = Depends(get_db)):
     create_account(
         db,
         name=form["name"],
+        email_address=form.get("email_address", ""),
         imap_host=form["imap_host"],
         imap_port=int(form["imap_port"]),
         auth_type=form["auth_type"],
@@ -131,6 +133,25 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
         name="account_detail.html",
         context={"user": user, "account": account, "jobs": jobs},
     )
+
+
+@router.post("/accounts/{account_id}/edit")
+async def account_edit_submit(account_id: str, request: Request, db: Session = Depends(get_db)):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return RedirectResponse("/login", status_code=303)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    form = await request.form()
+    updates = {}
+    for key in ("name", "email_address", "imap_host", "imap_port", "sync_schedule", "credentials"):
+        val = form.get(key, "")
+        if val:
+            updates[key] = int(val) if key == "imap_port" else val
+    update_account(db, account_id, user, **updates)
+    return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
 
 @router.get("/admin/users", response_class=HTMLResponse)

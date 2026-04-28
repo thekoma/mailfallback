@@ -3,16 +3,15 @@
 {% block content %}
 <h2>{{ account.name }}</h2>
 
-<div hx-get="/partials/account-status/{{ account.id }}" hx-trigger="every 5s" hx-swap="innerHTML">
-    <table>
-        <tr><td>Host</td><td>{{ account.imap_host }}:{{ account.imap_port }}</td></tr>
-        <tr><td>Status</td><td><span class="sync-{{ account.sync_state.value }}">{{ account.sync_state.value }}</span></td></tr>
-        <tr><td>Last Sync</td><td>{{ account.last_sync_at.strftime('%Y-%m-%d %H:%M:%S') if account.last_sync_at else 'Never' }}</td></tr>
-        <tr><td>Schedule</td><td>{{ account.sync_schedule }}</td></tr>
-        <tr><td>Maildir</td><td>{{ account.maildir_path }}</td></tr>
-        <tr><td>Enabled</td><td>{{ 'Yes' if account.enabled else 'No' }}</td></tr>
-    </table>
-</div>
+<table>
+    <tr><td>Email</td><td>{{ account.email_address }}</td></tr>
+    <tr><td>Host</td><td>{{ account.imap_host }}:{{ account.imap_port }}</td></tr>
+    <tr><td>Status</td><td><span class="sync-{{ account.sync_state.value }}">{{ account.sync_state.value }}</span></td></tr>
+    <tr><td>Last Sync</td><td>{{ account.last_sync_at.strftime('%Y-%m-%d %H:%M:%S') if account.last_sync_at else 'Never' }}</td></tr>
+    <tr><td>Schedule</td><td>{{ account.sync_schedule }}</td></tr>
+    <tr><td>Maildir</td><td>{{ account.maildir_path }}</td></tr>
+    <tr><td>Enabled</td><td>{{ 'Yes' if account.enabled else 'No' }}</td></tr>
+</table>
 
 {% if account.last_error %}
 <details>
@@ -21,12 +20,87 @@
 </details>
 {% endif %}
 
-<div style="display: flex; gap: 1rem; margin: 1rem 0;">
+<div style="display: flex; gap: 1rem; margin: 1rem 0; flex-wrap: wrap;">
     <button hx-post="/api/sync/{{ account.id }}" hx-swap="none"
-        {% if account.sync_state.value == 'syncing' %}disabled{% endif %}>
+        {% if account.sync_state.value == 'syncing' or not account.enabled %}disabled{% endif %}>
         Sync Now
     </button>
+
+    {% if account.enabled %}
+    <button class="secondary outline"
+        hx-patch="/api/accounts/{{ account.id }}"
+        hx-vals='{"enabled": false}'
+        hx-headers='{"Content-Type": "application/json"}'
+        hx-swap="none"
+        hx-on::after-request="location.reload()">
+        Disable Account
+    </button>
+    {% else %}
+    <button class="secondary"
+        hx-patch="/api/accounts/{{ account.id }}"
+        hx-vals='{"enabled": true}'
+        hx-headers='{"Content-Type": "application/json"}'
+        hx-swap="none"
+        hx-on::after-request="location.reload()">
+        Enable Account
+    </button>
+    {% endif %}
 </div>
+
+<hr>
+
+<details>
+    <summary><strong>Edit Account Settings</strong></summary>
+    <form method="post" action="/accounts/{{ account.id }}/edit" style="margin-top: 1rem;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div>
+                <label for="name">Account Name</label>
+                <input type="text" id="name" name="name" value="{{ account.name }}">
+            </div>
+            <div>
+                <label for="email_address">Email Address</label>
+                <input type="email" id="email_address" name="email_address" value="{{ account.email_address }}">
+            </div>
+            <div>
+                <label for="imap_host">IMAP Host</label>
+                <input type="text" id="imap_host" name="imap_host" value="{{ account.imap_host }}">
+            </div>
+            <div>
+                <label for="imap_port">IMAP Port</label>
+                <input type="number" id="imap_port" name="imap_port" value="{{ account.imap_port }}">
+            </div>
+            <div>
+                <label for="sync_schedule">Sync Schedule (cron)</label>
+                <input type="text" id="sync_schedule" name="sync_schedule" value="{{ account.sync_schedule }}">
+            </div>
+            <div>
+                <label for="credentials">New Password (leave blank to keep)</label>
+                <input type="password" id="credentials" name="credentials">
+            </div>
+        </div>
+        <button type="submit" style="margin-top: 1rem;">Save Changes</button>
+    </form>
+</details>
+
+{% if user.role.value == "admin" %}
+<hr>
+<details>
+    <summary><strong style="color: var(--pico-color-red-500);">Delete Account</strong></summary>
+    <div style="margin-top: 1rem;">
+        <p>This action is irreversible. Type <strong>{{ account.email_address }}</strong> to confirm.</p>
+        <input type="text" id="delete-confirm" placeholder="Type email address to confirm"
+            oninput="document.getElementById('delete-btn').disabled = this.value !== '{{ account.email_address }}'">
+        <button id="delete-btn" class="secondary" disabled
+            hx-delete="/api/accounts/{{ account.id }}"
+            hx-swap="none"
+            hx-on::after-request="window.location='/'">
+            Delete Account
+        </button>
+    </div>
+</details>
+{% endif %}
+
+<hr>
 
 <h3>Sync History</h3>
 <table>

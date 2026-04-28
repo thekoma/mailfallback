@@ -66,6 +66,7 @@ class Account(Base):
 
     id = Column(String, primary_key=True, default=_new_uuid)
     name = Column(String, nullable=False)
+    email_address = Column(String, nullable=False, default="")
     imap_host = Column(String, nullable=False)
     imap_port = Column(Integer, nullable=False, default=993)
     auth_type = Column(Enum(AuthType), nullable=False, default=AuthType.app_password)

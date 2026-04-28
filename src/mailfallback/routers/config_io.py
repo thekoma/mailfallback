@@ -11,6 +11,7 @@ router = APIRouter(prefix="/api/config", tags=["config"])
 
 class AccountExport(BaseModel):
     name: str
+    email_address: str = ""
     imap_host: str
     imap_port: int
     auth_type: str
@@ -29,6 +30,7 @@ def export_config(admin: User = Depends(require_admin), db: Session = Depends(ge
         "accounts": [
             {
                 "name": a.name,
+                "email_address": a.email_address,
                 "imap_host": a.imap_host,
                 "imap_port": a.imap_port,
                 "auth_type": a.auth_type.value,
@@ -50,6 +52,7 @@ def import_config(
     for acc_data in body.accounts:
         account = Account(
             name=acc_data.name,
+            email_address=acc_data.email_address,
             imap_host=acc_data.imap_host,
             imap_port=acc_data.imap_port,
             auth_type=acc_data.auth_type,

@@ -15,12 +15,14 @@ def create_account(
     maildir_path: str,
     credentials: str | None = None,
     sync_schedule: str = "0 */6 * * *",
+    email_address: str = "",
 ) -> Account:
     encrypted_creds = None
     if credentials:
         encrypted_creds = encrypt_credentials(credentials, settings.secret_key)
     account = Account(
         name=name,
+        email_address=email_address,
         imap_host=imap_host,
         imap_port=imap_port,
         auth_type=auth_type,
