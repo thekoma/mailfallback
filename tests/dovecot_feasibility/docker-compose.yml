@@ -1,0 +1,41 @@
+# Dovecot Lua + HTTP Feasibility Test
+#
+# Two services:
+#   mock-api  -- Python HTTP server returning fake userdb JSON
+#   dovecot   -- Dovecot 2.4 with Lua userdb calling mock-api
+#
+# Usage: see run-test.sh
+
+services:
+  mock-api:
+    image: python:3.12-slim
+    command: ["python", "/app/mock-api.py"]
+    volumes:
+      - ./mock-api.py:/app/mock-api.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/internal/dovecot/userdb/testuser')"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+      start_period: 2s
+
+  dovecot:
+    image: dovecot/dovecot:latest-2.4
+    depends_on:
+      mock-api:
+        condition: service_healthy
+    volumes:
+      - ./mfb-auth.conf:/etc/dovecot/conf.d/mfb-auth.conf:ro
+      - ./lua-userdb.lua:/etc/dovecot/lua-userdb.lua:ro
+      - maildata:/data/mailboxes
+    environment:
+      - DOVEADM_PASSWORD=testadmin
+    healthcheck:
+      test: ["CMD", "/dovecot/bin/doveadm", "auth", "test", "-x", "service=imap", "testuser", "testpass"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 3s
+
+volumes:
+  maildata:

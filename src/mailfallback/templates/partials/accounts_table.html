@@ -1,0 +1,144 @@
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Account</th>
+            {% if user and user.role.value == "admin" %}<th>Owner</th>{% endif %}
+            <th>Auth</th>
+            <th>Stats</th>
+            <th>Status</th>
+            <th>Last Sync</th>
+            <th class="text-right">Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for account in accounts %}
+        <tr>
+            <td>
+                <a href="/accounts/{{ account.id }}"><strong>{{ account.name }}</strong></a>
+                {% if account.email_address %}
+                <br><span class="email-text">{{ account.email_address }}</span>
+                {% endif %}
+            </td>
+            {% if user and user.role.value == "admin" %}
+            <td>
+                {% for owner in account.owners %}
+                <span class="badge badge-user">{{ owner.username }}</span>
+                {% endfor %}
+            </td>
+            {% endif %}
+            <td>
+                {% if account.auth_type.value == "oauth2" %}
+                <span class="auth-badge">
+                    {% with provider=account.provider %}{% include "partials/provider_logo.html" %}{% endwith %}
+                    {% if account.provider == "microsoft" %}Microsoft{% elif account.provider == "google" %}Google{% else %}OAuth2{% endif %}
+                </span>
+                {% else %}
+                <span class="auth-badge">
+                    <i data-lucide="key-round" class="icon-sm"></i>
+                    Password
+                </span>
+                {% endif %}
+            </td>
+            <td>
+                {% if account.folder_stats %}
+                <span class="text-small">
+                    <i data-lucide="mail" class="icon-sm icon-inline"></i>{{ account.total_messages }}
+                    {% if account.unread_messages %}
+                    <span class="text-muted">({{ account.unread_messages }} unread)</span>
+                    {% endif %}
+                    {% if account.maildir_size_bytes %}
+                    <br><span class="text-muted">{{ account.maildir_size_bytes|filesizeformat }}</span>
+                    {% endif %}
+                </span>
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if not account.is_authenticated %}
+                <span class="badge badge-error"><i data-lucide="key-round" class="icon-sm"></i> Unauthenticated</span>
+                {% elif account.migrating %}
+                <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm"></i> Migrating</span>
+                {% else %}
+                {% if not account.enabled %}
+                <span class="badge badge-disabled"><i data-lucide="eye-off" class="icon-sm"></i> Hidden</span>
+                {% endif %}
+                {% if account.suspended %}
+                <span class="badge badge-disabled"><i data-lucide="pause-circle" class="icon-sm"></i> Suspended</span>
+                {% elif account.sync_state.value == 'syncing' %}
+                <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm"></i> syncing</span>
+                {% elif account.sync_state.value == 'error' %}
+                <span class="badge badge-error"><i data-lucide="alert-circle" class="icon-sm"></i> error</span>
+                {% elif account.enabled %}
+                <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> idle</span>
+                {% endif %}
+                {% endif %}
+            </td>
+            <td>
+                <span class="{{ account.last_sync_at | time_ago_class }}" title="{{ account.last_sync_at.strftime('%Y-%m-%d %H:%M:%S') if account.last_sync_at else '' }}">
+                    {{ account.last_sync_at | time_ago }}
+                </span>
+            </td>
+            <td>
+                <div class="actions flex-end">
+                    <div class="dropdown-wrap">
+                        <button class="icon-btn" onclick="toggleDropdown(this, event)">
+                            <i data-lucide="more-vertical" class="icon-md"></i>
+                        </button>
+                        <div class="dropdown-menu hidden">
+                            {% if account.sync_state.value == 'syncing' %}
+                            <a class="dropdown-item dropdown-danger"
+                                hx-post="/api/sync/{{ account.id }}/stop" hx-swap="none"
+                                hx-on::after-request="location.reload()">
+                                <i data-lucide="square" class="icon-sm"></i> Stop Sync
+                            </a>
+                            {% else %}
+                            <a class="dropdown-item {% if account.migrating or account.suspended or not account.is_authenticated %}dropdown-disabled{% endif %}"
+                                {% if not account.migrating and not account.suspended and account.is_authenticated %}
+                                hx-post="/api/sync/{{ account.id }}" hx-swap="none"
+                                hx-on::after-request="location.reload()"
+                                {% endif %}>
+                                <i data-lucide="refresh-cw" class="icon-sm"></i> Sync Now
+                            </a>
+                            {% endif %}
+                            <hr class="dropdown-divider">
+                            {% if account.enabled %}
+                            <a class="dropdown-item"
+                                hx-post="/accounts/{{ account.id }}/toggle-visible" hx-swap="none"
+                                hx-on::after-request="location.reload()">
+                                <i data-lucide="eye-off" class="icon-sm"></i> Hide
+                            </a>
+                            {% else %}
+                            <a class="dropdown-item"
+                                hx-post="/accounts/{{ account.id }}/toggle-visible" hx-swap="none"
+                                hx-on::after-request="location.reload()">
+                                <i data-lucide="eye" class="icon-sm"></i> Show
+                            </a>
+                            {% endif %}
+                            {% if account.suspended %}
+                            <a class="dropdown-item"
+                                hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
+                                hx-on::after-request="location.reload()">
+                                <i data-lucide="play-circle" class="icon-sm"></i> Resume
+                            </a>
+                            {% else %}
+                            <a class="dropdown-item"
+                                hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
+                                hx-on::after-request="location.reload()">
+                                <i data-lucide="pause-circle" class="icon-sm"></i> Suspend
+                            </a>
+                            {% endif %}
+                            <hr class="dropdown-divider">
+                            <a href="/accounts/{{ account.id }}" class="dropdown-item">
+                                <i data-lucide="settings" class="icon-sm"></i> Details
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>

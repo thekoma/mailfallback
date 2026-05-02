@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Settings — MFB{% endblock %}
+{% block content %}
+<h2><i data-lucide="settings" class="icon-xl icon-inline"></i>Settings</h2>
+
+<h3>Config Export/Import</h3>
+<div class="flex gap-1">
+    <a href="/api/config/export" role="button" class="outline">Export Config (JSON)</a>
+</div>
+
+<h3 class="mt-1">System Info</h3>
+<table>
+    <tr><td><i data-lucide="mail" class="icon-sm icon-inline"></i>Total Accounts</td><td>{{ total_accounts }}</td></tr>
+    <tr><td><i data-lucide="user-circle" class="icon-sm icon-inline"></i>Total Users</td><td>{{ total_users }}</td></tr>
+    <tr><td><i data-lucide="database" class="icon-sm icon-inline"></i>Mail Stores</td><td>{{ total_stores }}</td></tr>
+    <tr><td><i data-lucide="key-round" class="icon-sm icon-inline"></i>OIDC Enabled</td><td>{{ 'Yes' if oidc_enabled else 'No' }}</td></tr>
+</table>
+
+<h3>Service Status</h3>
+<table>
+    <tr>
+        <td><i data-lucide="clock" class="icon-sm icon-inline"></i>Scheduler</td>
+        <td>
+            {% if scheduler_running %}
+            <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Running</span>
+            <span class="text-muted text-small">{{ scheduler_jobs }} active job{{ 's' if scheduler_jobs != 1 else '' }}</span>
+            {% else %}
+            <span class="badge badge-disabled"><i data-lucide="pause-circle" class="icon-sm"></i> Stopped</span>
+            {% endif %}
+        </td>
+    </tr>
+    <tr>
+        <td><i data-lucide="bug" class="icon-sm icon-inline"></i>Debug Mode</td>
+        <td>{{ 'On' if debug_mode else 'Off' }}</td>
+    </tr>
+</table>
+{% endblock %}

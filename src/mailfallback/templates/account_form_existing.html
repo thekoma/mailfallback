@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Existing Maildir — MFB{% endblock %}
+{% block content %}
+<h2><i data-lucide="alert-triangle" class="icon-xl icon-inline"></i>Existing Maildir Detected</h2>
+
+<article class="error-box">
+    <p>The directory <code>{{ maildir_path }}</code> already exists and contains <strong>{{ file_count }}</strong> items.</p>
+    <p>This can happen if a previous account used the same email address and was deleted without removing the maildir.</p>
+</article>
+
+<form method="post" action="/accounts/new">
+    {% for key, value in form_data.items() %}
+    {% if key != "existing_action" %}
+    <input type="hidden" name="{{ key }}" value="{{ value }}">
+    {% endif %}
+    {% endfor %}
+
+    <div class="flex gap-1 mt-1">
+        <button type="submit" name="existing_action" value="keep" class="icon-btn primary">
+            <i data-lucide="folder-check" class="icon-md"></i> Keep existing files and continue
+        </button>
+        <button type="submit" name="existing_action" value="clean" class="icon-btn danger"
+            onclick="return confirm('Delete all files in {{ maildir_path }}? This cannot be undone.')">
+            <i data-lucide="trash-2" class="icon-md"></i> Delete files and start fresh
+        </button>
+    </div>
+</form>
+
+<a href="/accounts/new" class="mt-1 inline-block"><i data-lucide="arrow-left" class="icon-sm icon-inline"></i> Cancel</a>
+{% endblock %}

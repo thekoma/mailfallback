@@ -1,0 +1,99 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-mailfallback}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-mailfallback}
+      POSTGRES_DB: ${DB_NAME:-mailfallback}
+    env_file: .env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-mailfallback}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  mailfallback:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - maildirs:/data/mailboxes
+      - maildirs2:/data/mailboxes2
+    env_file: .env
+    environment:
+      MAILFALLBACK_DATABASE_URL: postgresql://${DB_USER:-mailfallback}:${DB_PASSWORD:-mailfallback}@db:5432/${DB_NAME:-mailfallback}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  dovecot:
+    image: dovecot/dovecot:latest-2.4
+    volumes:
+      - ./docker/dovecot/conf.d:/etc/dovecot/conf.d:ro
+      - ./docker/dovecot/dovecot-acl:/etc/dovecot/dovecot-acl:ro
+      - maildirs:/data/mailboxes
+      - maildirs2:/data/mailboxes2
+      # TLS: mount cert+key to enable IMAPS (port 31993)
+      # - ./certs/tls.crt:/etc/dovecot/ssl/tls.crt:ro
+      # - ./certs/tls.key:/etc/dovecot/ssl/tls.key:ro
+      # Then override mfb-ssl.conf: set ssl=yes
+    ports:
+      - "31143:31143"
+      # - "31993:31993"  # IMAPS (uncomment with TLS)
+    environment:
+      DOVECOT_DB_HOST: db
+      DOVECOT_DB_PORT: "5432"
+      DOVECOT_DB_NAME: ${DB_NAME:-mailfallback}
+      DOVECOT_DB_USER: ${DB_USER:-mailfallback}
+      DOVECOT_DB_PASSWORD: ${DB_PASSWORD:-mailfallback}
+      DOVECOT_API_KEY: ${MAILFALLBACK_DOVECOT_API_KEY:-mfb-dovecot-api-key-change-me}
+      DOVECOT_OAUTH2_USERINFO_URL: ${DOVECOT_OAUTH2_USERINFO_URL:-}
+      MFB_USERDB_URL: http://mailfallback:8000
+    depends_on:
+      db:
+        condition: service_healthy
+      mailfallback:
+        condition: service_healthy
+
+  roundcube:
+    image: roundcube/roundcubemail:latest
+    ports:
+      - "8001:80"
+    env_file: .env
+    environment:
+      ROUNDCUBEMAIL_DEFAULT_HOST: dovecot
+      ROUNDCUBEMAIL_DEFAULT_PORT: "31143"
+      ROUNDCUBEMAIL_DB_TYPE: pgsql
+      ROUNDCUBEMAIL_DB_HOST: db
+      ROUNDCUBEMAIL_DB_PORT: "5432"
+      ROUNDCUBEMAIL_DB_USER: ${DB_USER:-mailfallback}
+      ROUNDCUBEMAIL_DB_PASSWORD: ${DB_PASSWORD:-mailfallback}
+      ROUNDCUBEMAIL_DB_NAME: ${DB_NAME:-mailfallback}
+      ROUNDCUBEMAIL_SKIN: elastic
+      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,subscriptions_option
+      ROUNDCUBE_OAUTH_CLIENT_ID: ${ROUNDCUBE_OAUTH_CLIENT_ID:-}
+      ROUNDCUBE_OAUTH_CLIENT_SECRET: ${ROUNDCUBE_OAUTH_CLIENT_SECRET:-}
+      ROUNDCUBE_OAUTH_AUTH_URI: ${ROUNDCUBE_OAUTH_AUTH_URI:-}
+      ROUNDCUBE_OAUTH_TOKEN_URI: ${ROUNDCUBE_OAUTH_TOKEN_URI:-}
+      ROUNDCUBE_OAUTH_IDENTITY_URI: ${ROUNDCUBE_OAUTH_IDENTITY_URI:-}
+    volumes:
+      - ./docker/roundcube/custom.php:/var/roundcube/config/custom.php:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      dovecot:
+        condition: service_started
+
+volumes:
+  pgdata:
+  maildirs:
+  maildirs2:

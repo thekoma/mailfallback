@@ -1,0 +1,14 @@
+{% if state == "syncing" %}
+<div id="sync-status" hx-get="/accounts/{{ account_id }}/sync-status"
+    hx-trigger="every 3s" hx-swap="outerHTML">
+    <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i> syncing</span>
+</div>
+{% elif state == "error" %}
+<div id="sync-status">
+    <span class="badge badge-error"><i data-lucide="alert-circle" class="icon-sm"></i> error</span>
+</div>
+{% else %}
+<div id="sync-status">
+    <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> idle</span>
+</div>
+{% endif %}

@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — MFB{% endblock %}
+{% block content %}
+<h2><i data-lucide="home" class="icon-xl icon-inline"></i>Dashboard</h2>
+
+<div class="stat-cards">
+    <a href="/accounts" class="stat-card">
+        <div class="stat-value">{{ stats.accounts }}</div>
+        <div class="stat-label"><i data-lucide="mail" class="icon-sm icon-inline"></i> Accounts</div>
+    </a>
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.messages | default(0) }}</div>
+        <div class="stat-label"><i data-lucide="inbox" class="icon-sm icon-inline"></i> Messages</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.storage }}</div>
+        <div class="stat-label"><i data-lucide="hard-drive" class="icon-sm icon-inline"></i> Usage{% if stats.storage_total %} <span class="text-xs">({{ stats.storage_total }} disk)</span>{% endif %}</div>
+    </div>
+    <a href="/accounts" class="stat-card {% if stats.errors > 0 %}stat-error{% else %}stat-ok{% endif %}">
+        <div class="stat-value">{{ stats.errors }}</div>
+        <div class="stat-label"><i data-lucide="alert-circle" class="icon-sm icon-inline"></i> Errors</div>
+    </a>
+    {% if user.role.value == "admin" %}
+    <a href="/admin/users" class="stat-card">
+        <div class="stat-value">{{ stats.users }}</div>
+        <div class="stat-label"><i data-lucide="user-circle" class="icon-sm icon-inline"></i> Users</div>
+    </a>
+    <a href="/admin/stores" class="stat-card">
+        <div class="stat-value">{{ stats.stores }}</div>
+        <div class="stat-label"><i data-lucide="database" class="icon-sm icon-inline"></i> Stores</div>
+    </a>
+    {% endif %}
+</div>
+
+{% if attention %}
+<details open>
+    <summary><i data-lucide="alert-triangle" class="icon-md icon-inline"></i><strong>Needs Attention ({{ attention | length }})</strong></summary>
+    <div class="mt-05">
+    {% for item in attention %}
+    <div class="attention-item">
+        {% if item.type == 'error' %}
+        <span class="badge badge-error"><i data-lucide="alert-circle" class="icon-sm"></i></span>
+        {% else %}
+        <span class="badge badge-syncing"><i data-lucide="clock" class="icon-sm"></i></span>
+        {% endif %}
+        <div class="flex-1">
+            <a href="/accounts/{{ item.id }}"><strong>{{ item.name }}</strong></a>
+            <span class="text-small text-muted">— {{ item.reason }}</span>
+        </div>
+        {% if item.type == 'error' %}
+        <button class="icon-btn primary" hx-post="/api/sync/{{ item.id }}" hx-swap="none" hx-on::after-request="location.reload()">
+            <i data-lucide="refresh-cw" class="icon-sm"></i> Retry
+        </button>
+        {% endif %}
+    </div>
+    {% endfor %}
+    </div>
+</details>
+{% endif %}
+
+{% if recent_jobs %}
+<details open>
+    <summary><i data-lucide="activity" class="icon-md icon-inline"></i><strong>Recent Activity</strong></summary>
+    <div class="mt-05">
+    {% for job in recent_jobs %}
+    <div class="attention-item">
+        {% if job.status == 'completed' %}
+        <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i></span>
+        {% elif job.status == 'failed' %}
+        <span class="badge badge-error"><i data-lucide="x-circle" class="icon-sm"></i></span>
+        {% elif job.status == 'running' %}
+        <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i></span>
+        {% else %}
+        <span class="badge badge-disabled"><i data-lucide="clock" class="icon-sm"></i></span>
+        {% endif %}
+        <div class="flex-1">
+            <a href="/accounts/{{ job.account_id }}"><strong>{{ job.account_name }}</strong></a>
+            <span class="text-small text-muted">—
+                {% if job.status == 'completed' %}synced{% elif job.status == 'failed' %}failed{% elif job.status == 'running' %}syncing{% else %}queued{% endif %}
+                {{ job.time_ago }}</span>
+        </div>
+    </div>
+    {% endfor %}
+    </div>
+</details>
+{% endif %}
+
+{% if not attention and not recent_jobs and stats.accounts == 0 %}
+<div class="text-center mt-1">
+    <p class="text-muted">No accounts yet. <a href="/accounts/new">Add your first email backup</a>.</p>
+</div>
+{% endif %}
+{% endblock %}

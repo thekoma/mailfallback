@@ -1,0 +1,13 @@
+<div id="live-log-panel"
+    {% if not finished %}
+    hx-get="/accounts/{{ account_id }}/partials/live-log?job_id={{ job_id }}"
+    hx-trigger="every 2s"
+    hx-swap="outerHTML"
+    {% endif %}>
+    <pre class="log-pre" id="live-log-pre">{{ log_text }}</pre>
+    {% if finished %}
+    <small class="text-muted"><i data-lucide="check-circle" class="icon-sm icon-inline"></i>Sync finished</small>
+    {% else %}
+    <small class="sync-syncing"><i data-lucide="loader" class="icon-sm icon-inline spin"></i>Syncing…</small>
+    {% endif %}
+</div>

@@ -1,0 +1,53 @@
+import contextlib
+import imaplib
+
+
+def check_imap_credentials(
+    host: str,
+    port: int = 993,
+    tls_type: str = "IMAPS",
+    username: str | None = None,
+    password: str | None = None,
+) -> dict:
+    try:
+        if tls_type == "IMAPS":
+            conn = imaplib.IMAP4_SSL(host, port, timeout=10)
+        elif tls_type == "STARTTLS":
+            conn = imaplib.IMAP4(host, port, timeout=10)
+            conn.starttls()
+        else:
+            conn = imaplib.IMAP4(host, port, timeout=10)
+        greeting = conn.welcome.decode() if conn.welcome else "OK"
+
+        auth_mechs = _extract_auth_capabilities(conn)
+
+        login_ok = None
+        login_message = None
+        if username and password:
+            try:
+                conn.login(username, password)
+                login_ok = True
+                login_message = "Login successful"
+            except imaplib.IMAP4.error as e:
+                login_ok = False
+                login_message = str(e)
+
+        conn.logout()
+        return {
+            "ok": True,
+            "message": greeting,
+            "auth_mechs": auth_mechs,
+            "login_ok": login_ok,
+            "login_message": login_message,
+        }
+    except (imaplib.IMAP4.error, TimeoutError, OSError) as e:
+        return {"ok": False, "message": str(e)}
+
+
+def _extract_auth_capabilities(conn: imaplib.IMAP4) -> list[str]:
+    with contextlib.suppress(Exception):
+        typ, data = conn.capability()
+        if typ == "OK" and data:
+            caps = data[0].decode().split()
+            return sorted(c.removeprefix("AUTH=") for c in caps if c.startswith("AUTH="))
+    return []

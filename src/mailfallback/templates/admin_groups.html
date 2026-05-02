@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Groups — MFB{% endblock %}
+{% block content %}
+<h2><i data-lucide="users" class="icon-xl icon-inline"></i>Groups</h2>
+
+<p class="text-muted">Groups let you share account access with multiple users. Members of a group can see all accounts assigned to it. SSO-synced groups auto-update membership from OIDC claims.</p>
+
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Owner</th>
+            <th>Members</th>
+            <th>Accounts</th>
+            <th>SSO Sync</th>
+            <th class="text-right">Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for g in groups %}
+        <tr>
+            <td>{{ g.name }}</td>
+            <td><span class="badge badge-user">{{ g.owner.username }}</span></td>
+            <td>{{ g.members | length }}</td>
+            <td>{{ g.accounts | length }}</td>
+            <td>
+                {% if g.sso_sync %}
+                <span class="badge badge-admin"><i data-lucide="refresh-cw" class="icon-sm"></i> SSO</span>
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+            </td>
+            <td>
+                <div class="actions flex-end">
+                    <button class="icon-btn" title="Edit" onclick="toggleRow('edit-{{ g.id }}')">
+                        <i data-lucide="pencil" class="icon-md"></i>
+                    </button>
+                    {% if user.role.value == "admin" %}
+                    <form method="post" action="/admin/groups/{{ g.id }}/delete" class="inline-form"
+                        onsubmit="return confirm('Delete group {{ g.name }}?')">
+                        <button type="submit" class="icon-btn danger" title="Delete">
+                            <i data-lucide="trash-2" class="icon-md"></i>
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+            </td>
+        </tr>
+        <tr id="edit-{{ g.id }}" class="hidden">
+            <td colspan="6">
+                <form method="post" action="/admin/groups/{{ g.id }}/edit">
+                    <div class="grid-2 mt-025">
+                        <div>
+                            <label><strong>Members:</strong></label>
+                            <div class="flex gap-05 flex-wrap mt-025">
+                                {% for u in all_users %}
+                                <label class="checkbox-pill">
+                                    <input type="checkbox" name="member_ids" value="{{ u.id }}"
+                                        {% if u in g.members %}checked{% endif %}>
+                                    {{ u.username }}
+                                </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div>
+                            <label><strong>Visible accounts:</strong></label>
+                            <div class="flex gap-05 flex-wrap mt-025">
+                                {% for a in all_accounts %}
+                                <label class="checkbox-pill">
+                                    <input type="checkbox" name="account_ids" value="{{ a.id }}"
+                                        {% if a in g.accounts %}checked{% endif %}>
+                                    {{ a.name }}
+                                </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-05">
+                        <label class="checkbox-pill">
+                            <input type="checkbox" name="sso_sync" value="1"
+                                {% if g.sso_sync %}checked{% endif %}>
+                            SSO auto-sync
+                        </label>
+                    </div>
+                    <button type="submit" class="icon-btn primary mt-05">
+                        <i data-lucide="save" class="icon-md"></i> Save
+                    </button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        {% if not groups %}
+        <tr><td colspan="6" class="text-muted">No groups yet.</td></tr>
+        {% endif %}
+    </tbody>
+</table>
+</div>
+
+{% if user.role.value == "admin" %}
+<hr>
+<h3><i data-lucide="plus-circle" class="icon-lg icon-inline"></i>Create Group</h3>
+<form method="post" action="/admin/groups/new">
+    <div class="grid-3-auto">
+        <div>
+            <label for="group_name">Name</label>
+            <input type="text" id="group_name" name="name" required>
+        </div>
+        <div>
+            <label for="group_owner">Owner</label>
+            <select id="group_owner" name="owner_id">
+                {% for u in all_users %}
+                <option value="{{ u.id }}">{{ u.username }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label>&nbsp;</label>
+            <label class="checkbox-pill">
+                <input type="checkbox" name="sso_sync" value="1"> SSO sync
+            </label>
+        </div>
+        <button type="submit" class="icon-btn primary">
+            <i data-lucide="plus-circle" class="icon-md"></i> Create
+        </button>
+    </div>
+</form>
+{% endif %}
+{% endblock %}

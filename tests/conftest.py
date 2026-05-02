@@ -1,0 +1,53 @@
+# tests/conftest.py
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from mailfallback.app import create_app
+from mailfallback.db import Base
+from mailfallback.dependencies import get_db
+from mailfallback.models import MailStore
+
+
+@pytest.fixture
+def db_session():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@pytest.fixture
+def default_store(db_session):
+    """Create and return a default MailStore for tests that need one."""
+    store = MailStore(name="default", path="/data/mailboxes")
+    db_session.add(store)
+    db_session.commit()
+    db_session.refresh(store)
+    return store
+
+
+@pytest.fixture
+def app(db_session):
+    import mailfallback.config as cfg
+
+    original_key = cfg.settings.dovecot_api_key
+    cfg.settings.dovecot_api_key = "test-key"
+    application = create_app()
+    application.dependency_overrides[get_db] = lambda: db_session
+    yield application
+    cfg.settings.dovecot_api_key = original_key
+
+
+@pytest.fixture
+def client(app):
+    return TestClient(app)

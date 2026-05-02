@@ -1,0 +1,40 @@
+{% if folder_stats %}
+<details id="stats-details">
+    <summary>
+        <i data-lucide="bar-chart-3" class="icon-md icon-inline"></i><strong>Mailbox Statistics</strong>
+        <span id="stats-inline" class="text-muted text-small">
+            — {{ account.total_messages }} messages{% if account.unread_messages %} ({{ account.unread_messages }} unread){% endif %}, {{ account.maildir_size_bytes|filesizeformat }}
+        </span>
+    </summary>
+    <div class="table-wrap">
+    <table class="mt-1">
+        <thead>
+            <tr><th>Folder</th><th>Messages</th><th>Unread</th><th>Size</th></tr>
+        </thead>
+        <tbody>
+            {% for folder in folder_stats %}
+            <tr>
+                <td>{{ folder.name }}</td>
+                <td>{{ folder.messages }}</td>
+                <td>{{ folder.unread if folder.unread else '—' }}</td>
+                <td>{{ folder.size_bytes|filesizeformat if folder.size_bytes else '—' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <td><strong>Total</strong></td>
+                <td><strong>{{ account.total_messages }}</strong></td>
+                <td><strong>{{ account.unread_messages if account.unread_messages else '—' }}</strong></td>
+                <td><strong>{{ account.maildir_size_bytes|filesizeformat if account.maildir_size_bytes else '—' }}</strong></td>
+            </tr>
+        </tfoot>
+    </table>
+    </div>
+    <small class="text-muted">
+        Updated: {{ account.last_sync_at.strftime('%Y-%m-%d %H:%M') if account.last_sync_at else 'Never' }}
+    </small>
+</details>
+{% elif account.last_sync_at %}
+<p class="text-muted"><i data-lucide="bar-chart-3" class="icon-sm icon-inline"></i> No folder statistics available.</p>
+{% endif %}

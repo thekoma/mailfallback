@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Accounts — MFB{% endblock %}
+{% block content %}
+<div class="flex-between">
+    <h2><i data-lucide="mail" class="icon-xl icon-inline"></i>Accounts</h2>
+    <div class="actions">
+        <button class="icon-btn" title="Sync All Accounts"
+            hx-post="/api/sync/all" hx-swap="none"
+            hx-on::after-request="location.reload()">
+            <i data-lucide="refresh-cw" class="icon-md"></i> Sync All
+        </button>
+        <a href="/accounts/new" class="icon-btn primary">
+            <i data-lucide="plus-circle" class="icon-md"></i> New Account
+        </a>
+    </div>
+</div>
+
+{% if not accounts %}
+<p class="text-muted">No accounts configured yet. Click <strong>New Account</strong> to add your first email backup.</p>
+{% else %}
+<div hx-get="/partials/accounts-table" hx-trigger="every 30s" hx-swap="innerHTML">
+    {% include "partials/accounts_table.html" %}
+</div>
+{% endif %}
+{% endblock %}
