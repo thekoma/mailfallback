@@ -1,0 +1,33 @@
+{% if drain.draining %}
+<div hx-get="/admin/stores/{{ store.id }}/drain-progress" hx-trigger="every 2s" hx-swap="innerHTML">
+    {% set total = drain.active + drain.completed + drain.failed %}
+    {% set done = drain.completed + drain.failed %}
+    {% set pct = (drain.copied_bytes * 100 // drain.total_bytes) if drain.total_bytes > 0 else 0 %}
+    <div class="flex-between mb-025">
+        <small><strong>Draining</strong> — {{ done }}/{{ total }} items</small>
+        <small>{{ pct }}%</small>
+    </div>
+    <progress value="{{ pct }}" max="100" style="margin-bottom:0.5rem"></progress>
+    {% for item in drain.items %}
+    <div class="flex gap-05 items-center">
+        {% if item.status == 'copying' %}
+        <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i> copying</span>
+        {% elif item.status == 'verifying' %}
+        <span class="badge badge-syncing"><i data-lucide="check" class="icon-sm"></i> verifying</span>
+        {% elif item.status == 'cleaning' %}
+        <span class="badge badge-syncing"><i data-lucide="trash" class="icon-sm"></i> cleaning</span>
+        {% else %}
+        <span class="badge badge-disabled"><i data-lucide="clock" class="icon-sm"></i> {{ item.status }}</span>
+        {% endif %}
+        <span class="text-small">{{ item.label }}</span>
+    </div>
+    {% endfor %}
+    {% if drain.failed > 0 %}
+    <p class="alert-error text-small mt-05"><i data-lucide="alert-circle" class="icon-sm icon-inline"></i>{{ drain.failed }} migration(s) failed</p>
+    {% endif %}
+</div>
+{% elif drain.just_finished %}
+<div>
+    <p class="alert-success text-small"><i data-lucide="check-circle" class="icon-sm icon-inline"></i>Drain complete — {{ drain.completed }} migrated{% if drain.failed > 0 %}, {{ drain.failed }} failed{% endif %}</p>
+</div>
+{% endif %}

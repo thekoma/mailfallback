@@ -1,0 +1,90 @@
+<details {% if not is_edit %}open{% endif %}>
+    <summary><i data-lucide="refresh-cw" class="icon-md icon-inline"></i><strong>Sync Settings</strong></summary>
+    <div class="grid-2 mt-1">
+        <div>
+            <label for="sync_schedule">Schedule (cron)</label>
+            <input type="text" id="sync_schedule" name="sync_schedule" value="{{ sync_schedule }}">
+        </div>
+        <div>
+            <label for="sync_direction">Direction</label>
+            <select id="sync_direction" name="sync_direction">
+                <option value="Full" {% if extra.get('sync') == 'Full' %}selected{% endif %}>Full (bidirectional)</option>
+                <option value="Pull" {% if extra.get('sync') == 'Pull' or not extra.get('sync') %}selected{% endif %}>Pull only (remote &#8594; local)</option>
+                <option value="Push" {% if extra.get('sync') == 'Push' %}selected{% endif %}>Push only (local &#8594; remote)</option>
+                <option value="None" {% if extra.get('sync') == 'None' %}selected{% endif %}>None</option>
+            </select>
+        </div>
+        <div>
+            <label for="create_policy">Create Mailboxes</label>
+            <select id="create_policy" name="create_policy">
+                <option value="Near" {% if extra.get('create') == 'Near' or not extra.get('create') %}selected{% endif %}>Near (local only)</option>
+                <option value="Both" {% if extra.get('create') == 'Both' %}selected{% endif %}>Both</option>
+                <option value="Far" {% if extra.get('create') == 'Far' %}selected{% endif %}>Far (remote only)</option>
+                <option value="None" {% if extra.get('create') == 'None' %}selected{% endif %}>None</option>
+            </select>
+        </div>
+        <div>
+            <label for="expunge_policy">Expunge Deleted</label>
+            <select id="expunge_policy" name="expunge_policy">
+                <option value="None" {% if extra.get('expunge') == 'None' or not extra.get('expunge') %}selected{% endif %}>None (keep deleted)</option>
+                <option value="Near" {% if extra.get('expunge') == 'Near' %}selected{% endif %}>Near (local only)</option>
+                <option value="Far" {% if extra.get('expunge') == 'Far' %}selected{% endif %}>Far (remote only)</option>
+                <option value="Both" {% if extra.get('expunge') == 'Both' %}selected{% endif %}>Both</option>
+            </select>
+        </div>
+        <div>
+            <label for="patterns">Folder Patterns</label>
+            <input type="text" id="patterns" name="patterns" value="{{ extra.get('patterns', '*') }}" placeholder='e.g. * ![Gmail]* "[Gmail]/Sent Mail"'>
+        </div>
+        <div>
+            <label for="max_messages">Max Messages <small class="text-muted">(0 = unlimited)</small></label>
+            <input type="number" id="max_messages" name="max_messages" value="{{ extra.get('max_messages', '0') }}" min="0">
+        </div>
+    </div>
+</details>
+
+<details>
+    <summary><i data-lucide="sliders-horizontal" class="icon-md icon-inline"></i><strong>Advanced Settings</strong></summary>
+    <div class="grid-2 mt-1">
+        <div>
+            <label>SubFolders Format</label>
+            <input type="text" value="Verbatim" disabled>
+            <small class="text-muted">Fixed to Verbatim (LAYOUT=fs). Supports dots in folder names.</small>
+        </div>
+        <div>
+            <label for="timeout">Timeout (seconds)</label>
+            <input type="number" id="timeout" name="timeout" value="{{ extra.get('timeout', '20') }}" min="0">
+        </div>
+        <div>
+            <label for="pipeline_depth">Pipeline Depth <small class="text-muted">(0 = unlimited)</small></label>
+            <input type="number" id="pipeline_depth" name="pipeline_depth" value="{{ extra.get('pipeline_depth', '0') }}" min="0">
+        </div>
+        <div>
+            <label for="max_size">Max Message Size <small class="text-muted">(e.g. 50m, 0 = unlimited)</small></label>
+            <input type="text" id="max_size" name="max_size" value="{{ extra.get('max_size', '0') }}">
+        </div>
+        <div>
+            <label>
+                <input type="checkbox" id="copy_arrival_date" name="copy_arrival_date" value="1"
+                    {% if extra.get('copy_arrival_date') %}checked{% endif %}>
+                Preserve message arrival dates
+            </label>
+        </div>
+        <div>
+            <label for="disable_extensions">Disable IMAP Extensions</label>
+            <input type="text" id="disable_extensions" name="disable_extensions" value="{{ extra.get('disable_extensions', '') }}" placeholder="e.g. COMPRESS=DEFLATE">
+        </div>
+        {% if is_edit %}
+        <div>
+            <input type="hidden" id="auth_mechs" name="auth_mechs" value="{{ extra.get('auth_mechs', '') }}">
+            <div id="auth-mechs-caps" class="hidden"></div>
+            <div class="mt-05">
+                <button type="button" class="icon-btn primary" onclick="checkParameters()">
+                    <i data-lucide="check-circle" class="icon-md"></i> Test Connection
+                </button>
+                <span id="check-result" class="text-small"></span>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</details>

@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}Mail Stores — MFB{% endblock %}
+{% block content %}
+<h2><i data-lucide="hard-drive" class="icon-xl icon-inline"></i>Mail Stores</h2>
+
+<p class="text-muted">Stores are base directories where mailboxes and Dovecot home directories are saved. Maildir paths are derived automatically from the store path and account UUID.</p>
+
+{% if error %}
+<p class="alert-error">{{ error }}</p>
+{% endif %}
+
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Path</th>
+            <th>Disk Usage</th>
+            <th>Status</th>
+            <th>Accounts</th>
+            <th>Users</th>
+            <th class="text-right">Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for store in stores %}
+        <tr {% if not store.enabled %}class="row-disabled"{% endif %}>
+            <td>
+                {{ store.name }}
+                {% if store.is_default %}
+                <span class="badge badge-admin">default</span>
+                {% endif %}
+            </td>
+            <td><code>{{ store.path }}</code></td>
+            <td>
+                {% if store_stats.get(store.id) %}
+                {% set s = store_stats[store.id] %}
+                <span class="text-small">
+                    {{ s.used|filesizeformat }} / {{ s.total|filesizeformat }}
+                    <br><span class="text-muted">{{ s.free|filesizeformat }} free</span>
+                </span>
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if store.enabled %}
+                <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Active</span>
+                {% else %}
+                <span class="badge badge-disabled"><i data-lucide="pause-circle" class="icon-sm"></i> Disabled</span>
+                {% endif %}
+            </td>
+            <td>{{ store.accounts | length }}</td>
+            <td>{{ store.users | length }}</td>
+            <td>
+                <div class="actions flex-end">
+                    <div class="dropdown-wrap">
+                        <button class="icon-btn" onclick="toggleDropdown(this, event)">
+                            <i data-lucide="more-vertical" class="icon-md"></i>
+                        </button>
+                        <div class="dropdown-menu hidden">
+                            <a class="dropdown-item" onclick="closeDropdown(); toggleRow('rename-{{ store.id }}')">
+                                <i data-lucide="pencil" class="icon-sm"></i> Rename
+                            </a>
+                            {% if not store.is_default %}
+                            <form method="post" action="/admin/stores/{{ store.id }}/set-default" class="inline-form">
+                                <button type="submit" class="dropdown-item" onclick="closeDropdown()">
+                                    <i data-lucide="star" class="icon-sm"></i> Set as Default
+                                </button>
+                            </form>
+                            {% endif %}
+                            <a class="dropdown-item" onclick="closeDropdown(); toggleRow('contents-{{ store.id }}')">
+                                <i data-lucide="arrow-right-from-line" class="icon-sm"></i> View Contents
+                            </a>
+                            <hr class="dropdown-divider">
+                            {% if store.enabled %}
+                            <form method="post" action="/admin/stores/{{ store.id }}/toggle" class="inline-form">
+                                <button type="submit" class="dropdown-item" onclick="closeDropdown()">
+                                    <i data-lucide="pause-circle" class="icon-sm"></i> Disable
+                                </button>
+                            </form>
+                            {% else %}
+                            <form method="post" action="/admin/stores/{{ store.id }}/toggle" class="inline-form">
+                                <button type="submit" class="dropdown-item" onclick="closeDropdown()">
+                                    <i data-lucide="play-circle" class="icon-sm"></i> Enable
+                                </button>
+                            </form>
+                            {% endif %}
+                            <hr class="dropdown-divider">
+                            <form method="post" action="/admin/stores/{{ store.id }}/delete" class="inline-form"
+                                onsubmit="return confirm('Delete store {{ store.name }}? Store must be empty (use Drain first).')">
+                                <button type="submit" class="dropdown-item dropdown-danger" onclick="closeDropdown()"
+                                    {% if store.accounts | length > 0 or store.users | length > 0 %}disabled{% endif %}>
+                                    <i data-lucide="trash-2" class="icon-sm"></i> Delete
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </td>
+        </tr>
+        <tr id="rename-{{ store.id }}" class="hidden">
+            <td colspan="7">
+                <form method="post" action="/admin/stores/{{ store.id }}/rename" class="inline-form">
+                    <div class="grid-2-auto">
+                        <div>
+                            <label>Rename store</label>
+                            <input type="text" name="name" value="{{ store.name }}" required>
+                        </div>
+                        <button type="submit" class="icon-btn primary">
+                            <i data-lucide="check" class="icon-md"></i> Save
+                        </button>
+                    </div>
+                </form>
+            </td>
+        </tr>
+        <tr id="contents-{{ store.id }}" class="hidden">
+            <td colspan="7">
+                {% set has_contents = store.accounts | length > 0 or store.users | length > 0 %}
+                {% if has_contents %}
+                <div class="grid-2 mb-025">
+                    <div>
+                        <strong><i data-lucide="mail" class="icon-sm icon-inline"></i>Accounts ({{ store.accounts | length }})</strong>
+                        <div class="mt-025">
+                        {% for a in store.accounts %}
+                            <span class="badge{% if a.migrating %} badge-syncing{% endif %}">{{ a.name }}{% if a.email_address %} ({{ a.email_address }}){% endif %}</span>
+                        {% endfor %}
+                        </div>
+                    </div>
+                    <div>
+                        <strong><i data-lucide="home" class="icon-sm icon-inline"></i>User homes ({{ store.users | length }})</strong>
+                        <div class="mt-025">
+                        {% for su in store.users %}
+                            <span class="badge badge-admin{% if su.migrating %} badge-syncing{% endif %}">{{ su.username }}</span>
+                        {% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <div id="drain-progress-{{ store.id }}"
+                    hx-get="/admin/stores/{{ store.id }}/drain-progress"
+                    hx-trigger="load"
+                    hx-swap="innerHTML">
+                </div>
+
+                {% set other_stores = [] %}
+                {% for s in stores %}
+                    {% if s.id != store.id %}
+                        {% set _ = other_stores.append(s) %}
+                    {% endif %}
+                {% endfor %}
+
+                {% if other_stores %}
+                <form method="post" action="/admin/stores/{{ store.id }}/drain" class="mt-05"
+                    onsubmit="return confirm('Drain all contents of {{ store.name }}? Sync and IMAP access will be blocked during migration.')">
+                    <div class="flex gap-05 items-end">
+                        <div>
+                            <label class="text-small">Move everything to:</label>
+                            <select name="target_store_id" style="margin-bottom:0">
+                                {% for s in other_stores %}
+                                <option value="{{ s.id }}">{{ s.name }} ({{ s.path }})</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <button type="submit" class="icon-btn warning">
+                            <i data-lucide="arrow-right-from-line" class="icon-md"></i> Drain
+                        </button>
+                    </div>
+                </form>
+                {% else %}
+                <p class="text-muted text-small mt-05">No other stores available — create one first.</p>
+                {% endif %}
+
+                {% else %}
+                <p class="text-small"><i data-lucide="check-circle" class="icon-sm icon-inline"></i>Store is empty — safe to delete.</p>
+                {% endif %}
+
+                {% set orphans = store_orphans.get(store.id, []) %}
+                {% if orphans %}
+                <div class="mt-05">
+                    <strong><i data-lucide="alert-triangle" class="icon-sm icon-inline"></i>Orphaned directories ({{ orphans | length }})</strong>
+                    <p class="text-small text-muted mt-025">Directories on disk that don't match any account in the database.</p>
+                    <div class="mt-025">
+                    {% for o in orphans %}
+                        <span class="badge badge-disabled"><code>{{ o.name[:8] }}…</code> {{ o.size | filesizeformat }}</span>
+                    {% endfor %}
+                    </div>
+                    <form method="post" action="/admin/stores/{{ store.id }}/cleanup-orphans" class="mt-05"
+                        onsubmit="return confirm('Delete {{ orphans | length }} orphaned directories? This cannot be undone.')">
+                        <button type="submit" class="icon-btn danger">
+                            <i data-lucide="trash-2" class="icon-md"></i> Clean up {{ orphans | length }} orphan{{ 's' if orphans | length > 1 else '' }}
+                        </button>
+                    </form>
+                </div>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        {% if not stores %}
+        <tr><td colspan="7" class="text-muted">No stores configured yet.</td></tr>
+        {% endif %}
+    </tbody>
+</table>
+</div>
+
+<hr>
+
+<h3><i data-lucide="folder-plus" class="icon-lg icon-inline"></i>Add Store</h3>
+<form method="post" action="/admin/stores/new">
+    <div class="grid-2-auto">
+        <div>
+            <label for="store_name">Name</label>
+            <input type="text" id="store_name" name="name" placeholder="NAS Primary" required>
+        </div>
+        <div>
+            <label for="store_path">Base Path</label>
+            <input type="text" id="store_path" name="path" placeholder="/data/mailboxes" required>
+        </div>
+        <button type="submit" class="icon-btn primary">
+            <i data-lucide="folder-plus" class="icon-md"></i> Add
+        </button>
+    </div>
+</form>
+{% endblock %}

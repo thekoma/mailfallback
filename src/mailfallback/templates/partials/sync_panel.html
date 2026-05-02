@@ -1,0 +1,280 @@
+{% set polling = hero_state in ("syncing", "syncing-indeterminate", "first-sync") %}
+<div id="hero-panel"
+    class="hero-panel hero-{{ hero_state }}"
+    {% if polling %}
+    hx-get="/accounts/{{ account.id }}/partials/sync-panel"
+    hx-trigger="every 2s"
+    hx-target="#hero-panel"
+    hx-swap="outerHTML"
+    {% endif %}>
+
+{% if hero_state == "idle" %}
+{# ── STATE: IDLE (sync OK) ── #}
+<div class="hero-header">
+    <div class="hero-title">
+        <i data-lucide="check-circle" class="icon-lg"></i>
+        <strong>Up to date</strong>
+    </div>
+    <div class="hero-actions">
+        <button class="icon-btn primary" title="Sync Now"
+            hx-post="/api/sync/{{ account.id }}" hx-swap="none"
+            hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
+            <i data-lucide="refresh-cw" class="icon-md"></i> Sync now
+        </button>
+    </div>
+</div>
+<div class="hero-body">
+    <p>Backed up {{ account.last_sync_at | time_ago }}
+    <br>{{ account.total_messages | number }} messages · {{ account.maildir_size_bytes | filesizeformat }}
+    <br>Schedule: <code>{{ account.sync_schedule | cron_human }}</code></p>
+</div>
+
+{% elif hero_state == "empty" %}
+{# ── STATE: EMPTY (never synced) ── #}
+<div class="hero-header">
+    <div class="hero-title">
+        <i data-lucide="circle" class="icon-lg"></i>
+        <strong>Not yet backed up</strong>
+    </div>
+    <div class="hero-actions">
+        <button class="icon-btn primary" title="Start first backup"
+            hx-post="/api/sync/{{ account.id }}" hx-swap="none"
+            hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
+            <i data-lucide="refresh-cw" class="icon-md"></i> Start first backup
+        </button>
+    </div>
+</div>
+<div class="hero-body">
+    <p>No messages downloaded yet. This account is connected and ready.</p>
+</div>
+
+{% elif hero_state in ("syncing", "syncing-indeterminate", "first-sync") %}
+{# ── STATE: SYNCING ── #}
+<div class="hero-header">
+    <div class="hero-title">
+        <span class="pulse-dot"></span>
+        <strong>{% if hero_state == "first-sync" %}First backup in progress…{% else %}Backing up…{% endif %}</strong>
+    </div>
+    <div class="hero-actions">
+        <button class="icon-btn danger" title="Stop"
+            hx-post="/api/sync/{{ account.id }}/stop" hx-swap="none"
+            hx-on::after-request="htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})">
+            <i data-lucide="square" class="icon-md"></i> Stop
+        </button>
+    </div>
+</div>
+<div class="hero-body">
+    {% if hero_state == "first-sync" %}
+    <p class="text-small text-muted">This may take a while — first backups download every message in your account.</p>
+    {% endif %}
+
+    {% if snap and snap.current_folder %}
+    <p>Downloading <strong>{{ snap.current_folder }}</strong></p>
+
+    {% if snap.per_folder %}
+    {% set current = snap.per_folder[-1] %}
+    {% if current.added_total > 0 %}
+    <div class="progress-bar">
+        <div class="progress-bar-fill" style="width: {{ (current.added_done / current.added_total * 100) | int }}%"></div>
+    </div>
+    <p class="text-small text-muted mt-025">{{ current.added_done | number }} / {{ current.added_total | number }} messages</p>
+    {% else %}
+    <div class="progress-bar">
+        <div class="progress-bar-fill indeterminate"></div>
+    </div>
+    {% endif %}
+    {% endif %}
+
+    {% if snap.folder_total_estimate %}
+    <div class="folder-chips mt-025">
+        {% for f in snap.per_folder %}
+        {% if f.phase == "done" %}
+        <span class="chip is-done" title="{{ f.name }} — done"></span>
+        {% elif loop.last %}
+        <span class="chip is-active" title="{{ f.name }} — in progress"></span>
+        {% else %}
+        <span class="chip is-done" title="{{ f.name }}"></span>
+        {% endif %}
+        {% endfor %}
+        {% for _ in range(snap.folder_total_estimate - snap.per_folder | length) %}
+        <span class="chip is-pending"></span>
+        {% endfor %}
+        <span class="text-xs text-muted">Folder {{ snap.folder_index }} of {{ snap.folder_total_estimate }}</span>
+    </div>
+    {% elif snap.folder_index > 0 %}
+    <p class="text-xs text-muted">Folder {{ snap.folder_index }} of …</p>
+    {% endif %}
+
+    {% elif snap and snap.phase in ("connecting", "authenticating", "listing") %}
+    <p>{{ snap.phase | capitalize }}…</p>
+    <div class="progress-bar">
+        <div class="progress-bar-fill indeterminate"></div>
+    </div>
+    {% else %}
+    <p>Starting…</p>
+    <div class="progress-bar">
+        <div class="progress-bar-fill indeterminate"></div>
+    </div>
+    {% endif %}
+</div>
+
+{% elif hero_state == "error" %}
+{# ── STATE: ERROR ── #}
+<div class="hero-header">
+    <div class="hero-title">
+        <i data-lucide="x-circle" class="icon-lg"></i>
+        <strong>Backup failed</strong>
+    </div>
+    <div class="hero-actions">
+        <button class="icon-btn primary" title="Try again"
+            hx-post="/api/sync/{{ account.id }}" hx-swap="none"
+            hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
+            <i data-lucide="refresh-cw" class="icon-md"></i> Try again
+        </button>
+        {% if snap and snap.errors and snap.errors[0].action in ("retry",) %}
+        <button class="icon-btn" title="Test connection"
+            onclick="testConnectionFromHero('{{ account.imap_host }}', {{ account.imap_port }}, '{{ account.tls_type }}')">
+            <i data-lucide="plug" class="icon-md"></i> Test connection
+        </button>
+        {% endif %}
+    </div>
+</div>
+<div class="hero-body">
+    {% if snap and snap.errors %}
+    {% set err = snap.errors[0] %}
+    <p class="hero-error-headline"><strong>{{ err.user_message }}</strong></p>
+    {% if err.category == "auth" %}
+    <p class="text-small">
+        {% if account.auth_type.value == "oauth2" %}
+        {{ account.provider | capitalize }} rejected the credentials. This usually means the token expired or was revoked.
+        {% else %}
+        The server rejected the password. Check that the credentials are correct.
+        {% endif %}
+    </p>
+    {% if err.action == "reauth" and account.auth_type.value == "oauth2" %}
+    <a href="/auth/{{ account.provider }}/start?account_id={{ account.id }}" class="icon-btn primary mt-025">
+        {% with provider=account.provider %}{% include "partials/provider_logo.html" %}{% endwith %}
+        Re-authenticate
+    </a>
+    {% endif %}
+    {% elif err.category == "network" %}
+    <p class="text-small">Couldn't connect to <strong>{{ account.imap_host }}</strong>. The server may be down or unreachable.</p>
+    {% elif err.category == "tls" %}
+    <p class="text-small">Encryption handshake failed with <strong>{{ account.imap_host }}</strong>. Check TLS settings.</p>
+    {% elif err.category == "rate_limit" %}
+    <p class="text-small">The server is rate-limiting connections. We'll keep retrying automatically.</p>
+    {% elif err.category == "disk" %}
+    <p class="text-small">A storage error occurred. Check disk space and permissions.</p>
+    {% elif err.category == "config" %}
+    <p class="text-small">There's a problem with the sync configuration. Check account settings.</p>
+    {% endif %}
+
+    <details class="mt-025">
+        <summary class="text-small text-muted">Technical details</summary>
+        <pre class="log-viewer mt-025">{{ err.technical_detail }}</pre>
+    </details>
+
+    {% elif account.last_error %}
+    <p><strong>Backup failed — unknown error</strong></p>
+    {% endif %}
+
+    {% if snap and snap.raw_tail %}
+    <details class="mt-025">
+        <summary class="text-small text-muted">Last {{ snap.raw_tail | length }} lines of log</summary>
+        <pre class="log-viewer mt-025">{% for line in snap.raw_tail %}{{ line }}
+{% endfor %}</pre>
+    </details>
+    {% elif account.last_error %}
+    <details class="mt-025">
+        <summary class="text-small text-muted">Show error log</summary>
+        <pre class="log-viewer mt-025">{{ account.last_error[-1000:] }}</pre>
+    </details>
+    {% endif %}
+
+    {% if last_job %}
+    <p class="text-xs text-muted mt-025">
+        Failed {{ last_job.completed_at | time_ago }}
+        {% if account.last_sync_at %} · Last success: {{ account.last_sync_at | time_ago }}{% endif %}
+        {% if account.total_messages %} · {{ account.total_messages | number }} msgs{% endif %}
+        {% if last_job.log_path %}
+        · <a href="/api/sync/jobs/{{ last_job.id }}/log/download" class="text-xs">Download full log</a>
+        {% endif %}
+    </p>
+    {% endif %}
+</div>
+
+{% elif hero_state == "sign-in-needed" %}
+{# ── STATE: SIGN-IN NEEDED (OAuth expired) ── #}
+<div class="hero-header">
+    <div class="hero-title">
+        <i data-lucide="alert-triangle" class="icon-lg"></i>
+        <strong>Sign-in needed</strong>
+    </div>
+</div>
+<div class="hero-body">
+    <a href="/auth/{{ account.provider }}/start?account_id={{ account.id }}" class="icon-btn primary">
+        {% with provider=account.provider %}{% include "partials/provider_logo.html" %}{% endwith %}
+        Reconnect with {{ account.provider | capitalize }}
+    </a>
+    <p class="text-small text-muted mt-025">
+        Your {{ account.provider | capitalize }} sign-in expired. Backups will resume automatically as soon as you reconnect.
+        {% if account.last_sync_at %}
+        <br>Last successful backup: {{ account.last_sync_at | time_ago }}
+        {% if account.total_messages %} · {{ account.total_messages | number }} messages{% endif %}
+        {% endif %}
+    </p>
+</div>
+
+{% elif hero_state == "paused" %}
+{# ── STATE: PAUSED (suspended) ── #}
+<div class="hero-header">
+    <div class="hero-title">
+        <i data-lucide="pause-circle" class="icon-lg"></i>
+        <strong>Paused</strong>
+    </div>
+    <div class="hero-actions">
+        <button class="icon-btn success"
+            hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
+            hx-on::after-request="location.reload()">
+            <i data-lucide="play-circle" class="icon-md"></i> Resume backups
+        </button>
+        <button class="icon-btn" title="Manual sync"
+            hx-post="/api/sync/{{ account.id }}" hx-swap="none"
+            hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
+            <i data-lucide="refresh-cw" class="icon-md"></i> Sync now
+        </button>
+    </div>
+</div>
+<div class="hero-body">
+    <p>Backups are paused. Existing mail stays readable.
+    {% if account.last_sync_at %}
+    <br>Last backed up {{ account.last_sync_at | time_ago }} · {{ account.total_messages | number }} messages
+    {% endif %}
+    </p>
+</div>
+
+{% elif hero_state == "migrating" %}
+{# ── STATE: MIGRATING ── #}
+<div class="hero-header">
+    <div class="hero-title">
+        <i data-lucide="truck" class="icon-lg"></i>
+        <strong>Moving your mail</strong>
+    </div>
+</div>
+<div class="hero-body">
+    <p>Moving to a new location. Backups resume when done.</p>
+    {% if migration and migration.total_bytes > 0 %}
+    {% set pct = (migration.copied_bytes * 100 / migration.total_bytes) | int %}
+    <div class="progress-bar">
+        <div class="progress-bar-fill" style="width: {{ pct }}%"></div>
+    </div>
+    <p class="text-small text-muted mt-025">{{ migration.copied_bytes | filesizeformat }} / {{ migration.total_bytes | filesizeformat }} ({{ pct }}%)</p>
+    {% else %}
+    <div class="progress-bar">
+        <div class="progress-bar-fill indeterminate"></div>
+    </div>
+    {% endif %}
+</div>
+
+{% endif %}
+</div>

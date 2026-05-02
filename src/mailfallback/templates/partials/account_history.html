@@ -1,0 +1,54 @@
+{% macro job_row(job) %}
+<tr>
+    <td>{{ job.requested_at.strftime('%Y-%m-%d %H:%M') if job.requested_at else '' }}</td>
+    <td>{{ job.source }}</td>
+    <td>
+        {% if job.status.value == 'completed' %}<span class="badge badge-idle">{{ job.status.value }}</span>
+        {% elif job.status.value == 'failed' %}<span class="badge badge-error">{{ job.status.value }}</span>
+        {% elif job.status.value == 'running' %}<span class="badge badge-syncing">{{ job.status.value }}</span>
+        {% elif job.status.value == 'pending' %}<span class="badge badge-syncing">{{ job.status.value }}</span>
+        {% else %}<span class="badge">{{ job.status.value }}</span>
+        {% endif %}
+    </td>
+    <td>{{ job.exit_code if job.exit_code is not none else '—' }}</td>
+    <td>{% if job.log %}<button class="icon-btn" onclick="showLogModal(this)" data-log="{{ job.log|e }}">View</button>{% endif %}</td>
+</tr>
+{% endmacro %}
+
+<h3><i data-lucide="history" class="icon-lg icon-inline"></i>Sync History</h3>
+
+<table>
+    <thead>
+        <tr><th>Time</th><th>Source</th><th>Status</th><th>Exit Code</th><th>Log</th></tr>
+    </thead>
+    <tbody>
+        {% for job in jobs[:3] %}
+        {{ job_row(job) }}
+        {% endfor %}
+    </tbody>
+</table>
+
+<dialog id="log-modal" class="log-modal" onclick="if(event.target===this)this.close()">
+    <div class="log-modal-content">
+        <div class="flex-between mb-05">
+            <strong>Sync Log</strong>
+            <button class="icon-btn" onclick="document.getElementById('log-modal').close()">
+                <i data-lucide="x" class="icon-md"></i>
+            </button>
+        </div>
+        <pre class="log-pre" id="log-modal-body"></pre>
+    </div>
+</dialog>
+
+{% if jobs|length > 3 %}
+<details>
+    <summary class="text-muted text-small">Show {{ jobs|length - 3 }} older entries</summary>
+    <table>
+        <tbody>
+            {% for job in jobs[3:] %}
+            {{ job_row(job) }}
+            {% endfor %}
+        </tbody>
+    </table>
+</details>
+{% endif %}

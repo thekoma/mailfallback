@@ -1,0 +1,336 @@
+{% extends "base.html" %}
+{% block title %}{{ account.name }} — MFB{% endblock %}
+{% block content %}
+<div id="account-page" data-account-id="{{ account.id }}">
+<div class="flex-between mb-025">
+    <div>
+        <h2 class="mb-025">{{ account.name }}</h2>
+        {% if account.email_address %}
+        <p class="email-text mt-0">{{ account.email_address }}
+            {% if user.role.value == "admin" %}
+            — {% for owner in account.owners %}<span class="badge badge-user">{{ owner.username }}</span> {% endfor %}
+            {% endif %}
+        </p>
+        {% endif %}
+    </div>
+</div>
+
+{% if flash_error %}
+<p class="alert-error"><i data-lucide="alert-circle" class="icon-md icon-inline"></i>{{ flash_error }}</p>
+{% endif %}
+
+{% include "partials/sync_panel.html" %}
+
+{# ── Stats Strip ── #}
+<div class="stats-strip"
+    id="stats-strip"
+    hx-get="/accounts/{{ account.id }}/partials/stats"
+    hx-trigger="sync-finished from:body"
+    hx-swap="innerHTML">
+    <span class="stats-pill">
+        {% if account.sync_state.value == 'syncing' %}
+        <span class="stats-dot stats-dot-syncing"></span> Syncing
+        {% elif account.sync_state.value == 'error' %}
+        <span class="stats-dot stats-dot-error"></span> Error
+        {% else %}
+        <span class="stats-dot stats-dot-ok"></span> OK
+        {% endif %}
+    </span>
+    <span class="stats-sep">·</span>
+    <span class="stats-pill">{{ account.total_messages | number }} msgs</span>
+    <span class="stats-sep">·</span>
+    <span class="stats-pill">{{ account.maildir_size_bytes | filesizeformat }}</span>
+    {% if folder_stats %}
+    <span class="stats-sep">·</span>
+    <span class="stats-pill">{{ folder_stats | length }} folders</span>
+    {% endif %}
+    <span class="stats-sep">·</span>
+    <span class="stats-pill">{{ account.last_sync_at | time_ago }}</span>
+    <span class="stats-sep">·</span>
+    <span class="stats-pill"><code>{{ account.sync_schedule | cron_human }}</code></span>
+    <span class="stats-sep">·</span>
+    <span class="stats-pill">
+        {% if account.auth_type.value == "oauth2" %}XOAUTH2{% else %}Password{% endif %}
+    </span>
+</div>
+
+{# ── Overview ── #}
+<details id="section-overview">
+    <summary><i data-lucide="info" class="icon-md icon-inline"></i><strong>Overview</strong></summary>
+    <div class="mt-1">
+    <div class="table-wrap">
+    <table>
+        <tr>
+            <td><i data-lucide="at-sign" class="icon-md icon-inline"></i>Email</td>
+            <td>{{ account.email_address or '—' }}</td>
+        </tr>
+        <tr>
+            <td><i data-lucide="globe" class="icon-md icon-inline"></i>Provider</td>
+            <td>
+                {% if account.auth_type.value == "oauth2" %}
+                <span class="auth-badge">
+                    {% with provider=account.provider %}{% include "partials/provider_logo.html" %}{% endwith %}
+                    {{ account.provider | capitalize }} OAuth2
+                </span>
+                {% else %}
+                {{ account.provider | capitalize }}
+                {% endif %}
+            </td>
+        </tr>
+        <tr>
+            <td><i data-lucide="server" class="icon-md icon-inline"></i>Host</td>
+            <td>{{ account.imap_host }}:{{ account.imap_port }} ({{ account.tls_type }})</td>
+        </tr>
+        <tr>
+            <td><i data-lucide="calendar-clock" class="icon-md icon-inline"></i>Schedule</td>
+            <td><code title="{{ account.sync_schedule }}">{{ account.sync_schedule | cron_human }}</code></td>
+        </tr>
+        <tr>
+            <td><i data-lucide="hard-drive" class="icon-md icon-inline"></i>Store</td>
+            <td>{{ account.store.name }}</td>
+        </tr>
+        {% if user.role.value == "admin" %}
+        <tr>
+            <td><i data-lucide="folder" class="icon-md icon-inline"></i>Maildir</td>
+            <td><code>{{ account.maildir_path }}</code></td>
+        </tr>
+        {% endif %}
+    </table>
+    </div>
+    </div>
+</details>
+
+{# ── Mailbox Stats ── #}
+<div id="stats-section"
+    hx-get="/accounts/{{ account.id }}/partials/stats"
+    hx-trigger="sync-finished from:body"
+    hx-swap="innerHTML">
+{% include "partials/account_stats.html" %}
+</div>
+
+{# ── Sync History ── #}
+<div id="history-section"
+    hx-get="/accounts/{{ account.id }}/partials/history"
+    hx-trigger="sync-finished from:body"
+    hx-swap="innerHTML">
+{% include "partials/account_history.html" %}
+</div>
+
+{# ── Ownership & Visibility ── #}
+<details id="section-ownership">
+    <summary><i data-lucide="users" class="icon-md icon-inline"></i><strong>Ownership & Visibility</strong></summary>
+    <div class="mt-1">
+        <strong>Owners:</strong>
+        <div class="flex gap-05 flex-wrap mt-025">
+            {% for o in account.owners %}
+            <span class="badge badge-user">
+                {{ o.username }}
+                {% if (is_owner or user.role.value == "admin") and account.owners | length > 1 %}
+                <form method="post" action="/accounts/{{ account.id }}/remove-owner" class="inline-form" style="display:inline"
+                    onsubmit="return confirm('Remove {{ o.username }} as owner?')">
+                    <input type="hidden" name="user_id" value="{{ o.id }}">
+                    <button type="submit" class="icon-btn-inline" title="Remove owner">
+                        <i data-lucide="x" class="icon-sm"></i>
+                    </button>
+                </form>
+                {% endif %}
+            </span>
+            {% endfor %}
+        </div>
+
+        {% if is_owner or user.role.value == "admin" %}
+        <form method="post" action="/accounts/{{ account.id }}/add-owner" class="mt-05">
+            <div class="flex gap-05 items-end">
+                <div>
+                    <label class="text-small">Add owner:</label>
+                    <select name="user_id" style="margin-bottom:0">
+                        {% for u in all_users %}
+                        {% if u not in account.owners %}
+                        <option value="{{ u.id }}">{{ u.username }}</option>
+                        {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit" class="icon-btn primary">
+                    <i data-lucide="user-plus" class="icon-md"></i> Add
+                </button>
+            </div>
+        </form>
+        {% endif %}
+
+        {% if account.visible_to_groups %}
+        <strong class="mt-05" style="display:block">Visible to groups:</strong>
+        <div class="flex gap-05 flex-wrap mt-025">
+            {% for g in account.visible_to_groups %}
+            <span class="badge badge-admin">{{ g.name }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</details>
+
+{# ── Settings ── #}
+<details id="section-settings">
+    <summary><i data-lucide="pencil" class="icon-md icon-inline"></i><strong>Settings</strong></summary>
+    <form method="post" action="/accounts/{{ account.id }}/edit" class="mt-1">
+        <div class="grid-2">
+            <div>
+                <label for="name">Account Name</label>
+                <input type="text" id="name" name="name" value="{{ account.name }}">
+            </div>
+            <div>
+                <label for="email_address">Email Address</label>
+                <input type="email" id="email_address" name="email_address" value="{{ account.email_address }}">
+            </div>
+            {% if account.provider in ("google", "microsoft", "yahoo", "icloud", "protonmail") %}
+            <div>
+                <label>Provider</label>
+                <input type="text" value="{{ account.provider|capitalize }}" disabled>
+            </div>
+            {% endif %}
+            {% if account.provider not in ("google", "microsoft", "yahoo", "icloud", "protonmail") %}
+            <div>
+                <label for="imap_host">IMAP Host</label>
+                <input type="text" id="imap_host" name="imap_host" value="{{ account.imap_host }}">
+            </div>
+            <div>
+                <label for="imap_port">IMAP Port</label>
+                <input type="number" id="imap_port" name="imap_port" value="{{ account.imap_port }}">
+            </div>
+            <div>
+                <label for="tls_type">TLS Type</label>
+                <select id="tls_type" name="tls_type">
+                    <option value="IMAPS" {% if account.tls_type == "IMAPS" %}selected{% endif %}>IMAPS (SSL)</option>
+                    <option value="STARTTLS" {% if account.tls_type == "STARTTLS" %}selected{% endif %}>STARTTLS</option>
+                    <option value="None" {% if account.tls_type == "None" %}selected{% endif %}>None (insecure)</option>
+                </select>
+            </div>
+            <div>
+                <label for="provider">Provider</label>
+                <select id="provider" name="provider">
+                    <option value="google" {% if account.provider == "google" %}selected{% endif %}>Google</option>
+                    <option value="microsoft" {% if account.provider == "microsoft" %}selected{% endif %}>Microsoft</option>
+                    <option value="yahoo" {% if account.provider == "yahoo" %}selected{% endif %}>Yahoo</option>
+                    <option value="icloud" {% if account.provider == "icloud" %}selected{% endif %}>iCloud</option>
+                    <option value="protonmail" {% if account.provider == "protonmail" %}selected{% endif %}>Protonmail</option>
+                    <option value="other" {% if account.provider == "other" %}selected{% endif %}>Other</option>
+                </select>
+            </div>
+            {% endif %}
+            {% if account.auth_type.value != "oauth2" %}
+            <div>
+                <label for="credentials">New Password (leave blank to keep)</label>
+                <input type="password" id="credentials" name="credentials">
+            </div>
+            {% else %}
+            <div>
+                <p class="text-muted text-small mt-1">
+                    <i data-lucide="info" class="icon-sm icon-inline"></i>
+                    Authentication is managed via OAuth. Use the Re-authenticate button in the hero panel.
+                </p>
+            </div>
+            {% endif %}
+        </div>
+
+        {% with is_edit=true, sync_schedule=account.sync_schedule %}
+        {% include "partials/sync_settings_fields.html" %}
+        {% endwith %}
+
+        <button type="submit" class="mt-1">
+            <i data-lucide="save" class="icon-md icon-inline"></i> Save Changes
+        </button>
+    </form>
+</details>
+
+{# ── Manage (admin) ── #}
+{% if user.role.value == "admin" %}
+<details id="section-manage">
+    <summary><i data-lucide="settings" class="icon-md icon-inline"></i><strong>Manage</strong></summary>
+    <div class="mt-1">
+        <h4 class="mb-025">Migrate Store</h4>
+        {% if account.migrating %}
+        <div hx-get="/accounts/{{ account.id }}/migration-progress" hx-trigger="every 2s" hx-swap="innerHTML">
+            <progress></progress> Loading...
+        </div>
+        {% else %}
+        <form method="post" action="/accounts/{{ account.id }}/migrate"
+            onsubmit="return confirm('Migrate mailbox for {{ account.name }}? Sync will be blocked during migration.')">
+            <label>Current: <strong>{{ account.store.name }}</strong> — Move to</label>
+            <div class="flex gap-05 items-end">
+                <select name="target_store_id" style="margin-bottom:0">
+                    {% for s in stores %}
+                    {% if s.id != account.store.id %}
+                    <option value="{{ s.id }}">{{ s.name }} ({{ s.path }})</option>
+                    {% endif %}
+                    {% endfor %}
+                </select>
+                <button type="submit" class="icon-btn warning">
+                    <i data-lucide="truck" class="icon-md"></i> Migrate
+                </button>
+            </div>
+        </form>
+        {% endif %}
+
+        <h4 class="mt-1 mb-025">Visibility</h4>
+        <div class="flex gap-05">
+            {% if account.enabled %}
+            <button class="icon-btn" title="Hide from webmail"
+                hx-post="/accounts/{{ account.id }}/toggle-visible" hx-swap="none"
+                hx-on::after-request="location.reload()">
+                <i data-lucide="eye-off" class="icon-md"></i> Hide from webmail
+            </button>
+            {% else %}
+            <button class="icon-btn success" title="Show in webmail"
+                hx-post="/accounts/{{ account.id }}/toggle-visible" hx-swap="none"
+                hx-on::after-request="location.reload()">
+                <i data-lucide="eye" class="icon-md"></i> Show in webmail
+            </button>
+            {% endif %}
+            {% if account.suspended %}
+            <button class="icon-btn success" title="Resume sync schedule"
+                hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
+                hx-on::after-request="location.reload()">
+                <i data-lucide="play-circle" class="icon-md"></i> Resume schedule
+            </button>
+            {% else %}
+            <button class="icon-btn" title="Suspend sync schedule"
+                hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
+                hx-on::after-request="location.reload()">
+                <i data-lucide="pause-circle" class="icon-md"></i> Suspend schedule
+            </button>
+            {% endif %}
+        </div>
+    </div>
+</details>
+
+<details id="delete-section" class="danger-zone">
+    <summary class="alert-error"><i data-lucide="trash-2" class="icon-md icon-inline"></i><strong>Delete Account</strong></summary>
+    <div class="mt-1">
+        <p>This action is irreversible. Type <strong>{{ account.email_address or account.name }}</strong> to confirm.</p>
+        <label>
+            <input type="checkbox" id="delete-files" value="1">
+            Also delete maildir folder (<code>{{ account.maildir_path }}</code>)
+        </label>
+        <input type="text" id="delete-confirm" placeholder="Type to confirm"
+            oninput="checkDeleteConfirm('delete-confirm', '{{ account.email_address or account.name }}', 'delete-btn')">
+        <button id="delete-btn" class="icon-btn danger" disabled
+            hx-delete="/api/accounts/{{ account.id }}"
+            hx-swap="none"
+            hx-timeout="600s"
+            hx-on::before-request="
+                if(document.getElementById('delete-files').checked) {
+                    this.setAttribute('hx-delete', '/api/accounts/{{ account.id }}?delete_files=true');
+                    htmx.process(this);
+                }
+                this.disabled=true;
+                this.innerHTML='<i data-lucide=\'loader\' class=\'icon-md spin\'></i> Deleting...';
+                lucide.createIcons();
+            "
+            hx-on::after-request="window.location='/'">
+            <i data-lucide="trash-2" class="icon-md"></i> Delete Account
+        </button>
+    </div>
+</details>
+{% endif %}
+</div>
+{% endblock %}

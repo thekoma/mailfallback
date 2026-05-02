@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}Users — MFB{% endblock %}
+{% block content %}
+<h2><i data-lucide="users" class="icon-xl icon-inline"></i>User Management</h2>
+
+{% if error == "invalid_admin_password" %}
+<p class="alert-error"><i data-lucide="alert-circle" class="icon-md icon-inline"></i>Admin password is incorrect.</p>
+{% endif %}
+
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Username</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>Accounts</th>
+            <th>Store</th>
+            <th class="text-right">Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for u in users %}
+        <tr {% if not u.enabled %}class="row-disabled"{% endif %}>
+            <td>{{ u.username }}</td>
+            <td>
+                {% if u.role.value == "admin" %}
+                <span class="badge badge-admin"><i data-lucide="shield" class="icon-sm"></i> admin</span>
+                {% else %}
+                <span class="badge badge-user"><i data-lucide="user" class="icon-sm"></i> user</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if u.migrating %}
+                <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm"></i> Migrating</span>
+                {% elif u.enabled %}
+                <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Active</span>
+                {% else %}
+                <span class="badge badge-disabled"><i data-lucide="pause-circle" class="icon-sm"></i> Disabled</span>
+                {% endif %}
+            </td>
+            <td>{{ u.accounts | length }}</td>
+            <td>{{ u.store.name if u.store else '—' }}</td>
+            <td>
+                {% if not u.migrating %}
+                <div class="actions flex-end">
+                    <div class="dropdown-wrap">
+                        <button class="icon-btn" onclick="toggleDropdown(this, event)">
+                            <i data-lucide="more-vertical" class="icon-md"></i>
+                        </button>
+                        <div class="dropdown-menu hidden">
+                            <a class="dropdown-item" onclick="closeDropdown(); toggleRow('edit-{{ u.id }}')">
+                                <i data-lucide="pencil" class="icon-sm"></i> Edit User
+                            </a>
+                            <a class="dropdown-item" onclick="closeDropdown(); toggleRow('pw-{{ u.id }}')">
+                                <i data-lucide="key-round" class="icon-sm"></i> Change Password
+                            </a>
+                            <hr class="dropdown-divider">
+                            <a class="dropdown-item" onclick="closeDropdown(); toggleRow('migrate-{{ u.id }}')">
+                                <i data-lucide="truck" class="icon-sm"></i> Change Store
+                            </a>
+                            {% if u.role.value != "admin" %}
+                            <a class="dropdown-item" onclick="closeDropdown(); toggleRow('stores-{{ u.id }}')">
+                                <i data-lucide="hard-drive" class="icon-sm"></i> Allowed Stores
+                            </a>
+                            {% endif %}
+                            {% if u.id != user.id %}
+                            <hr class="dropdown-divider">
+                            {% if u.enabled %}
+                            <a class="dropdown-item" onclick="closeDropdown(); this.closest('.actions').querySelector('.toggle-form-{{ u.id }}').submit()">
+                                <i data-lucide="user-x" class="icon-sm"></i> Disable
+                            </a>
+                            {% else %}
+                            <a class="dropdown-item" onclick="closeDropdown(); this.closest('.actions').querySelector('.toggle-form-{{ u.id }}').submit()">
+                                <i data-lucide="user-check" class="icon-sm"></i> Enable
+                            </a>
+                            {% endif %}
+                            <a class="dropdown-item dropdown-danger" onclick="closeDropdown(); if(confirm('Delete user {{ u.username }}? This cannot be undone.')) this.closest('.actions').querySelector('.delete-form-{{ u.id }}').submit()">
+                                <i data-lucide="trash-2" class="icon-sm"></i> Delete
+                            </a>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% if u.id != user.id %}
+                    <form method="post" action="/admin/users/{{ u.id }}/toggle" class="inline-form toggle-form-{{ u.id }}" hidden></form>
+                    <form method="post" action="/admin/users/{{ u.id }}/delete" class="inline-form delete-form-{{ u.id }}" hidden></form>
+                    {% endif %}
+                </div>
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+            </td>
+        </tr>
+        <tr id="edit-{{ u.id }}" class="hidden">
+            <td colspan="6">
+                <form method="post" action="/admin/users/{{ u.id }}/edit" class="flex gap-05 items-end flex-wrap">
+                    <div class="flex-1 min-w-200">
+                        <label for="username_{{ u.id }}">Username</label>
+                        <input type="text" id="username_{{ u.id }}" name="username" value="{{ u.username }}">
+                    </div>
+                    <div class="min-w-150">
+                        <label for="role_{{ u.id }}">Role</label>
+                        <select id="role_{{ u.id }}" name="role">
+                            <option value="user" {% if u.role.value == "user" %}selected{% endif %}>User</option>
+                            <option value="admin" {% if u.role.value == "admin" %}selected{% endif %}>Admin</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="icon-btn primary">
+                        <i data-lucide="save" class="icon-md"></i> Save
+                    </button>
+                </form>
+            </td>
+        </tr>
+        <tr id="pw-{{ u.id }}" class="hidden">
+            <td colspan="6">
+                <form method="post" action="/admin/users/{{ u.id }}/password" class="flex gap-05 items-end flex-wrap">
+                    {% if not admin_verified %}
+                    <div class="flex-1 min-w-200">
+                        <label for="admin_password_{{ u.id }}">
+                            <i data-lucide="shield-check" class="icon-sm icon-inline"></i>Your admin password
+                        </label>
+                        <input type="password" id="admin_password_{{ u.id }}" name="admin_password" required placeholder="Confirm your identity">
+                    </div>
+                    {% endif %}
+                    <div class="flex-1 min-w-200">
+                        <label for="new_password_{{ u.id }}">New password for {{ u.username }}</label>
+                        <input type="password" id="new_password_{{ u.id }}" name="new_password" required minlength="6" placeholder="Min 6 characters">
+                    </div>
+                    <button type="submit" class="icon-btn primary">
+                        <i data-lucide="save" class="icon-md"></i> Save
+                    </button>
+                </form>
+                {% if admin_verified %}
+                <small class="text-muted"><i data-lucide="check-circle" class="icon-sm"></i> Identity verified</small>
+                {% endif %}
+            </td>
+        </tr>
+        <tr id="migrate-{{ u.id }}" {% if not u.migrating %}class="hidden"{% endif %}>
+            <td colspan="6">
+                {% if u.migrating %}
+                <div hx-get="/admin/users/{{ u.id }}/migration-progress" hx-trigger="every 2s" hx-swap="innerHTML">
+                    <progress></progress> Loading...
+                </div>
+                {% else %}
+                <form method="post" action="/admin/users/{{ u.id }}/migrate"
+                    onsubmit="return confirm('Migrate all mail for {{ u.username }}? Sync and IMAP will be blocked during migration.')">
+                    <label>Current: <strong>{{ u.store.name if u.store else '—' }}</strong> — Move to</label>
+                    <div class="flex gap-05 items-end">
+                        <select name="target_store_id" style="margin-bottom:0">
+                            {% for s in stores %}
+                            {% if not u.store or s.id != u.store.id %}
+                            <option value="{{ s.id }}">{{ s.name }} ({{ s.path }})</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="icon-btn warning">
+                            <i data-lucide="truck" class="icon-md"></i> Migrate
+                        </button>
+                    </div>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        <tr id="stores-{{ u.id }}" class="hidden">
+            <td colspan="6">
+                <form method="post" action="/admin/users/{{ u.id }}/allowed-stores">
+                    <label><strong>Allowed stores for {{ u.username }}:</strong></label>
+                    <div class="flex gap-05 flex-wrap mt-025">
+                        {% for s in stores %}
+                        <label class="checkbox-pill">
+                            <input type="checkbox" name="store_ids" value="{{ s.id }}"
+                                {% if s in u.allowed_stores %}checked{% endif %}>
+                            {{ s.name }}
+                        </label>
+                        {% endfor %}
+                    </div>
+                    <button type="submit" class="icon-btn primary mt-05">
+                        <i data-lucide="save" class="icon-md"></i> Save
+                    </button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+
+<hr>
+
+<h3><i data-lucide="user-plus" class="icon-lg icon-inline"></i>Add User</h3>
+<form method="post" action="/admin/users/new">
+    <div class="grid-2">
+        <div>
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" required>
+        </div>
+        <div>
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required minlength="6">
+        </div>
+    </div>
+    <div class="grid-3-auto">
+        <div>
+            <label for="role">Role</label>
+            <select id="role" name="role">
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+            </select>
+        </div>
+        <div>
+            <label for="store_id">Store</label>
+            <select id="store_id" name="store_id">
+                <option value="">— No store —</option>
+                {% for s in stores %}
+                <option value="{{ s.id }}">{{ s.name }} ({{ s.path }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button type="submit" class="icon-btn primary">
+            <i data-lucide="user-plus" class="icon-md"></i> Add
+        </button>
+    </div>
+</form>
+{% endblock %}

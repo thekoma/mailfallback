@@ -1,0 +1,22 @@
+{% if account_id is defined and account_id %}
+    {% set progress_url = "/accounts/" ~ account_id ~ "/migration-progress" %}
+    {% set cancel_url = "/accounts/" ~ account_id ~ "/cancel-migration" %}
+{% else %}
+    {% set progress_url = "/admin/users/" ~ user_id ~ "/migration-progress" %}
+    {% set cancel_url = "/admin/users/" ~ user_id ~ "/cancel-migration" %}
+{% endif %}
+{% if migration.status.value == "failed" %}
+<span class="badge badge-error">Failed: {{ migration.error }}</span>
+<form method="post" action="{{ cancel_url }}" class="inline-form">
+    <button type="submit" class="icon-btn warning" title="Unlock">
+        <i data-lucide="unlock" class="icon-md"></i> Unlock
+    </button>
+</form>
+{% elif migration.status.value == "completed" %}
+<span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Migration complete</span>
+{% else %}
+<div hx-get="{{ progress_url }}"
+    hx-trigger="every 2s" hx-swap="outerHTML">
+    <progress value="{{ pct }}" max="100"></progress> {{ pct }}% — {{ migration.status.value }}
+</div>
+{% endif %}

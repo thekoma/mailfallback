@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Add Account — MFB{% endblock %}
+{% block content %}
+<h2><i data-lucide="plus-circle" class="icon-xl icon-inline"></i>Add an email account</h2>
+<p class="text-muted">We'll back up your messages here. You can read them anytime, even if your provider is down.</p>
+
+{% if oauth_providers and (oauth_providers.google or oauth_providers.microsoft) %}
+<script>window._oauthAvailable = {{ oauth_providers | tojson }};</script>
+{% endif %}
+
+<div id="form-errors">
+{% if oauth_failed %}
+<div class="error-box">
+    <p class="mb-0"><i data-lucide="alert-circle" class="icon-md icon-inline"></i>
+    Authorization didn't complete. Try again or use an app password.</p>
+</div>
+{% endif %}
+</div>
+
+{% if error %}
+<div class="error-box mb-0">
+    <p class="mb-0"><i data-lucide="alert-circle" class="icon-md icon-inline"></i>{{ error }}</p>
+</div>
+{% endif %}
+
+<form id="account-form" data-auth="password" onsubmit="return handleAccountSubmit(event)">
+    <input type="hidden" id="provider" name="provider" value="other">
+    <input type="hidden" id="auth_type" name="auth_type" value="app_password">
+
+    <div>
+        <label for="email_address">Email address</label>
+        <input type="email" id="email_address" name="email_address"
+            placeholder="user@example.com" required autofocus autocomplete="email"
+            onblur="autoDetectProvider()"
+            value="{{ prefill.email if prefill else '' }}">
+    </div>
+
+    <div id="password-section">
+        <label for="credentials">Password</label>
+        <div style="position:relative">
+            <input type="password" id="credentials" name="credentials" required autocomplete="current-password">
+            <button type="button" class="pass-toggle" onclick="togglePasswordVisibility()" aria-label="Toggle password visibility">
+                <i data-lucide="eye" class="icon-md" id="pass-toggle-icon"></i>
+            </button>
+        </div>
+        <small class="text-muted">For Gmail, iCloud, Yahoo, and most providers, use an <strong>app password</strong>, not your normal one. <a href="https://support.google.com/accounts/answer/185833" target="_blank" rel="noopener">How to create one</a></small>
+    </div>
+
+    <div id="oauth-switch" class="hidden">
+        <small class="text-muted"><a href="#" onclick="_setAuthMode('password'); return false;">Use an app password instead</a></small>
+    </div>
+
+    <div>
+        <label for="name">Nickname</label>
+        <input type="text" id="name" name="name" placeholder="Personal Gmail" required
+            value="{{ prefill.name if prefill else '' }}">
+    </div>
+
+    <details id="server-settings">
+        <summary id="server-settings-label"><i data-lucide="server" class="icon-md icon-inline"></i><strong>Server settings</strong></summary>
+
+        <div class="grid-2 mt-1">
+            <div>
+                <label for="imap_host">IMAP host</label>
+                <input type="text" id="imap_host" name="imap_host" placeholder="imap.example.com" required>
+            </div>
+            <div>
+                <label for="imap_port">Port</label>
+                <input type="number" id="imap_port" name="imap_port" value="993">
+            </div>
+        </div>
+
+        <div class="grid-2">
+            <div>
+                <label for="tls_type">Security</label>
+                <select id="tls_type" name="tls_type">
+                    <option value="IMAPS" selected>SSL/TLS</option>
+                    <option value="STARTTLS">STARTTLS</option>
+                    <option value="None">None (insecure)</option>
+                </select>
+            </div>
+            <div>
+                <label for="auth_mechs_select">Auth mechanism</label>
+                <select id="auth_mechs_select" onchange="document.getElementById('auth_mechs').value = this.value">
+                    <option value="">Auto (recommended)</option>
+                    <option value="PLAIN">PLAIN</option>
+                    <option value="LOGIN">LOGIN</option>
+                    <option value="CRAM-MD5">CRAM-MD5</option>
+                </select>
+                <input type="hidden" id="auth_mechs" name="auth_mechs" value="">
+            </div>
+        </div>
+
+        {% if selectable_stores %}
+        <div>
+            <label for="store_id">Store</label>
+            <select id="store_id" name="store_id">
+                {% for s in selectable_stores %}
+                <option value="{{ s.id }}" {% if s.id == store.id %}selected{% endif %}>{{ s.name }} ({{ s.path }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+
+        <div class="mt-05">
+            <a href="#" id="test-without-saving" class="text-small hidden" onclick="testWithoutSaving(); return false;">
+                <i data-lucide="check-circle" class="icon-sm icon-inline"></i>Test without saving
+            </a>
+            <span id="check-result" class="text-small"></span>
+        </div>
+    </details>
+
+    <button type="submit" class="mt-1" id="submit-btn">
+        <i data-lucide="plus" class="icon-md icon-inline" id="submit-icon"></i>
+        <span id="submit-text">Add Account</span>
+    </button>
+
+    <p class="text-muted text-small text-center mt-05">Your data stays on your server.</p>
+</form>
+{% endblock %}
