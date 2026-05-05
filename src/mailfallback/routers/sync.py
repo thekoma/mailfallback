@@ -1,11 +1,12 @@
 # src/mailfallback/routers/sync.py
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from mailfallback.dependencies import get_current_user, get_db
 from mailfallback.models import User
 from mailfallback.services import account_service, sync_service
+from mailfallback.services.audit_service import log_action
 from mailfallback.services.imap_check import check_imap_credentials
 from mailfallback.services.provider_discovery import discover_provider
 from mailfallback.services.sync_worker import get_live_log, stop_sync_job, submit_sync_job
@@ -65,6 +66,7 @@ def trigger_sync_all(
 @router.post("/{account_id}")
 def trigger_sync(
     account_id: str,
+    request: Request = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -87,6 +89,15 @@ def trigger_sync(
         raise HTTPException(status_code=409, detail="Sync already pending or running")
 
     submit_sync_job(job.id)
+    log_action(
+        db,
+        user=user,
+        action="account.sync",
+        resource_type="account",
+        resource_id=account_id,
+        resource_name=account.email_address,
+        ip_address=request.client.host if request else None,
+    )
     return {"job_id": job.id, "status": job.status.value}
 
 

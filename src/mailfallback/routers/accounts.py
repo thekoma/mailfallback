@@ -1,7 +1,7 @@
 # src/mailfallback/routers/accounts.py
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,7 @@ from mailfallback.dependencies import get_current_user, get_db, require_admin
 from mailfallback.models import Account, User, UserRole
 from mailfallback.services import account_service
 from mailfallback.services.account_service import is_account_owner
+from mailfallback.services.audit_service import log_action
 from mailfallback.services.imap_check import check_imap_credentials
 from mailfallback.services.provider_discovery import discover_provider
 
@@ -157,6 +158,7 @@ def update(
 def delete(
     account_id: str,
     delete_files: bool = False,
+    request: Request = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -167,6 +169,15 @@ def delete(
         raise HTTPException(status_code=403, detail="Only owners can delete accounts")
     if not account_service.delete_account(db, account_id, delete_files=delete_files):
         raise HTTPException(status_code=404, detail="Account not found")
+    log_action(
+        db,
+        user=user,
+        action="account.delete",
+        resource_type="account",
+        resource_id=account_id,
+        resource_name=account.email_address or account.name,
+        ip_address=request.client.host if request else None,
+    )
     return {"ok": True}
 
 
@@ -174,11 +185,21 @@ def delete(
 def assign_owner(
     account_id: str,
     body: OwnerAssign,
+    request: Request = None,
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     try:
         account_service.assign_owner(db, account_id, body.user_id)
+        log_action(
+            db,
+            user=admin,
+            action="account.add_owner",
+            resource_type="account",
+            resource_id=account_id,
+            resource_name=body.user_id,
+            ip_address=request.client.host if request else None,
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from None
     return {"ok": True}
@@ -188,8 +209,18 @@ def assign_owner(
 def remove_owner(
     account_id: str,
     user_id: str,
+    request: Request = None,
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     account_service.remove_owner(db, account_id, user_id)
+    log_action(
+        db,
+        user=admin,
+        action="account.remove_owner",
+        resource_type="account",
+        resource_id=account_id,
+        resource_name=user_id,
+        ip_address=request.client.host if request else None,
+    )
     return {"ok": True}

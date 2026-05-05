@@ -18,6 +18,7 @@ from mailfallback.services.account_service import (
     remove_owner,
     update_account,
 )
+from mailfallback.services.audit_service import log_action
 from mailfallback.services.imap_check import check_imap_credentials
 from mailfallback.services.migration_service import (
     execute_account_migration,
@@ -349,6 +350,15 @@ async def account_form_submit(request: Request, db: Session = Depends(get_db)):
     account.extra_config = json.dumps(extra) if extra else None
     db.commit()
     assign_owner(db, account.id, user.id)
+    log_action(
+        db,
+        user=user,
+        action="account.create",
+        resource_type="account",
+        resource_id=account.id,
+        resource_name=account.email_address or account.name,
+        ip_address=request.client.host,
+    )
     return RedirectResponse(f"/accounts/{account.id}", status_code=303)
 
 
@@ -470,6 +480,15 @@ async def account_edit_submit(account_id: str, request: Request, db: Session = D
     updates["extra_config"] = json.dumps(extra) if extra else None
 
     update_account(db, account_id, user, **updates)
+    log_action(
+        db,
+        user=user,
+        action="account.edit",
+        resource_type="account",
+        resource_id=account_id,
+        resource_name=account.email_address or account.name,
+        ip_address=request.client.host,
+    )
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
 
@@ -485,6 +504,16 @@ async def account_toggle_visible(
     account = get_account(db, account_id, user)
     if account:
         update_account(db, account_id, user, enabled=not account.enabled)
+        log_action(
+            db,
+            user=user,
+            action="account.edit",
+            resource_type="account",
+            resource_id=account_id,
+            resource_name=account.email_address or account.name,
+            ip_address=request.client.host,
+            details={"toggled": "visibility"},
+        )
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
 
@@ -499,7 +528,18 @@ async def account_toggle_suspend(
         return RedirectResponse("/login", status_code=303)
     account = get_account(db, account_id, user)
     if account:
+        was_suspended = account.suspended
         update_account(db, account_id, user, suspended=not account.suspended)
+        action_name = "account.unsuspend" if was_suspended else "account.suspend"
+        log_action(
+            db,
+            user=user,
+            action=action_name,
+            resource_type="account",
+            resource_id=account_id,
+            resource_name=account.email_address or account.name,
+            ip_address=request.client.host,
+        )
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
 
@@ -518,6 +558,14 @@ async def account_migrate(
 
     try:
         migration = initiate_account_migration(db, account_id, target_store_id)
+        log_action(
+            db,
+            user=user,
+            action="account.migrate",
+            resource_type="account",
+            resource_id=account_id,
+            ip_address=request.client.host,
+        )
     except ValueError as e:
         return RedirectResponse(f"/accounts/{account_id}?error={e}", status_code=303)
 
@@ -602,6 +650,15 @@ async def account_add_owner(account_id: str, request: Request, db: Session = Dep
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
     form = await request.form()
     assign_owner(db, account_id, form["user_id"])
+    log_action(
+        db,
+        user=user,
+        action="account.add_owner",
+        resource_type="account",
+        resource_id=account_id,
+        resource_name=form["user_id"],
+        ip_address=request.client.host,
+    )
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
 
@@ -617,4 +674,13 @@ async def account_remove_owner(account_id: str, request: Request, db: Session = 
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
     form = await request.form()
     remove_owner(db, account_id, form["user_id"])
+    log_action(
+        db,
+        user=user,
+        action="account.remove_owner",
+        resource_type="account",
+        resource_id=account_id,
+        resource_name=form["user_id"],
+        ip_address=request.client.host,
+    )
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
