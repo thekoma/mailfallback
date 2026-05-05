@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="{{ get_theme(request) }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -23,6 +23,10 @@
                 <i data-lucide="mail-check" class="icon-inline"></i>
                 <strong class="brand-short">MailFallBack</strong>
             </a>
+            <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle dark mode" title="Toggle dark mode">
+                <i data-lucide="moon" class="icon-sm theme-icon-light"></i>
+                <i data-lucide="sun" class="icon-sm theme-icon-dark"></i>
+            </button>
         </div>
         {% if user %}
         <nav class="sidebar-nav">

@@ -1,4 +1,5 @@
 # src/mailfallback/routers/ui.py
+import logging
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request
@@ -7,10 +8,13 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
+from mailfallback.db import SessionLocal
 from mailfallback.dependencies import get_db
 from mailfallback.models import SyncJob, User
 from mailfallback.services.account_service import get_accounts_for_user
 from mailfallback.services.user_service import authenticate_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ui"])
 
@@ -100,6 +104,25 @@ templates.env.filters["time_ago"] = _time_ago
 templates.env.filters["time_ago_class"] = _time_ago_class
 templates.env.filters["number"] = _number_format
 templates.env.globals["webmail_url"] = settings.webmail_url
+
+
+def _get_theme(request: Request) -> str:
+    user_id = request.session.get("user_id") if hasattr(request, "session") else None
+    if user_id:
+        try:
+            db = SessionLocal()
+            try:
+                user = db.query(User).filter(User.id == user_id).first()
+                if user and user.preferences:
+                    return user.preferences.get("theme", "light")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.debug("Failed to fetch theme preference: %s", e)
+    return "light"
+
+
+templates.env.globals["get_theme"] = _get_theme
 
 
 @router.get("/login", response_class=HTMLResponse)
