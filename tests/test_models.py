@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from mailfallback.db import Base
 from mailfallback.models import (
     Account,
+    AuditLog,
     AuthType,
     JobStatus,
     MailStore,
@@ -249,3 +250,64 @@ def test_group_relationships():
     assert account in group.accounts
     assert group.owner.username == "alice"
     assert group.sso_sync is False
+
+
+def test_user_preferences_default(db_session, default_store):
+    user = User(username="prefuser", role=UserRole.user, store_id=default_store.id)
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    assert user.preferences == {}
+
+
+def test_user_preferences_stores_theme(db_session, default_store):
+    user = User(
+        username="themeuser",
+        role=UserRole.user,
+        store_id=default_store.id,
+        preferences={"theme": "dark"},
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    assert user.preferences["theme"] == "dark"
+
+
+def test_audit_log_creation(db_session, default_store):
+    user = User(username="auditor", role=UserRole.admin, store_id=default_store.id)
+    db_session.add(user)
+    db_session.commit()
+    log = AuditLog(
+        user_id=user.id,
+        username=user.username,
+        action="user.create",
+        resource_type="user",
+        resource_id="some-id",
+        resource_name="testuser",
+        ip_address="127.0.0.1",
+    )
+    db_session.add(log)
+    db_session.commit()
+    db_session.refresh(log)
+    assert log.action == "user.create"
+    assert log.username == "auditor"
+    assert log.timestamp is not None
+
+
+def test_audit_log_survives_user_deletion(db_session, default_store):
+    user = User(username="deleteme", role=UserRole.user, store_id=default_store.id)
+    db_session.add(user)
+    db_session.commit()
+    log = AuditLog(
+        user_id=user.id,
+        username="deleteme",
+        action="test.action",
+        resource_type="test",
+    )
+    db_session.add(log)
+    db_session.commit()
+    db_session.delete(user)
+    db_session.commit()
+    db_session.refresh(log)
+    assert log.user_id is None
+    assert log.username == "deleteme"

@@ -3,7 +3,18 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String, Table, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    Table,
+    Text,
+)
 from sqlalchemy.orm import relationship
 
 from mailfallback.db import Base
@@ -91,6 +102,7 @@ class User(Base):
 
     store_id = Column(String, ForeignKey("mail_stores.id"), nullable=False)
     migrating = Column(Boolean, nullable=False, default=False)
+    preferences = Column(JSON, nullable=False, default=dict, server_default="{}")
 
     accounts = relationship("Account", secondary=account_owners, back_populates="owners")
     store = relationship("MailStore", back_populates="users")
@@ -201,3 +213,18 @@ class StoreMigration(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     last_resumed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(String, primary_key=True, default=_new_uuid)
+    timestamp = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    username = Column(String, nullable=False)
+    action = Column(String, nullable=False, index=True)
+    resource_type = Column(String, nullable=False)
+    resource_id = Column(String, nullable=True)
+    resource_name = Column(String, nullable=True)
+    ip_address = Column(String, nullable=True)
+    details = Column(JSON, nullable=True)
