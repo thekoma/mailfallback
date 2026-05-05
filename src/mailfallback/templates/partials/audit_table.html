@@ -1,0 +1,40 @@
+<p class="text-muted text-xs mt-05">{{ total }} entries</p>
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Timestamp</th>
+            <th>User</th>
+            <th>Action</th>
+            <th>Resource</th>
+            <th>IP</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for e in entries %}
+        <tr>
+            <td class="text-xs">{{ e.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td>{{ e.username }}</td>
+            <td>{{ get_action_label(e.action) }}</td>
+            <td>{% if e.resource_name %}{{ e.resource_name }}{% elif e.resource_id %}<code class="text-xs">{{ e.resource_id[:8] }}</code>{% else %}—{% endif %}</td>
+            <td class="text-xs text-muted">{{ e.ip_address or '—' }}</td>
+        </tr>
+        {% endfor %}
+        {% if not entries %}
+        <tr><td colspan="5" class="text-center text-muted">No audit entries found</td></tr>
+        {% endif %}
+    </tbody>
+</table>
+</div>
+
+{% if total_pages > 1 %}
+<nav class="flex gap-05 items-center mt-05">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}{% for k, v in filters.items() %}&{{ k }}={{ v }}{% endfor %}" class="icon-btn"><i data-lucide="chevron-left" class="icon-sm"></i></a>
+    {% endif %}
+    <span class="text-xs text-muted">Page {{ page }} of {{ total_pages }}</span>
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}{% for k, v in filters.items() %}&{{ k }}={{ v }}{% endfor %}" class="icon-btn"><i data-lucide="chevron-right" class="icon-sm"></i></a>
+    {% endif %}
+</nav>
+{% endif %}
