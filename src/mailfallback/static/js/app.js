@@ -1,5 +1,25 @@
 /* MFB — MailFallBack scripts */
 
+// Theme — apply from localStorage before paint to prevent flash
+(function() {
+    var saved = localStorage.getItem('mfb-theme');
+    if (saved) document.documentElement.setAttribute('data-theme', saved);
+})();
+
+function toggleTheme() {
+    var html = document.documentElement;
+    var current = html.getAttribute('data-theme') || 'light';
+    var next = current === 'dark' ? 'light' : 'dark';
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('mfb-theme', next);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    fetch('/api/preferences', {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({theme: next})
+    });
+}
+
 /* === Sidebar toggle === */
 document.addEventListener('DOMContentLoaded', function() {
     var toggle = document.getElementById('menu-toggle');
