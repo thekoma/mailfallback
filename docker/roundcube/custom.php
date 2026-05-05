@@ -3,6 +3,10 @@ $config['db_prefix'] = 'rc_';
 $config['use_subscriptions'] = false;
 $config['check_all_folders'] = true;
 $config['disabled_actions'] = ['mail.compose'];
+$config['search_mods'] = [
+    '*' => ['subject' => 1, 'from' => 1, 'body' => 1],
+];
+$config['search_scope'] = 'base';
 
 $oauth_client_id = getenv('ROUNDCUBE_OAUTH_CLIENT_ID');
 if ($oauth_client_id) {
