@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Audit Log — MFB{% endblock %}
+{% block content %}
+<h2><i data-lucide="scroll-text" class="icon-xl icon-inline"></i>Audit Log</h2>
+
+<form class="flex gap-1 items-end flex-wrap mb-0" hx-get="/admin/audit/table" hx-target="#audit-table-wrap" hx-push-url="true">
+    <div>
+        <label class="text-xs">User</label>
+        <select name="user" style="margin-bottom:0;min-width:140px">
+            <option value="">All users</option>
+            {% for u in all_users %}
+            <option value="{{ u.username }}" {% if filters.get('user') == u.username %}selected{% endif %}>{{ u.username }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <label class="text-xs">Action</label>
+        <select name="action" style="margin-bottom:0;min-width:160px">
+            <option value="">All actions</option>
+            {% for a in distinct_actions %}
+            <option value="{{ a }}" {% if filters.get('action') == a %}selected{% endif %}>{{ get_action_label(a) }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <label class="text-xs">From</label>
+        <input type="date" name="from" value="{{ filters.get('from', '') }}" style="margin-bottom:0">
+    </div>
+    <div>
+        <label class="text-xs">To</label>
+        <input type="date" name="to" value="{{ filters.get('to', '') }}" style="margin-bottom:0">
+    </div>
+    <button type="submit" class="icon-btn primary" title="Filter"><i data-lucide="filter" class="icon-md"></i></button>
+</form>
+
+<div id="audit-table-wrap">
+    {% include "partials/audit_table.html" %}
+</div>
+{% endblock %}
