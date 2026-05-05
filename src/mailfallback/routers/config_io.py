@@ -1,10 +1,11 @@
 # src/mailfallback/routers/config_io.py
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from mailfallback.dependencies import get_db, require_admin
 from mailfallback.models import Account, User
+from mailfallback.services.audit_service import log_action
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -25,7 +26,16 @@ class ConfigImport(BaseModel):
 
 
 @router.get("/export")
-def export_config(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+def export_config(
+    request: Request, admin: User = Depends(require_admin), db: Session = Depends(get_db)
+):
+    log_action(
+        db,
+        user=admin,
+        action="config.export",
+        resource_type="config",
+        ip_address=request.client.host,
+    )
     accounts = db.query(Account).all()
     return {
         "accounts": [
@@ -46,6 +56,7 @@ def export_config(admin: User = Depends(require_admin), db: Session = Depends(ge
 @router.post("/import")
 def import_config(
     body: ConfigImport,
+    request: Request,
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -65,4 +76,12 @@ def import_config(
         db.add(account)
         count += 1
     db.commit()
+    log_action(
+        db,
+        user=admin,
+        action="config.import",
+        resource_type="config",
+        ip_address=request.client.host,
+        details={"count": count},
+    )
     return {"imported": count}

@@ -12,6 +12,7 @@ from mailfallback.dependencies import get_db
 from mailfallback.models import Account, Group, MailStore, StoreMigration, User
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import verify_password
+from mailfallback.services.audit_service import log_action
 from mailfallback.services.group_service import (
     can_manage_group,
     create_group,
@@ -79,6 +80,16 @@ async def admin_change_user_password(
         request.session["admin_pw_verified_at"] = time.time()
 
     change_password(db, target_user_id, new_password)
+    target = db.query(User).filter(User.id == target_user_id).first()
+    log_action(
+        db,
+        user=user,
+        action="user.password_reset",
+        resource_type="user",
+        resource_id=target_user_id,
+        resource_name=target.username if target else target_user_id,
+        ip_address=request.client.host,
+    )
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -102,6 +113,16 @@ async def admin_edit_user(
         updates["role"] = role
     if updates:
         update_user(db, target_user_id, **updates)
+        target = db.query(User).filter(User.id == target_user_id).first()
+        log_action(
+            db,
+            user=user,
+            action="user.edit",
+            resource_type="user",
+            resource_id=target_user_id,
+            resource_name=target.username if target else target_user_id,
+            ip_address=request.client.host,
+        )
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -120,6 +141,15 @@ async def admin_toggle_user(
     target = db.query(User).filter(User.id == target_user_id).first()
     if target:
         update_user(db, target_user_id, enabled=not target.enabled)
+        log_action(
+            db,
+            user=user,
+            action="user.toggle",
+            resource_type="user",
+            resource_id=target_user_id,
+            resource_name=target.username,
+            ip_address=request.client.host,
+        )
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -136,6 +166,14 @@ async def admin_delete_user(
         return RedirectResponse("/admin/users", status_code=303)
 
     delete_user(db, target_user_id)
+    log_action(
+        db,
+        user=user,
+        action="user.delete",
+        resource_type="user",
+        resource_id=target_user_id,
+        ip_address=request.client.host,
+    )
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -156,6 +194,15 @@ async def admin_migrate_user(
         migration = initiate_home_migration(db, target_user_id, target_store_id)
     except ValueError as e:
         return RedirectResponse(f"/admin/users?error={e}", status_code=303)
+
+    log_action(
+        db,
+        user=user,
+        action="user.migrate",
+        resource_type="user",
+        resource_id=target_user_id,
+        ip_address=request.client.host,
+    )
 
     def run():
         from mailfallback.db import SessionLocal
@@ -258,6 +305,15 @@ async def admin_create_user(request: Request, db: Session = Depends(get_db)):
     store_id = form.get("store_id") or ensure_default_store(db).id
     new_user = create_user(db, form["username"], form["password"], form["role"], store_id=store_id)
     set_allowed_stores(db, new_user.id, [store_id])
+    log_action(
+        db,
+        user=user,
+        action="user.create",
+        resource_type="user",
+        resource_id=new_user.id,
+        resource_name=new_user.username,
+        ip_address=request.client.host,
+    )
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -348,7 +404,16 @@ async def admin_create_store(request: Request, db: Session = Depends(get_db)):
     if not user or user.role.value != "admin":
         return RedirectResponse("/", status_code=303)
     form = await request.form()
-    create_store(db, form["name"], form["path"])
+    store = create_store(db, form["name"], form["path"])
+    log_action(
+        db,
+        user=user,
+        action="store.create",
+        resource_type="store",
+        resource_id=store.id,
+        resource_name=store.name,
+        ip_address=request.client.host,
+    )
     return RedirectResponse("/admin/stores", status_code=303)
 
 
@@ -360,6 +425,15 @@ async def admin_toggle_store(store_id: str, request: Request, db: Session = Depe
     store = db.query(MailStore).filter(MailStore.id == store_id).first()
     if store:
         update_store(db, store_id, enabled=not store.enabled)
+        log_action(
+            db,
+            user=user,
+            action="store.edit",
+            resource_type="store",
+            resource_id=store_id,
+            resource_name=store.name,
+            ip_address=request.client.host,
+        )
     return RedirectResponse("/admin/stores", status_code=303)
 
 
@@ -372,6 +446,15 @@ async def admin_rename_store(store_id: str, request: Request, db: Session = Depe
     name = form.get("name", "").strip()
     if name:
         update_store(db, store_id, name=name)
+        log_action(
+            db,
+            user=user,
+            action="store.edit",
+            resource_type="store",
+            resource_id=store_id,
+            resource_name=name,
+            ip_address=request.client.host,
+        )
     return RedirectResponse("/admin/stores", status_code=303)
 
 
@@ -392,6 +475,14 @@ async def admin_delete_store(store_id: str, request: Request, db: Session = Depe
     ok, error = delete_store(db, store_id)
     if not ok:
         return RedirectResponse(f"/admin/stores?error={error}", status_code=303)
+    log_action(
+        db,
+        user=user,
+        action="store.delete",
+        resource_type="store",
+        resource_id=store_id,
+        ip_address=request.client.host,
+    )
     return RedirectResponse("/admin/stores", status_code=303)
 
 
@@ -488,7 +579,16 @@ async def admin_create_group(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     owner_id = form.get("owner_id") or user.id
     sso_sync = bool(form.get("sso_sync"))
-    create_group(db, form["name"], owner_id, sso_sync=sso_sync)
+    group = create_group(db, form["name"], owner_id, sso_sync=sso_sync)
+    log_action(
+        db,
+        user=user,
+        action="group.create",
+        resource_type="group",
+        resource_id=group.id,
+        resource_name=group.name,
+        ip_address=request.client.host,
+    )
     return RedirectResponse("/admin/groups", status_code=303)
 
 
@@ -508,6 +608,15 @@ async def admin_edit_group(group_id: str, request: Request, db: Session = Depend
     group.members = db.query(User).filter(User.id.in_(member_ids)).all() if member_ids else []
     set_group_accounts(db, group_id, account_ids)
     db.commit()
+    log_action(
+        db,
+        user=user,
+        action="group.edit",
+        resource_type="group",
+        resource_id=group_id,
+        resource_name=group.name,
+        ip_address=request.client.host,
+    )
     return RedirectResponse("/admin/groups", status_code=303)
 
 
@@ -516,5 +625,16 @@ async def admin_delete_group_route(group_id: str, request: Request, db: Session 
     user = _get_session_user(request, db)
     if not user or user.role.value != "admin":
         return RedirectResponse("/", status_code=303)
+    group = db.query(Group).filter(Group.id == group_id).first()
+    group_name = group.name if group else group_id
     delete_group(db, group_id)
+    log_action(
+        db,
+        user=user,
+        action="group.delete",
+        resource_type="group",
+        resource_id=group_id,
+        resource_name=group_name,
+        ip_address=request.client.host,
+    )
     return RedirectResponse("/admin/groups", status_code=303)
