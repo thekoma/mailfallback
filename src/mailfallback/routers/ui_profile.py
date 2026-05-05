@@ -1,9 +1,11 @@
 # src/mailfallback/routers/ui_profile.py
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
-from mailfallback.dependencies import get_db
+from mailfallback.dependencies import get_current_user, get_db
+from mailfallback.models import User
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import verify_password
 from mailfallback.services.group_service import get_user_groups
@@ -89,3 +91,28 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
         name="profile.html",
         context={"user": user, "error": None, "success": "Password updated successfully"},
     )
+
+
+class PreferencesUpdate(BaseModel):
+    theme: str | None = None
+
+    @field_validator("theme")
+    @classmethod
+    def validate_theme(cls, v):
+        if v is not None and v not in ("light", "dark"):
+            raise ValueError("theme must be 'light' or 'dark'")
+        return v
+
+
+@router.patch("/api/preferences")
+def update_preferences(
+    body: PreferencesUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    prefs = dict(user.preferences or {})
+    update = body.model_dump(exclude_none=True)
+    prefs.update(update)
+    user.preferences = prefs
+    db.commit()
+    return Response(status_code=204)
