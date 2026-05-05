@@ -8,6 +8,7 @@ from alembic import context
 from mailfallback.db import Base
 from mailfallback.models import (  # noqa: F401 — register models
     Account,
+    AuditLog,
     MailStore,
     StoreMigration,
     SyncJob,
