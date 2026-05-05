@@ -40,9 +40,11 @@ Cloud email providers can lock you out without warning. If your entire digital l
 
 ### Web Interface
 - Clean dashboard with live sync status (HTMX polling)
+- **Dark mode** with one-click toggle (persisted per-user, no flash on reload)
 - Account management: create, edit, disable/enable, delete
 - Per-folder mailbox statistics (messages, unread, size) via Dovecot doveadm API
 - User management and settings pages (admin)
+- **Audit log** — tracks admin and account operations (who did what, when, from where)
 - Responsive design with Pico CSS and Lucide icons
 
 ### Read-Only IMAP Access (Optional)
@@ -70,6 +72,7 @@ Cloud email providers can lock you out without warning. If your entire digital l
 - `POST /api/config/import` — import config (admin)
 - `PATCH /api/accounts/{id}` — update account
 - `DELETE /api/accounts/{id}` — delete account (admin)
+- `PATCH /api/preferences` — update user preferences (theme)
 
 ## Quick Start
 
