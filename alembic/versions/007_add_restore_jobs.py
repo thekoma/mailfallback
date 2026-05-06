@@ -21,18 +21,7 @@ def upgrade() -> None:
         sa.Column("id", sa.String(), nullable=False),
         sa.Column("source_account_id", sa.String(), nullable=False),
         sa.Column("target_account_id", sa.String(), nullable=False),
-        sa.Column(
-            "status",
-            sa.Enum(
-                "pending",
-                "running",
-                "completed",
-                "failed",
-                name="jobstatus",
-                create_constraint=False,
-            ),
-            nullable=False,
-        ),
+        sa.Column("status", sa.String(), nullable=False),
         sa.Column(
             "restore_mode",
             sa.Enum("full", "folder", "selection", name="restoremode", create_constraint=True),
