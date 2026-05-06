@@ -754,6 +754,7 @@ function initResizableColumns() {
     var headers = table.querySelectorAll('thead th');
     headers.forEach(function(th) {
         if (th.classList.contains('col-check')) return;
+        if (th.style.display === 'none') return;
         var handle = document.createElement('div');
         handle.className = 'resize-handle';
         th.appendChild(handle);

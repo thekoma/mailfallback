@@ -20,7 +20,7 @@
     <table class="compact sortable resizable" id="results-table">
         <thead><tr>
             <th class="col-check"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
-            <th class="col-folder sortable-header" onclick="sortByCol(this)" {{ '' if show_folder else 'style="display:none"' }}>Folder <span class="sort-arrow"></span></th>
+            <th class="col-folder sortable-header" onclick="sortByCol(this)" {% if not show_folder %}style="display:none"{% endif %}>Folder <span class="sort-arrow"></span></th>
             <th class="col-subject sortable-header" onclick="sortByCol(this)">Subject <span class="sort-arrow"></span></th>
             <th class="col-from sortable-header" onclick="sortByCol(this)">From <span class="sort-arrow"></span></th>
             <th class="col-to sortable-header" onclick="sortByCol(this)" style="display:none">To <span class="sort-arrow"></span></th>
@@ -31,7 +31,7 @@
         {% for msg in messages %}
         <tr>
             <td class="col-check"><input type="checkbox" name="selected_uids" value="{{ msg.uid }}" data-folder="{{ msg.folder or '' }}"></td>
-            <td class="col-folder text-muted text-small" {{ '' if show_folder else 'style="display:none"' }}>{{ msg.folder or '' }}</td>
+            <td class="col-folder text-muted text-small" {% if not show_folder %}style="display:none"{% endif %}>{{ msg.folder or '' }}</td>
             <td class="col-subject">{{ msg.subject }}</td>
             <td class="col-from">{{ msg.from }}</td>
             <td class="col-to" style="display:none">{{ msg.to }}</td>
