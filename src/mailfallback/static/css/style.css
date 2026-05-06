@@ -609,7 +609,7 @@ a.stat-card:hover { border-color: var(--pico-primary); transform: translateY(-2p
 .sortable-header { cursor: pointer; user-select: none; white-space: nowrap; }
 .sortable-header:hover { color: var(--mfb-sync-color); }
 .sort-arrow { font-size: 0.7rem; }
-.col-check { width: 2rem; text-align: center; }
+.col-check { width: 2.5rem; min-width: 2.5rem; text-align: center; }
 .resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 4px; cursor: col-resize; background: transparent; }
 .resize-handle:hover { background: var(--mfb-sync-color); opacity: 0.4; }
 table.resizable { table-layout: fixed; }
