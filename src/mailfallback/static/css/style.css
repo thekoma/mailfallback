@@ -590,3 +590,14 @@ a.stat-card:hover { border-color: var(--pico-primary); transform: translateY(-2p
     color: var(--mfb-danger-color);
     margin-top: 0.5rem;
 }
+#advanced-search { margin: 0.75rem 0; }
+#advanced-search summary { cursor: pointer; font-weight: 500; }
+.search-filters { padding: 0.5rem 0; }
+.search-fields { display: flex; flex-wrap: wrap; gap: 0.25rem 1.5rem; align-items: flex-start; }
+.search-fields label { display: flex; align-items: center; gap: 0.4rem; margin: 0; white-space: nowrap; }
+.search-field-group { display: inline-flex; flex-direction: column; }
+.sub-fields { padding-left: 1.5rem; display: flex; flex-direction: column; gap: 0.15rem; }
+.sub-fields label { font-size: 0.875rem; }
+.chevron { cursor: pointer; font-size: 0.75rem; color: var(--mfb-icon-btn-color); }
+#search-btn { margin-top: 0.5rem; }
+#message-panel { margin-top: 0.75rem; }
