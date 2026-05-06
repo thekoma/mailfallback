@@ -152,6 +152,13 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             job.selected_folders,
             job.folder_mapping,
         )
+        src_conn_params = {
+            "host": settings.dovecot_imap_host,
+            "port": settings.dovecot_imap_port,
+            "tls_type": "NONE",
+            "username": temp_username,
+            "password": temp_password,
+        }
         tgt_conn_params = {
             "host": target.imap_host,
             "port": target.imap_port,
@@ -159,7 +166,9 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             "username": target.imap_user or target.email_address,
             "password": tgt_password,
         }
-        _execute_restore(db, job, src_conn, tgt_conn, folders, tgt_separator, tgt_conn_params)
+        _execute_restore(
+            db, job, src_conn, tgt_conn, folders, tgt_separator, src_conn_params, tgt_conn_params
+        )
 
     except (imaplib.IMAP4.error, OSError) as e:
         _fail_job(db, job, f"IMAP error: {e}")
@@ -254,7 +263,16 @@ def _reconnect_target(tgt_conn_params):
     )
 
 
-def _execute_restore(db, job, src_conn, tgt_conn, folders, tgt_separator="/", tgt_conn_params=None):
+def _execute_restore(
+    db,
+    job,
+    src_conn,
+    tgt_conn,
+    folders,
+    tgt_separator="/",
+    src_conn_params=None,
+    tgt_conn_params=None,
+):
     total = 0
     for full_folder, _ in folders:
         status, data = src_conn.select(f'"{full_folder}"', readonly=True)
@@ -314,36 +332,27 @@ def _execute_restore(db, job, src_conn, tgt_conn, folders, tgt_separator="/", tg
 
             try:
                 _restore_single_message(
-                    src_conn,
-                    tgt_conn,
-                    uid,
-                    target_folder,
-                    job,
-                    existing_ids,
-                    db,
+                    src_conn, tgt_conn, uid, target_folder, job, existing_ids, db
                 )
-            except (BrokenPipeError, ConnectionResetError, OSError) as e:
-                if tgt_conn_params:
-                    logger.warning("Connection lost (%s), reconnecting...", e)
-                    try:
+            except (
+                BrokenPipeError,
+                ConnectionResetError,
+                imaplib.IMAP4.abort,
+                OSError,
+            ) as e:
+                logger.warning("Connection lost (%s), reconnecting...", e)
+                try:
+                    if src_conn_params:
+                        src_conn = _reconnect_target(src_conn_params)
+                        src_conn.select(f'"{full_folder}"', readonly=True)
+                    if tgt_conn_params:
                         tgt_conn = _reconnect_target(tgt_conn_params)
-                        _restore_single_message(
-                            src_conn,
-                            tgt_conn,
-                            uid,
-                            target_folder,
-                            job,
-                            existing_ids,
-                            db,
-                        )
-                    except Exception:
-                        job.failed_messages += 1
-                        logger.warning(
-                            "Retry failed for UID %s: %s", uid, full_folder, exc_info=True
-                        )
-                else:
+                    _restore_single_message(
+                        src_conn, tgt_conn, uid, target_folder, job, existing_ids, db
+                    )
+                except Exception:
                     job.failed_messages += 1
-                    logger.warning("Failed UID %s from %s: %s", uid, full_folder, e)
+                    logger.warning("Retry failed for UID %s: %s", uid, full_folder, exc_info=True)
             except Exception:
                 job.failed_messages += 1
                 logger.warning("Failed to restore UID %s from %s", uid, full_folder, exc_info=True)
