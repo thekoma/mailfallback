@@ -1,0 +1,118 @@
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from mailfallback.models import Account, JobStatus, RestoreJob, RestoreMode, User
+from mailfallback.services.restore_worker import execute_restore_job
+
+
+@pytest.fixture
+def restore_job_fixtures(db_session, default_store):
+    user = User(username="worker_test", password_hash="x", store_id=default_store.id)
+    db_session.add(user)
+    db_session.flush()
+
+    src = Account(
+        name="source",
+        email_address="src@example.com",
+        imap_host="imap.src.com",
+        imap_port=993,
+        maildir_path="/data/mailboxes/src",
+        store_id=default_store.id,
+        credentials="encrypted",
+    )
+    tgt = Account(
+        name="target",
+        email_address="tgt@example.com",
+        imap_host="imap.tgt.com",
+        imap_port=993,
+        maildir_path="/data/mailboxes/tgt",
+        store_id=default_store.id,
+        credentials="encrypted",
+    )
+    db_session.add_all([src, tgt])
+    db_session.flush()
+    src.owners.append(user)
+    db_session.commit()
+
+    job = RestoreJob(
+        source_account_id=src.id,
+        target_account_id=tgt.id,
+        restore_mode=RestoreMode.folder,
+        selected_folders=["INBOX"],
+        skip_duplicates=False,
+        requested_by=user.id,
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+    return {"job": job, "user": user, "source": src, "target": tgt}
+
+
+@patch("mailfallback.services.restore_worker.connect_imap")
+@patch("mailfallback.services.restore_worker.decrypt_credentials")
+def test_execute_restore_folder(mock_decrypt, mock_connect, db_session, restore_job_fixtures):
+    f = restore_job_fixtures
+    mock_decrypt.return_value = "plaintext-pass"
+
+    src_conn = MagicMock()
+    tgt_conn = MagicMock()
+    mock_connect.side_effect = [src_conn, tgt_conn]
+
+    src_conn.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "INBOX"'])
+    src_conn.select.return_value = ("OK", [b"2"])
+    src_conn.search.return_value = ("OK", [b"1 2"])
+    src_conn.fetch.side_effect = [
+        ("OK", [(b"1 (RFC822 {100}", b"From: a@b.com\r\nSubject: Test1\r\n\r\nBody1"), b")"]),
+        ("OK", [(b"2 (RFC822 {100}", b"From: c@d.com\r\nSubject: Test2\r\n\r\nBody2"), b")"]),
+    ]
+
+    tgt_conn.append.return_value = ("OK", [b"APPEND completed"])
+
+    execute_restore_job(db_session, f["job"].id)
+
+    db_session.refresh(f["job"])
+    assert f["job"].status == JobStatus.completed
+    assert f["job"].restored_messages == 2
+    assert f["job"].total_messages == 2
+    assert tgt_conn.append.call_count == 2
+
+
+@patch("mailfallback.services.restore_worker.connect_imap")
+@patch("mailfallback.services.restore_worker.decrypt_credentials")
+def test_execute_restore_job_not_found(mock_decrypt, mock_connect, db_session):
+    execute_restore_job(db_session, "nonexistent-id")
+    mock_connect.assert_not_called()
+
+
+@patch("mailfallback.services.restore_worker.connect_imap")
+@patch("mailfallback.services.restore_worker.decrypt_credentials")
+def test_execute_restore_handles_append_failure(
+    mock_decrypt,
+    mock_connect,
+    db_session,
+    restore_job_fixtures,
+):
+    f = restore_job_fixtures
+    mock_decrypt.return_value = "plaintext-pass"
+
+    src_conn = MagicMock()
+    tgt_conn = MagicMock()
+    mock_connect.side_effect = [src_conn, tgt_conn]
+
+    src_conn.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "INBOX"'])
+    src_conn.select.return_value = ("OK", [b"1"])
+    src_conn.search.return_value = ("OK", [b"1"])
+    src_conn.fetch.return_value = (
+        "OK",
+        [(b"1 (RFC822 {50}", b"From: a@b.com\r\nSubject: Fail\r\n\r\nBody"), b")"],
+    )
+
+    tgt_conn.append.return_value = ("NO", [b"Quota exceeded"])
+
+    execute_restore_job(db_session, f["job"].id)
+
+    db_session.refresh(f["job"])
+    assert f["job"].status == JobStatus.completed
+    assert f["job"].restored_messages == 0
+    assert f["job"].failed_messages == 1

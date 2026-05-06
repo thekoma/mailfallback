@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     dovecot_enabled: bool = False
     dovecot_api_url: str = "http://dovecot:8080"
     dovecot_api_key: str = ""
+    dovecot_imap_host: str = "dovecot"
+    dovecot_imap_port: int = 31143
     webmail_url: str = ""
 
 
