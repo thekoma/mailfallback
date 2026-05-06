@@ -456,6 +456,10 @@ document.addEventListener('DOMContentLoaded', function() {
     if (statsDetails) {
         initStatsToggle(statsDetails);
     }
+    /* Restore page */
+    if (document.getElementById('restore-form')) {
+        initRestorePage();
+    }
     /* Accordion: one section open per level, reliable animation replay */
     document.querySelectorAll('.content details').forEach(function(det) {
         det.addEventListener('toggle', function() {
@@ -540,4 +544,105 @@ function showLogModal(btn) {
     document.getElementById('log-modal-body').textContent = btn.dataset.log;
     modal.showModal();
     lucide.createIcons();
+}
+
+/* === Restore page === */
+
+function initRestorePage() {
+    var radios = document.querySelectorAll('[name="restore_mode"]');
+    radios.forEach(function(r) {
+        r.addEventListener('change', updateRestoreMode);
+    });
+
+    var sourceSelect = document.getElementById('source-account');
+    if (sourceSelect) {
+        sourceSelect.addEventListener('change', function() {
+            updateSearchFolders();
+            updateRestoreMode();
+        });
+    }
+    updateRestoreMode();
+}
+
+function updateRestoreMode() {
+    var mode = (document.querySelector('[name="restore_mode"]:checked') || {}).value || 'full';
+    var folderPanel = document.getElementById('folder-panel');
+    var searchPanel = document.getElementById('search-panel');
+
+    if (mode === 'folder') {
+        folderPanel.classList.remove('hidden');
+        searchPanel.classList.add('hidden');
+    } else if (mode === 'selection') {
+        folderPanel.classList.add('hidden');
+        searchPanel.classList.remove('hidden');
+        updateSearchFolders();
+    } else {
+        folderPanel.classList.add('hidden');
+        searchPanel.classList.add('hidden');
+    }
+}
+
+function updateSearchFolders() {
+    var sourceId = document.getElementById('source-account').value;
+    var select = document.getElementById('search-folder');
+    if (!sourceId || !select) return;
+
+    fetch('/api/accounts/' + sourceId + '/mailboxes')
+        .then(function(r) { return r.json(); })
+        .then(function(folders) {
+            select.innerHTML = '';
+            folders.forEach(function(f) {
+                var opt = document.createElement('option');
+                opt.value = f.name;
+                opt.textContent = f.name + ' (' + f.messages + ')';
+                select.appendChild(opt);
+            });
+        })
+        .catch(function() {
+            select.innerHTML = '<option value="">Failed to load folders</option>';
+        });
+}
+
+function toggleCustomPrefix() {
+    var sel = document.getElementById('folder-mapping-select');
+    var row = document.getElementById('custom-prefix-row');
+    if (sel.value === 'custom') {
+        row.classList.remove('hidden');
+    } else {
+        row.classList.add('hidden');
+    }
+}
+
+function buildRestorePayload() {
+    var mode = document.querySelector('[name="restore_mode"]:checked').value;
+    var mappingSel = document.getElementById('folder-mapping-select');
+    var mapping = mappingSel.value;
+    if (mapping === 'custom') {
+        mapping = document.getElementById('custom-prefix').value || 'Restored';
+    }
+
+    var payload = {
+        source_account_id: document.getElementById('source-account').value,
+        target_account_id: document.getElementById('target-account').value,
+        restore_mode: mode,
+        folder_mapping: mapping,
+        skip_duplicates: document.querySelector('[name="skip_duplicates"]').checked
+    };
+
+    if (mode === 'folder') {
+        var checked = document.querySelectorAll('[name="selected_folders"]:checked');
+        payload.selected_folders = Array.from(checked).map(function(cb) { return cb.value; });
+    }
+
+    if (mode === 'selection') {
+        var checked = document.querySelectorAll('[name="selected_uids"]:checked');
+        var folder = document.getElementById('search-folder').value;
+        if (checked.length && folder) {
+            var uids = {};
+            uids[folder] = Array.from(checked).map(function(cb) { return parseInt(cb.value); });
+            payload.selected_uids = uids;
+        }
+    }
+
+    return payload;
 }

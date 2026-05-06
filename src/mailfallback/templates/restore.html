@@ -36,16 +36,40 @@
         <label><input type="radio" name="restore_mode" value="selection"> Search & pick</label>
     </fieldset>
 
-    <div id="folder-panel"></div>
+    <div id="folder-panel" class="hidden"></div>
+
+    <div id="search-panel" class="hidden">
+        <div class="grid">
+            <label>
+                Search in folder
+                <select id="search-folder" name="search_folder">
+                    <option value="">Select a source account first</option>
+                </select>
+            </label>
+            <label>
+                Search query
+                <input type="text" id="search-query" name="search_query" placeholder="Type to search…">
+            </label>
+        </div>
+        <button type="button" class="outline secondary" id="search-btn"
+                hx-get="/restore/partials/messages"
+                hx-target="#message-panel"
+                hx-include="[name='source_account_id'], [name='search_folder'], [name='search_query']"
+                hx-trigger="click">
+            <i data-lucide="search" class="icon-sm icon-inline"></i> Search
+        </button>
+        <div id="message-panel"></div>
+    </div>
 
     <fieldset>
         <legend>Options</legend>
         <div class="grid">
             <label>
                 Folder mapping
-                <select name="folder_mapping">
+                <select name="folder_mapping" id="folder-mapping-select" onchange="toggleCustomPrefix()">
                     <option value="original">Original folder</option>
                     <option value="Restored">Restored/ prefix</option>
+                    <option value="custom">Custom prefix…</option>
                 </select>
             </label>
             <label>
@@ -53,19 +77,19 @@
                 Skip duplicate messages
             </label>
         </div>
+        <div id="custom-prefix-row" class="hidden">
+            <label>
+                Custom prefix
+                <input type="text" id="custom-prefix" placeholder="e.g. Backup/2024">
+            </label>
+        </div>
     </fieldset>
 
     <button type="button" id="start-restore-btn"
             hx-post="/api/restore"
             hx-target="#restore-progress"
-            hx-swap="innerHTML"
-            hx-vals='js:{
-                source_account_id: document.getElementById("source-account").value,
-                target_account_id: document.getElementById("target-account").value,
-                restore_mode: document.querySelector("[name=restore_mode]:checked").value,
-                folder_mapping: document.querySelector("[name=folder_mapping]").value,
-                skip_duplicates: document.querySelector("[name=skip_duplicates]").checked
-            }'>
+            hx-swap="outerHTML"
+            hx-vals='js:buildRestorePayload()'>
         <i data-lucide="play" class="icon-sm icon-inline"></i> Start Restore
     </button>
 </form>
