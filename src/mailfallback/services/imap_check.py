@@ -2,6 +2,26 @@ import contextlib
 import imaplib
 
 
+def connect_imap(
+    host: str,
+    port: int = 993,
+    tls_type: str = "IMAPS",
+    username: str | None = None,
+    password: str | None = None,
+    timeout: int = 30,
+) -> imaplib.IMAP4:
+    if tls_type == "IMAPS":
+        conn = imaplib.IMAP4_SSL(host, port, timeout=timeout)
+    elif tls_type == "STARTTLS":
+        conn = imaplib.IMAP4(host, port, timeout=timeout)
+        conn.starttls()
+    else:
+        conn = imaplib.IMAP4(host, port, timeout=timeout)
+    if username and password:
+        conn.login(username, password)
+    return conn
+
+
 def check_imap_credentials(
     host: str,
     port: int = 993,
@@ -10,13 +30,7 @@ def check_imap_credentials(
     password: str | None = None,
 ) -> dict:
     try:
-        if tls_type == "IMAPS":
-            conn = imaplib.IMAP4_SSL(host, port, timeout=10)
-        elif tls_type == "STARTTLS":
-            conn = imaplib.IMAP4(host, port, timeout=10)
-            conn.starttls()
-        else:
-            conn = imaplib.IMAP4(host, port, timeout=10)
+        conn = connect_imap(host, port, tls_type, timeout=10)
         greeting = conn.welcome.decode() if conn.welcome else "OK"
 
         auth_mechs = _extract_auth_capabilities(conn)
