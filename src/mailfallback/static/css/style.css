@@ -14,6 +14,9 @@
     --mfb-badge-neutral-bg: #f3f4f6;
     --mfb-badge-neutral-color: #6b7280;
     --mfb-badge-neutral-border: #e5e7eb;
+    --mfb-badge-warning-bg: #fef3c7;
+    --mfb-badge-warning-color: #92400e;
+    --mfb-badge-warning-border: #fde68a;
     --mfb-badge-user-color: #374151;
     --mfb-badge-user-border: #d1d5db;
     --mfb-icon-btn-color: #374151;
@@ -41,6 +44,9 @@
     --mfb-badge-neutral-bg: #1f2937;
     --mfb-badge-neutral-color: #9ca3af;
     --mfb-badge-neutral-border: #374151;
+    --mfb-badge-warning-bg: #451a03;
+    --mfb-badge-warning-color: #fcd34d;
+    --mfb-badge-warning-border: #78350f;
     --mfb-badge-user-color: #d1d5db;
     --mfb-badge-user-border: #4b5563;
     --mfb-icon-btn-color: #d1d5db;
@@ -201,6 +207,7 @@ body.login-page .content { margin-left: 0; max-width: 100%; display: flex; justi
 .badge-idle { background: var(--mfb-badge-idle-bg); color: var(--mfb-badge-idle-color); border-color: var(--mfb-badge-idle-border); }
 .badge-syncing { background: var(--mfb-badge-syncing-bg); color: var(--mfb-badge-syncing-color); border-color: var(--mfb-badge-syncing-border); }
 .badge-error { background: var(--mfb-badge-error-bg); color: var(--mfb-badge-error-color); border-color: var(--mfb-badge-error-border); }
+.badge-warning { background: var(--mfb-badge-warning-bg); color: var(--mfb-badge-warning-color); border-color: var(--mfb-badge-warning-border); }
 .badge-disabled { background: var(--mfb-badge-neutral-bg); color: var(--mfb-badge-neutral-color); border-color: var(--mfb-badge-neutral-border); }
 .badge-admin { background: var(--mfb-badge-syncing-bg); color: var(--mfb-badge-syncing-color); border-color: var(--mfb-badge-syncing-border); }
 .badge-user { background: var(--mfb-badge-neutral-bg); color: var(--mfb-badge-user-color); border-color: var(--mfb-badge-user-border); }
