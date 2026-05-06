@@ -129,7 +129,11 @@ def restore_messages_partial(
         if status == "OK":
             import email as email_mod
 
-            status, data = conn.search(None, "TEXT", f'"{search_query}"')
+            words = search_query.split()
+            search_criteria = []
+            for word in words:
+                search_criteria.extend(["TEXT", f'"{word}"'])
+            status, data = conn.search(None, *search_criteria)
             if status == "OK" and data[0]:
                 uids = data[0].split()[:100]
                 for uid in uids:
