@@ -9,6 +9,7 @@ from mailfallback.dependencies import get_current_user, get_db
 from mailfallback.models import User
 from mailfallback.services import account_service
 from mailfallback.services.audit_service import log_action
+from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
 from mailfallback.services.imap_check import connect_imap
 from mailfallback.services.restore_service import (
     cancel_restore_job,
@@ -150,14 +151,16 @@ def _get_namespace_prefix(account):
     return f"{account.name} ({account.email_address}) [{short_id}]/"
 
 
-def _connect_dovecot_imap(user):
-    return connect_imap(
+def _connect_dovecot_for_account(db, account):
+    temp_username, temp_password = create_temp_imap_user(db, [account.id])
+    conn = connect_imap(
         settings.dovecot_imap_host,
         settings.dovecot_imap_port,
         "NONE",
-        user.username,
-        "internal-auth",
+        temp_username,
+        temp_password,
     )
+    return conn, temp_username
 
 
 def _parse_folder_name(line_bytes, namespace_prefix):
@@ -247,7 +250,7 @@ def list_mailboxes(
         raise HTTPException(status_code=404, detail="Account not found")
 
     namespace_prefix = _get_namespace_prefix(account)
-    conn = _connect_dovecot_imap(user)
+    conn, temp_username = _connect_dovecot_for_account(db, account)
     try:
         status, folder_data = conn.list(f'"{namespace_prefix}"', "*")
         if status != "OK" or not folder_data:
@@ -269,6 +272,7 @@ def list_mailboxes(
         return mailboxes
     finally:
         conn.logout()
+        delete_temp_imap_user(db, temp_username)
 
 
 @browse_router.get("/accounts/{account_id}/mailboxes/{folder:path}/messages")
@@ -286,7 +290,7 @@ def list_messages(
 
     namespace_prefix = _get_namespace_prefix(account)
     imap_folder = f"{namespace_prefix}{folder}"
-    conn = _connect_dovecot_imap(user)
+    conn, temp_username = _connect_dovecot_for_account(db, account)
     try:
         status, data = conn.select(f'"{imap_folder}"', readonly=True)
         if status != "OK":
@@ -301,7 +305,6 @@ def list_messages(
             return []
 
         uids = data[0].split()
-        # Paginate: newest first
         uids.reverse()
         start = (page - 1) * page_size
         end = start + page_size
@@ -318,6 +321,7 @@ def list_messages(
         return _parse_envelope(fetch_data)
     finally:
         conn.logout()
+        delete_temp_imap_user(db, temp_username)
 
 
 @browse_router.get("/accounts/{account_id}/mailboxes/{folder:path}/search")
@@ -337,7 +341,7 @@ def search_messages(
 
     namespace_prefix = _get_namespace_prefix(account)
     imap_folder = f"{namespace_prefix}{folder}"
-    conn = _connect_dovecot_imap(user)
+    conn, temp_username = _connect_dovecot_for_account(db, account)
     try:
         status, data = conn.select(f'"{imap_folder}"', readonly=True)
         if status != "OK":
@@ -351,7 +355,6 @@ def search_messages(
         if not uids:
             return []
 
-        # Limit results
         uids = uids[:100]
         uid_set = b",".join(uids)
         status, fetch_data = conn.fetch(uid_set.decode(), "(ENVELOPE FLAGS)")
@@ -361,3 +364,4 @@ def search_messages(
         return _parse_envelope(fetch_data)
     finally:
         conn.logout()
+        delete_temp_imap_user(db, temp_username)

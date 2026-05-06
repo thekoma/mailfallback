@@ -1,6 +1,3 @@
-import imaplib
-import re
-
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
@@ -42,19 +39,18 @@ def restore_folders_partial(
         return HTMLResponse("")
 
     from mailfallback.config import settings
+    from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
     from mailfallback.services.imap_check import connect_imap
 
-    owner = account.owners[0] if account.owners else None
-    if not owner:
-        return HTMLResponse("")
-
+    temp_username = None
     try:
+        temp_username, temp_password = create_temp_imap_user(db, [account.id])
         conn = connect_imap(
             settings.dovecot_imap_host,
             settings.dovecot_imap_port,
             "NONE",
-            owner.username,
-            "internal-auth",
+            temp_username,
+            temp_password,
         )
         prefix = f"{account.name} ({account.email_address}) [{account.id[:8]}]/"
         status, folder_data = conn.list(f'"{prefix}"', "*")
@@ -71,6 +67,9 @@ def restore_folders_partial(
                 short_name = full_name.removeprefix(prefix)
                 messages = 0
                 try:
+                    import imaplib
+                    import re
+
                     st, st_data = conn.status(f'"{full_name}"', "(MESSAGES)")
                     if st == "OK" and st_data:
                         match = re.search(r"MESSAGES (\d+)", st_data[0].decode())
@@ -82,6 +81,9 @@ def restore_folders_partial(
         conn.logout()
     except Exception:
         folders = []
+    finally:
+        if temp_username:
+            delete_temp_imap_user(db, temp_username)
 
     return templates.TemplateResponse(
         request=request,
