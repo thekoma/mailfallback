@@ -60,6 +60,12 @@ class MigrationStatus(enum.StrEnum):
     failed = "failed"
 
 
+class RestoreMode(enum.StrEnum):
+    full = "full"
+    folder = "folder"
+    selection = "selection"
+
+
 account_owners = Table(
     "account_owners",
     Base.metadata,
@@ -228,3 +234,30 @@ class AuditLog(Base):
     resource_name = Column(String, nullable=True)
     ip_address = Column(String, nullable=True)
     details = Column(JSON, nullable=True)
+
+
+class RestoreJob(Base):
+    __tablename__ = "restore_jobs"
+
+    id = Column(String, primary_key=True, default=_new_uuid)
+    source_account_id = Column(String, ForeignKey("accounts.id"), nullable=False)
+    target_account_id = Column(String, ForeignKey("accounts.id"), nullable=False)
+    status = Column(Enum(JobStatus), nullable=False, default=JobStatus.pending)
+    restore_mode = Column(Enum(RestoreMode), nullable=False)
+    folder_mapping = Column(String, nullable=False, default="original")
+    skip_duplicates = Column(Boolean, nullable=False, default=True)
+    selected_folders = Column(JSON, nullable=True)
+    selected_uids = Column(JSON, nullable=True)
+    total_messages = Column(Integer, nullable=False, default=0)
+    restored_messages = Column(Integer, nullable=False, default=0)
+    skipped_messages = Column(Integer, nullable=False, default=0)
+    failed_messages = Column(Integer, nullable=False, default=0)
+    error = Column(Text, nullable=True)
+    requested_by = Column(String, ForeignKey("users.id"), nullable=False)
+    requested_at = Column(DateTime(timezone=True), default=_utcnow)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    source_account = relationship("Account", foreign_keys=[source_account_id])
+    target_account = relationship("Account", foreign_keys=[target_account_id])
+    requester = relationship("User", foreign_keys=[requested_by])
