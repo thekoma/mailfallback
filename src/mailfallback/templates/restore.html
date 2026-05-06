@@ -51,12 +51,71 @@
                 <input type="text" id="search-query" name="search_query" placeholder="Type to search…">
             </label>
         </div>
-        <button type="button" class="outline secondary" id="search-btn"
-                hx-get="/restore/partials/messages"
-                hx-target="#message-panel"
-                hx-include="[name='source_account_id'], [name='search_folder'], [name='search_query']"
-                hx-trigger="click">
-            <i data-lucide="search" class="icon-sm icon-inline"></i> Search
+
+        <details id="advanced-search">
+            <summary>Advanced filters</summary>
+            <div class="search-filters">
+                <fieldset class="search-fields">
+                    <legend>Search in</legend>
+                    <label><input type="checkbox" role="switch" id="sf-subject" checked> Subject</label>
+                    <div class="search-field-group">
+                        <label><input type="checkbox" role="switch" id="sf-sender" checked> Sender <span class="chevron" onclick="toggleSubFields('sender-sub')">&#9662;</span></label>
+                        <div id="sender-sub" class="sub-fields hidden">
+                            <label><input type="checkbox" id="sf-from" checked> From</label>
+                            <label><input type="checkbox" id="sf-reply-to"> Reply-To</label>
+                            <label><input type="checkbox" id="sf-followup-to"> Followup-To</label>
+                        </div>
+                    </div>
+                    <div class="search-field-group">
+                        <label><input type="checkbox" role="switch" id="sf-recipient"> Recipient <span class="chevron" onclick="toggleSubFields('recipient-sub')">&#9662;</span></label>
+                        <div id="recipient-sub" class="sub-fields hidden">
+                            <label><input type="checkbox" id="sf-to"> To</label>
+                            <label><input type="checkbox" id="sf-cc"> Cc</label>
+                            <label><input type="checkbox" id="sf-bcc"> Bcc</label>
+                        </div>
+                    </div>
+                    <label><input type="checkbox" role="switch" id="sf-body"> Body</label>
+                    <label><input type="checkbox" role="switch" id="sf-entire" onchange="toggleEntireMessage(this)"> Entire message</label>
+                </fieldset>
+
+                <div class="grid">
+                    <label>
+                        Type
+                        <select id="search-type">
+                            <option value="all">All</option>
+                            <option value="unseen">Unread</option>
+                            <option value="flagged">Flagged</option>
+                            <option value="unanswered">Unanswered</option>
+                            <option value="deleted">Deleted</option>
+                            <option value="undeleted">Not deleted</option>
+                            <option value="attachment">With attachment</option>
+                        </select>
+                    </label>
+                    <label>
+                        Scope
+                        <select id="search-scope" onchange="updateSearchScope()">
+                            <option value="current">Current folder</option>
+                            <option value="all">All folders</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="grid">
+                    <label>
+                        Since
+                        <input type="date" id="search-since">
+                    </label>
+                    <label>
+                        Before
+                        <input type="date" id="search-before">
+                    </label>
+                </div>
+            </div>
+        </details>
+
+        <button type="button" id="search-btn" onclick="executeSearch()">
+            <i data-lucide="search" class="icon-sm icon-inline" id="search-icon"></i>
+            <i data-lucide="loader" class="icon-sm icon-inline spin hidden" id="search-spinner"></i>
+            <span id="search-btn-text">Search</span>
         </button>
         <div id="message-panel"></div>
     </div>

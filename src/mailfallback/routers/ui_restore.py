@@ -98,10 +98,14 @@ def restore_messages_partial(
     source_account_id: str = "",
     search_folder: str = "",
     search_query: str = "",
+    search_in: str = "text",
+    type_filter: str = "all",
+    date_since: str = "",
+    date_before: str = "",
     db: Session = Depends(get_db),
 ):
     user = _get_session_user(request, db)
-    if not user or not source_account_id or not search_folder or not search_query:
+    if not user or not source_account_id or not search_query:
         return HTMLResponse("")
 
     account = get_account(db, source_account_id, user)
@@ -112,6 +116,8 @@ def restore_messages_partial(
     from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
     from mailfallback.services.imap_check import connect_imap
 
+    prefix = f"{account.name} ({account.email_address}) [{account.id[-4:]}]/"
+    search_all = search_folder == "*"
     temp_username = None
     messages = []
     try:
@@ -123,36 +129,32 @@ def restore_messages_partial(
             temp_username,
             temp_password,
         )
-        prefix = f"{account.name} ({account.email_address}) [{account.id[-4:]}]/"
-        imap_folder = f"{prefix}{search_folder}"
-        status, _ = conn.select(f'"{imap_folder}"', readonly=True)
-        if status == "OK":
-            import email as email_mod
 
-            words = search_query.split()
-            search_criteria = []
-            for word in words:
-                search_criteria.extend(["TEXT", f'"{word}"'])
-            status, data = conn.search(None, *search_criteria)
-            if status == "OK" and data[0]:
-                uids = data[0].split()[:100]
-                for uid in uids:
-                    status, msg_data = conn.fetch(
-                        uid, "(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)] FLAGS)"
-                    )
-                    if status != "OK" or not msg_data or not msg_data[0]:
-                        continue
-                    if isinstance(msg_data[0], tuple) and len(msg_data[0]) >= 2:
-                        header_bytes = msg_data[0][1]
-                        parsed = email_mod.message_from_bytes(header_bytes)
-                        messages.append(
-                            {
-                                "uid": int(uid),
-                                "subject": parsed.get("Subject", "(no subject)"),
-                                "from": parsed.get("From", ""),
-                                "date": parsed.get("Date", ""),
-                            }
-                        )
+        criteria = _build_search_criteria(
+            search_query, search_in, type_filter, date_since, date_before
+        )
+
+        if search_all:
+            folders = _list_account_folders(conn, prefix)
+        else:
+            folders = [(f"{prefix}{search_folder}", search_folder)]
+
+        for full_folder, short_folder in folders:
+            if len(messages) >= 100:
+                break
+            status, _ = conn.select(f'"{full_folder}"', readonly=True)
+            if status != "OK":
+                continue
+            status, data = conn.search(None, *criteria)
+            if status != "OK" or not data[0]:
+                continue
+            uids = data[0].split()
+            remaining = 100 - len(messages)
+            for uid in uids[:remaining]:
+                msg = _fetch_message_header(conn, uid, short_folder if search_all else None)
+                if msg:
+                    messages.append(msg)
+
         conn.logout()
     except Exception:
         messages = []
@@ -163,8 +165,179 @@ def restore_messages_partial(
     return templates.TemplateResponse(
         request=request,
         name="partials/restore_messages.html",
-        context={"messages": messages},
+        context={"messages": messages, "show_folder": search_all},
     )
+
+
+_FIELD_MAP = {
+    "subject": "SUBJECT",
+    "from": "FROM",
+    "reply_to": "HEADER Reply-To",
+    "followup_to": "HEADER Followup-To",
+    "to": "TO",
+    "cc": "CC",
+    "bcc": "BCC",
+    "body": "BODY",
+    "text": "TEXT",
+}
+
+_TYPE_MAP = {
+    "unseen": ["UNSEEN"],
+    "flagged": ["FLAGGED"],
+    "unanswered": ["UNANSWERED"],
+    "deleted": ["DELETED"],
+    "undeleted": ["UNDELETED"],
+    "attachment": ["HEADER", "Content-Type", "multipart/mixed"],
+}
+
+
+def _build_search_criteria(query, search_in, type_filter, date_since, date_before):
+    fields = [f.strip() for f in search_in.split(",") if f.strip()]
+    if "text" in fields:
+        fields = ["text"]
+
+    imap_fields = []
+    for f in fields:
+        if f in _FIELD_MAP:
+            imap_fields.append(_FIELD_MAP[f])
+
+    if not imap_fields:
+        imap_fields = ["TEXT"]
+
+    criteria = []
+    words = query.split()
+    for word in words:
+        quoted = f'"{word}"'
+        if len(imap_fields) == 1:
+            field = imap_fields[0]
+            if " " in field:
+                parts = field.split(" ", 1)
+                criteria.extend([parts[0], parts[1], quoted])
+            else:
+                criteria.extend([field, quoted])
+        else:
+            group = _build_or_group(imap_fields, quoted)
+            criteria.extend(group)
+
+    if type_filter in _TYPE_MAP:
+        criteria.extend(_TYPE_MAP[type_filter])
+
+    if date_since:
+        criteria.extend(["SINCE", _to_imap_date(date_since)])
+    if date_before:
+        criteria.extend(["BEFORE", _to_imap_date(date_before)])
+
+    return criteria if criteria else ["ALL"]
+
+
+def _build_or_group(fields, quoted_word):
+    if len(fields) == 1:
+        field = fields[0]
+        if " " in field:
+            parts = field.split(" ", 1)
+            return [parts[0], parts[1], quoted_word]
+        return [field, quoted_word]
+
+    def _field_criteria(field):
+        if " " in field:
+            parts = field.split(" ", 1)
+            return [parts[0], parts[1], quoted_word]
+        return [field, quoted_word]
+
+    if len(fields) == 2:
+        return ["OR", *_field_criteria(fields[0]), *_field_criteria(fields[1])]
+
+    result = ["OR", *_field_criteria(fields[0])]
+    remaining = fields[1:]
+    result.extend(_build_or_group(remaining, quoted_word))
+    return result
+
+
+def _to_imap_date(iso_date):
+    from datetime import datetime
+
+    dt = datetime.strptime(iso_date, "%Y-%m-%d")
+    months = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+    ]
+    return f"{dt.day}-{months[dt.month - 1]}-{dt.year}"
+
+
+def _list_account_folders(conn, prefix):
+    import imaplib
+
+    folders = []
+    try:
+        status, folder_data = conn.list(f'"{prefix}"', "*")
+        if status == "OK" and folder_data:
+            for item in folder_data:
+                if not item:
+                    continue
+                decoded = item.decode() if isinstance(item, bytes) else item
+                parts = decoded.rsplit('" "', 1)
+                if len(parts) < 2:
+                    continue
+                full_name = parts[1].rstrip('"')
+                short_name = full_name.removeprefix(prefix)
+                folders.append((full_name, short_name))
+    except imaplib.IMAP4.error:
+        pass
+    return folders
+
+
+def _fetch_message_header(conn, uid, folder_name=None):
+    import email as email_mod
+
+    status, msg_data = conn.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)] FLAGS)")
+    if status != "OK" or not msg_data or not msg_data[0]:
+        return None
+    if not isinstance(msg_data[0], tuple) or len(msg_data[0]) < 2:
+        return None
+
+    header_bytes = msg_data[0][1]
+    parsed = email_mod.message_from_bytes(header_bytes)
+
+    subject_raw = parsed.get("Subject", "(no subject)")
+    subject = _decode_mime_header(subject_raw)
+
+    from_raw = parsed.get("From", "")
+    from_decoded = _decode_mime_header(from_raw)
+
+    msg = {
+        "uid": int(uid),
+        "subject": subject,
+        "from": from_decoded,
+        "date": parsed.get("Date", ""),
+    }
+    if folder_name is not None:
+        msg["folder"] = folder_name
+    return msg
+
+
+def _decode_mime_header(value):
+    from email.header import decode_header
+
+    if not value:
+        return ""
+    parts = decode_header(value)
+    decoded = []
+    for part, charset in parts:
+        if isinstance(part, bytes):
+            decoded.append(part.decode(charset or "utf-8", errors="replace"))
+        else:
+            decoded.append(part)
+    return " ".join(decoded)
 
 
 @router.get("/restore/partials/progress", response_class=HTMLResponse)

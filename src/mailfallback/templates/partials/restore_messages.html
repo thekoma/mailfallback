@@ -1,18 +1,20 @@
 <div id="message-panel">
     {% if messages %}
     <table class="compact">
-        <thead><tr><th></th><th>Subject</th><th>From</th><th>Date</th></tr></thead>
+        <thead><tr><th></th>{% if show_folder %}<th>Folder</th>{% endif %}<th>Subject</th><th>From</th><th>Date</th></tr></thead>
         <tbody>
         {% for msg in messages %}
         <tr>
-            <td><input type="checkbox" name="selected_uids" value="{{ msg.uid }}"></td>
+            <td><input type="checkbox" name="selected_uids" value="{{ msg.uid }}" data-folder="{{ msg.folder or '' }}"></td>
+            {% if show_folder %}<td class="text-muted text-small">{{ msg.folder }}</td>{% endif %}
             <td>{{ msg.subject }}</td>
             <td>{{ msg.from }}</td>
-            <td>{{ msg.date }}</td>
+            <td class="text-small">{{ msg.date }}</td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
+    <small class="text-muted">{{ messages|length }} result{{ 's' if messages|length != 1 }} (max 100)</small>
     {% else %}
     <p class="text-muted">No messages found.</p>
     {% endif %}

@@ -603,6 +603,101 @@ function updateSearchFolders() {
         });
 }
 
+function updateSearchScope() {
+    var scope = document.getElementById('search-scope').value;
+    var folderSelect = document.getElementById('search-folder');
+    folderSelect.disabled = scope === 'all';
+}
+
+function toggleSubFields(id) {
+    document.getElementById(id).classList.toggle('hidden');
+}
+
+function toggleEntireMessage(cb) {
+    var others = ['sf-subject', 'sf-sender', 'sf-recipient', 'sf-body'];
+    others.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) {
+            el.disabled = cb.checked;
+            if (cb.checked) el.checked = false;
+        }
+    });
+    ['sf-from', 'sf-reply-to', 'sf-followup-to', 'sf-to', 'sf-cc', 'sf-bcc'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) {
+            el.disabled = cb.checked;
+            if (cb.checked) el.checked = false;
+        }
+    });
+}
+
+function _getSearchFields() {
+    if (document.getElementById('sf-entire').checked) return 'text';
+
+    var fields = [];
+    if (document.getElementById('sf-subject').checked) fields.push('subject');
+    if (document.getElementById('sf-sender').checked) {
+        if (document.getElementById('sf-from').checked) fields.push('from');
+        if (document.getElementById('sf-reply-to').checked) fields.push('reply_to');
+        if (document.getElementById('sf-followup-to').checked) fields.push('followup_to');
+        if (!document.getElementById('sf-from').checked &&
+            !document.getElementById('sf-reply-to').checked &&
+            !document.getElementById('sf-followup-to').checked) {
+            fields.push('from');
+        }
+    }
+    if (document.getElementById('sf-recipient').checked) {
+        if (document.getElementById('sf-to').checked) fields.push('to');
+        if (document.getElementById('sf-cc').checked) fields.push('cc');
+        if (document.getElementById('sf-bcc').checked) fields.push('bcc');
+        if (!document.getElementById('sf-to').checked &&
+            !document.getElementById('sf-cc').checked &&
+            !document.getElementById('sf-bcc').checked) {
+            fields.push('to');
+        }
+    }
+    if (document.getElementById('sf-body').checked) fields.push('body');
+    return fields.length ? fields.join(',') : 'text';
+}
+
+function executeSearch() {
+    var btn = document.getElementById('search-btn');
+    var icon = document.getElementById('search-icon');
+    var spinner = document.getElementById('search-spinner');
+    var btnText = document.getElementById('search-btn-text');
+    var query = document.getElementById('search-query').value;
+    if (!query) return;
+
+    btn.disabled = true;
+    icon.classList.add('hidden');
+    spinner.classList.remove('hidden');
+    btnText.textContent = 'Searching…';
+
+    var scope = document.getElementById('search-scope').value;
+    var folder = scope === 'all' ? '*' : document.getElementById('search-folder').value;
+
+    var params = new URLSearchParams({
+        source_account_id: document.getElementById('source-account').value,
+        search_folder: folder,
+        search_query: query,
+        search_in: _getSearchFields(),
+        type_filter: document.getElementById('search-type').value,
+        date_since: document.getElementById('search-since').value,
+        date_before: document.getElementById('search-before').value,
+    });
+
+    htmx.ajax('GET', '/restore/partials/messages?' + params.toString(), {
+        target: '#message-panel',
+        swap: 'outerHTML'
+    }).then(function() {
+        btn.disabled = false;
+        icon.classList.remove('hidden');
+        spinner.classList.add('hidden');
+        btnText.textContent = 'Search';
+        lucide.createIcons();
+    });
+}
+
 function toggleCustomPrefix() {
     var sel = document.getElementById('folder-mapping-select');
     var row = document.getElementById('custom-prefix-row');
