@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI):
         ensure_admin_exists(db, default_store.id)
         _backfill_allowed_stores(db)
         _recover_zombie_jobs(db)
+        _cleanup_temp_restore_users(db)
         start_scheduler(db)
         _resume_migrations(db)
     finally:
@@ -82,6 +83,14 @@ def _recover_zombie_jobs(db):
     if zombies:
         db.commit()
         logger.info("Recovered %d zombie sync jobs", len(zombies))
+
+
+def _cleanup_temp_restore_users(db):
+    from mailfallback.services.dovecot_auth import cleanup_temp_imap_users
+
+    count = cleanup_temp_imap_users(db)
+    if count:
+        logger.info("Cleaned up %d orphaned restore users", count)
 
 
 def _resume_migrations(db):

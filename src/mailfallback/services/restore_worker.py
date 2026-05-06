@@ -10,6 +10,7 @@ from mailfallback.config import settings
 from mailfallback.db import SessionLocal
 from mailfallback.models import Account, JobStatus, RestoreJob, User
 from mailfallback.security import decrypt_credentials
+from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
 from mailfallback.services.imap_check import connect_imap
 
 logger = logging.getLogger(__name__)
@@ -79,11 +80,6 @@ def execute_restore_job(db: Session, job_id: str) -> None:
         _fail_job(db, job, "Account is suspended")
         return
 
-    owner = db.query(User).join(User.accounts).filter(Account.id == source.id).first()
-    if not owner:
-        _fail_job(db, job, "Source account has no owner")
-        return
-
     target_creds = (
         decrypt_credentials(target.credentials, settings.secret_key) if target.credentials else None
     )
@@ -97,13 +93,16 @@ def execute_restore_job(db: Session, job_id: str) -> None:
 
     src_conn = None
     tgt_conn = None
+    temp_username = None
     try:
+        temp_username, temp_password = create_temp_imap_user(db, [source.id])
+
         src_conn = connect_imap(
             settings.dovecot_imap_host,
             settings.dovecot_imap_port,
             "NONE",
-            owner.username,
-            "internal-auth",
+            temp_username,
+            temp_password,
         )
 
         if target.auth_type.value == "oauth2":
@@ -139,6 +138,9 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             if conn:
                 with contextlib.suppress(Exception):
                     conn.logout()
+        if temp_username:
+            with contextlib.suppress(Exception):
+                delete_temp_imap_user(db, temp_username)
         if job.status == JobStatus.running:
             job.status = JobStatus.completed
             job.completed_at = datetime.now(UTC)

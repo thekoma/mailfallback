@@ -34,7 +34,6 @@ def browse_fixtures(db_session, default_store):
 
 
 def _login(client, db_session, username="browser"):
-    """Bypass authentication by injecting user_id directly into the session."""
     from mailfallback.models import User
 
     user = db_session.query(User).filter(User.username == username).first()
@@ -42,12 +41,27 @@ def _login(client, db_session, username="browser"):
         client.post("/api/auth/login", json={"username": username, "password": "x"})
 
 
-@patch("mailfallback.routers.restore.connect_imap")
-def test_list_mailboxes(mock_connect, client, db_session, browse_fixtures):
+def _mock_dovecot_connection():
+    mock_conn = MagicMock()
+    mock_create = patch(
+        "mailfallback.routers.restore.create_temp_imap_user",
+        return_value=("_restore_test1234", "random-pass"),
+    )
+    mock_delete = patch(
+        "mailfallback.routers.restore.delete_temp_imap_user",
+    )
+    mock_connect = patch(
+        "mailfallback.routers.restore.connect_imap",
+        return_value=mock_conn,
+    )
+    return mock_conn, mock_create, mock_delete, mock_connect
+
+
+def test_list_mailboxes(client, db_session, browse_fixtures):
     f = browse_fixtures
     _login(client, db_session)
-    mock_conn = MagicMock()
-    mock_connect.return_value = mock_conn
+    mock_conn, mock_create, mock_delete, mock_connect = _mock_dovecot_connection()
+
     prefix = f"browseacct (browse@example.com) [{f['account'].id[:8]}]"
     mock_conn.list.return_value = (
         "OK",
@@ -61,21 +75,22 @@ def test_list_mailboxes(mock_connect, client, db_session, browse_fixtures):
         ("OK", [f'"{prefix}/Sent" (MESSAGES 10)'.encode()]),
     ]
 
-    resp = client.get(f"/api/accounts/{f['account'].id}/mailboxes")
+    with mock_create, mock_delete as md, mock_connect:
+        resp = client.get(f"/api/accounts/{f['account'].id}/mailboxes")
+
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 2
     assert data[0]["name"] == "INBOX"
     assert data[0]["messages"] == 42
     mock_conn.logout.assert_called_once()
+    md.assert_called_once()
 
 
-@patch("mailfallback.routers.restore.connect_imap")
-def test_list_messages(mock_connect, client, db_session, browse_fixtures):
+def test_list_messages(client, db_session, browse_fixtures):
     f = browse_fixtures
     _login(client, db_session)
-    mock_conn = MagicMock()
-    mock_connect.return_value = mock_conn
+    mock_conn, mock_create, mock_delete, mock_connect = _mock_dovecot_connection()
 
     mock_conn.select.return_value = ("OK", [b"2"])
     mock_conn.search.return_value = ("OK", [b"1 2"])
@@ -89,23 +104,21 @@ def test_list_messages(mock_connect, client, db_session, browse_fixtures):
         b' (("From2" NIL "user2" "example.com")) NIL NIL NIL NIL NIL'
         b' NIL "<msg2@example.com>") FLAGS ())'
     )
-    mock_conn.fetch.return_value = (
-        "OK",
-        [(env1, b""), (env2, b"")],
-    )
+    mock_conn.fetch.return_value = ("OK", [(env1, b""), (env2, b"")])
 
-    resp = client.get(f"/api/accounts/{f['account'].id}/mailboxes/INBOX/messages")
+    with mock_create, mock_delete as md, mock_connect:
+        resp = client.get(f"/api/accounts/{f['account'].id}/mailboxes/INBOX/messages")
+
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) >= 1
+    md.assert_called_once()
 
 
-@patch("mailfallback.routers.restore.connect_imap")
-def test_search_messages(mock_connect, client, db_session, browse_fixtures):
+def test_search_messages(client, db_session, browse_fixtures):
     f = browse_fixtures
     _login(client, db_session)
-    mock_conn = MagicMock()
-    mock_connect.return_value = mock_conn
+    mock_conn, mock_create, mock_delete, mock_connect = _mock_dovecot_connection()
 
     mock_conn.select.return_value = ("OK", [b"1"])
     mock_conn.search.return_value = ("OK", [b"1"])
@@ -114,10 +127,10 @@ def test_search_messages(mock_connect, client, db_session, browse_fixtures):
         b' (("Sender" NIL "s" "example.com")) NIL NIL NIL NIL NIL'
         b' NIL "<found@example.com>") FLAGS (\\Seen))'
     )
-    mock_conn.fetch.return_value = (
-        "OK",
-        [(env_found, b"")],
-    )
+    mock_conn.fetch.return_value = ("OK", [(env_found, b"")])
 
-    resp = client.get(f"/api/accounts/{f['account'].id}/mailboxes/INBOX/search?q=test")
+    with mock_create, mock_delete as md, mock_connect:
+        resp = client.get(f"/api/accounts/{f['account'].id}/mailboxes/INBOX/search?q=test")
+
     assert resp.status_code == 200
+    md.assert_called_once()

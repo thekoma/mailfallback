@@ -49,11 +49,16 @@ def restore_job_fixtures(db_session, default_store):
     return {"job": job, "user": user, "source": src, "target": tgt}
 
 
+@patch("mailfallback.services.restore_worker.delete_temp_imap_user")
+@patch("mailfallback.services.restore_worker.create_temp_imap_user")
 @patch("mailfallback.services.restore_worker.connect_imap")
 @patch("mailfallback.services.restore_worker.decrypt_credentials")
-def test_execute_restore_folder(mock_decrypt, mock_connect, db_session, restore_job_fixtures):
+def test_execute_restore_folder(
+    mock_decrypt, mock_connect, mock_create_temp, mock_delete_temp, db_session, restore_job_fixtures
+):
     f = restore_job_fixtures
     mock_decrypt.return_value = "plaintext-pass"
+    mock_create_temp.return_value = ("_restore_test1234", "random-pass")
 
     src_conn = MagicMock()
     tgt_conn = MagicMock()
@@ -76,6 +81,8 @@ def test_execute_restore_folder(mock_decrypt, mock_connect, db_session, restore_
     assert f["job"].restored_messages == 2
     assert f["job"].total_messages == 2
     assert tgt_conn.append.call_count == 2
+    mock_create_temp.assert_called_once()
+    mock_delete_temp.assert_called_once_with(db_session, "_restore_test1234")
 
 
 @patch("mailfallback.services.restore_worker.connect_imap")
@@ -85,16 +92,21 @@ def test_execute_restore_job_not_found(mock_decrypt, mock_connect, db_session):
     mock_connect.assert_not_called()
 
 
+@patch("mailfallback.services.restore_worker.delete_temp_imap_user")
+@patch("mailfallback.services.restore_worker.create_temp_imap_user")
 @patch("mailfallback.services.restore_worker.connect_imap")
 @patch("mailfallback.services.restore_worker.decrypt_credentials")
 def test_execute_restore_handles_append_failure(
     mock_decrypt,
     mock_connect,
+    mock_create_temp,
+    mock_delete_temp,
     db_session,
     restore_job_fixtures,
 ):
     f = restore_job_fixtures
     mock_decrypt.return_value = "plaintext-pass"
+    mock_create_temp.return_value = ("_restore_test5678", "random-pass")
 
     src_conn = MagicMock()
     tgt_conn = MagicMock()
@@ -116,3 +128,4 @@ def test_execute_restore_handles_append_failure(
     assert f["job"].status == JobStatus.completed
     assert f["job"].restored_messages == 0
     assert f["job"].failed_messages == 1
+    mock_delete_temp.assert_called_once()
