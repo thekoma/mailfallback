@@ -30,3 +30,12 @@ repos:
     rev: v8.30.0
     hooks:
       - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: alembic-drift
+        name: Check Alembic migration drift
+        entry: uv run pytest tests/test_alembic_sync.py -x -q
+        language: system
+        files: '(models\.py|migrations/versions/.*\.py)$'
+        pass_filenames: false
