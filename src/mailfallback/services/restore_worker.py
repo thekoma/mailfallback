@@ -223,6 +223,8 @@ def _resolve_folders(src_conn, source, job):
 
     if job.selected_folders:
         return [(full, short) for full, short in all_folders if short in job.selected_folders]
+    if job.selected_uids:
+        return [(full, short) for full, short in all_folders if short in job.selected_uids]
     return all_folders
 
 
