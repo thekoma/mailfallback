@@ -66,8 +66,10 @@ def request_cancel(job_id: str) -> None:
 
 
 def execute_restore_job(db: Session, job_id: str) -> None:
+    logger.info("Starting restore job %s", job_id)
     job = db.query(RestoreJob).filter(RestoreJob.id == job_id).first()
     if not job:
+        logger.warning("Restore job %s not found", job_id)
         return
 
     source = db.query(Account).filter(Account.id == job.source_account_id).first()
@@ -97,6 +99,7 @@ def execute_restore_job(db: Session, job_id: str) -> None:
     try:
         temp_username, temp_password = create_temp_imap_user(db, [source.id])
 
+        logger.info("Restore %s: connecting to Dovecot as %s", job_id, temp_username)
         src_conn = connect_imap(
             settings.dovecot_imap_host,
             settings.dovecot_imap_port,
@@ -104,6 +107,7 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             temp_username,
             temp_password,
         )
+        logger.info("Restore %s: Dovecot connected OK", job_id)
 
         if target.auth_type.value == "oauth2":
             tgt_password = _refresh_target_token(target_creds, db, target)
@@ -113,6 +117,13 @@ def execute_restore_job(db: Session, job_id: str) -> None:
         else:
             tgt_password = target_creds
 
+        logger.info(
+            "Restore %s: connecting to target %s:%s as %s",
+            job_id,
+            target.imap_host,
+            target.imap_port,
+            target.imap_user or target.email_address,
+        )
         tgt_conn = connect_imap(
             target.imap_host,
             target.imap_port,
@@ -120,12 +131,24 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             target.imap_user or target.email_address,
             tgt_password,
         )
+        logger.info("Restore %s: target connected OK", job_id)
 
         folders = _resolve_folders(src_conn, source, job)
+        logger.info(
+            "Restore %s: resolved %d folders: %s", job_id, len(folders), [s for _, s in folders]
+        )
         if not folders:
             _fail_job(db, job, "No folders found to restore")
             return
 
+        logger.info(
+            "Restore %s: mode=%s, selected_uids=%s, selected_folders=%s, folder_mapping=%s",
+            job_id,
+            job.restore_mode.value,
+            job.selected_uids,
+            job.selected_folders,
+            job.folder_mapping,
+        )
         _execute_restore(db, job, src_conn, tgt_conn, folders)
 
     except (imaplib.IMAP4.error, OSError) as e:
@@ -210,8 +233,13 @@ def _execute_restore(db, job, src_conn, tgt_conn, folders):
             continue
         count = int(data[0].decode())
         total += count
-    job.total_messages = total
+    if job.selected_uids:
+        filtered = sum(len(v) for v in job.selected_uids.values())
+        job.total_messages = filtered
+    else:
+        job.total_messages = total
     db.commit()
+    logger.info("Restore: total_messages set to %d", job.total_messages)
 
     for full_folder, short_folder in folders:
         if job.id in _cancel_flags:
@@ -224,12 +252,22 @@ def _execute_restore(db, job, src_conn, tgt_conn, folders):
 
         uid_filter = None
         if job.selected_uids and short_folder in job.selected_uids:
-            uid_filter = set(job.selected_uids[short_folder])
+            uid_filter = {int(u) for u in job.selected_uids[short_folder]}
+            logger.info("Restore: folder %s uid_filter=%s", short_folder, uid_filter)
+        elif job.selected_uids:
+            logger.info(
+                "Restore: folder %s not in selected_uids keys %s, skipping uid filter",
+                short_folder,
+                list(job.selected_uids.keys()),
+            )
 
         status, data = src_conn.search(None, "ALL")
         if status != "OK" or not data[0]:
             continue
         uids = data[0].split()
+        logger.info(
+            "Restore: folder %s has %d messages, uid_filter=%s", short_folder, len(uids), uid_filter
+        )
 
         existing_ids = set()
         if job.skip_duplicates:
@@ -316,10 +354,17 @@ def _restore_single_message(
             )
 
     target_folder = _map_folder(short_folder, job.folder_mapping)
+    logger.debug(
+        "Restore: APPEND to '%s', flags='%s', date='%s', msg_size=%d",
+        target_folder,
+        flags_str,
+        date_str,
+        len(raw_message),
+    )
     _ensure_folder(tgt_conn, target_folder)
 
     try:
-        result, _ = _retry_imap(
+        result, resp = _retry_imap(
             tgt_conn.append,
             f'"{target_folder}"',
             flags_str if flags_str else None,
@@ -330,8 +375,10 @@ def _restore_single_message(
             job.restored_messages += 1
         else:
             job.failed_messages += 1
-    except (imaplib.IMAP4.error, OSError):
+            logger.warning("Restore: APPEND failed for UID %s: %s %s", uid, result, resp)
+    except (imaplib.IMAP4.error, OSError) as e:
         job.failed_messages += 1
+        logger.warning("Restore: APPEND exception for UID %s: %s", uid, e)
 
 
 def _map_folder(folder_name, folder_mapping):
