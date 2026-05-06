@@ -152,7 +152,14 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             job.selected_folders,
             job.folder_mapping,
         )
-        _execute_restore(db, job, src_conn, tgt_conn, folders, tgt_separator)
+        tgt_conn_params = {
+            "host": target.imap_host,
+            "port": target.imap_port,
+            "tls_type": target.tls_type or "IMAPS",
+            "username": target.imap_user or target.email_address,
+            "password": tgt_password,
+        }
+        _execute_restore(db, job, src_conn, tgt_conn, folders, tgt_separator, tgt_conn_params)
 
     except (imaplib.IMAP4.error, OSError) as e:
         _fail_job(db, job, f"IMAP error: {e}")
@@ -236,7 +243,18 @@ def _get_namespace_prefix(account):
     return f"{account.name} ({account.email_address}) [{short_id}]/"
 
 
-def _execute_restore(db, job, src_conn, tgt_conn, folders, tgt_separator="/"):
+def _reconnect_target(tgt_conn_params):
+    logger.info("Reconnecting to target %s:%s", tgt_conn_params["host"], tgt_conn_params["port"])
+    return connect_imap(
+        tgt_conn_params["host"],
+        tgt_conn_params["port"],
+        tgt_conn_params["tls_type"],
+        tgt_conn_params["username"],
+        tgt_conn_params["password"],
+    )
+
+
+def _execute_restore(db, job, src_conn, tgt_conn, folders, tgt_separator="/", tgt_conn_params=None):
     total = 0
     for full_folder, _ in folders:
         status, data = src_conn.select(f'"{full_folder}"', readonly=True)
@@ -304,6 +322,28 @@ def _execute_restore(db, job, src_conn, tgt_conn, folders, tgt_separator="/"):
                     existing_ids,
                     db,
                 )
+            except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                if tgt_conn_params:
+                    logger.warning("Connection lost (%s), reconnecting...", e)
+                    try:
+                        tgt_conn = _reconnect_target(tgt_conn_params)
+                        _restore_single_message(
+                            src_conn,
+                            tgt_conn,
+                            uid,
+                            target_folder,
+                            job,
+                            existing_ids,
+                            db,
+                        )
+                    except Exception:
+                        job.failed_messages += 1
+                        logger.warning(
+                            "Retry failed for UID %s: %s", uid, full_folder, exc_info=True
+                        )
+                else:
+                    job.failed_messages += 1
+                    logger.warning("Failed UID %s from %s: %s", uid, full_folder, e)
             except Exception:
                 job.failed_messages += 1
                 logger.warning("Failed to restore UID %s from %s", uid, full_folder, exc_info=True)
