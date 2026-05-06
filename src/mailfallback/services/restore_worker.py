@@ -133,6 +133,9 @@ def execute_restore_job(db: Session, job_id: str) -> None:
         )
         logger.info("Restore %s: target connected OK", job_id)
 
+        tgt_separator = _get_hierarchy_separator(tgt_conn)
+        logger.info("Restore %s: target hierarchy separator='%s'", job_id, tgt_separator)
+
         folders = _resolve_folders(src_conn, source, job)
         logger.info(
             "Restore %s: resolved %d folders: %s", job_id, len(folders), [s for _, s in folders]
@@ -149,7 +152,7 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             job.selected_folders,
             job.folder_mapping,
         )
-        _execute_restore(db, job, src_conn, tgt_conn, folders)
+        _execute_restore(db, job, src_conn, tgt_conn, folders, tgt_separator)
 
     except (imaplib.IMAP4.error, OSError) as e:
         _fail_job(db, job, f"IMAP error: {e}")
@@ -233,7 +236,7 @@ def _get_namespace_prefix(account):
     return f"{account.name} ({account.email_address}) [{short_id}]/"
 
 
-def _execute_restore(db, job, src_conn, tgt_conn, folders):
+def _execute_restore(db, job, src_conn, tgt_conn, folders, tgt_separator="/"):
     total = 0
     for full_folder, _ in folders:
         status, data = src_conn.select(f'"{full_folder}"', readonly=True)
@@ -278,8 +281,8 @@ def _execute_restore(db, job, src_conn, tgt_conn, folders):
         )
 
         existing_ids = set()
+        target_folder = _map_folder(short_folder, job.folder_mapping, tgt_separator)
         if job.skip_duplicates:
-            target_folder = _map_folder(short_folder, job.folder_mapping)
             existing_ids = _get_existing_message_ids(tgt_conn, target_folder)
 
         for uid_bytes in uids:
@@ -296,8 +299,7 @@ def _execute_restore(db, job, src_conn, tgt_conn, folders):
                     src_conn,
                     tgt_conn,
                     uid,
-                    full_folder,
-                    short_folder,
+                    target_folder,
                     job,
                     existing_ids,
                     db,
@@ -313,8 +315,7 @@ def _restore_single_message(
     src_conn,
     tgt_conn,
     uid,
-    full_folder,
-    short_folder,
+    target_folder,
     job,
     existing_ids,
     db,
@@ -361,7 +362,6 @@ def _restore_single_message(
                 imaplib.Internaldate2tuple(f'INTERNALDATE "{date_match.group(1)}"'.encode())
             )
 
-    target_folder = _map_folder(short_folder, job.folder_mapping)
     logger.debug(
         "Restore: APPEND to '%s', flags='%s', date='%s', msg_size=%d",
         target_folder,
@@ -389,10 +389,26 @@ def _restore_single_message(
         logger.warning("Restore: APPEND exception for UID %s: %s", uid, e)
 
 
-def _map_folder(folder_name, folder_mapping):
+def _get_hierarchy_separator(conn):
+    import re
+
+    try:
+        status, data = conn.list('""', '""')
+        if status == "OK" and data and data[0]:
+            decoded = data[0].decode() if isinstance(data[0], bytes) else data[0]
+            match = re.search(r'"(.)"', decoded)
+            if match:
+                return match.group(1)
+    except Exception:
+        logger.debug("Failed to detect hierarchy separator, defaulting to /")
+    return "/"
+
+
+def _map_folder(folder_name, folder_mapping, separator="/"):
+    converted = folder_name.replace("/", separator)
     if folder_mapping == "original":
-        return folder_name
-    return f"{folder_mapping}/{folder_name}"
+        return converted
+    return f"{folder_mapping}{separator}{converted}"
 
 
 def _ensure_folder(conn, folder_name):
