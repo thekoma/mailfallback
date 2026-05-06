@@ -10,6 +10,7 @@ from mailfallback.models import (  # noqa: F401 — register models
     Account,
     AuditLog,
     MailStore,
+    RestoreJob,
     StoreMigration,
     SyncJob,
     User,
