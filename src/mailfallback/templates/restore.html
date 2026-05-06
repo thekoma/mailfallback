@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Restore — MailFallBack{% endblock %}
+{% block content %}
+<h2><i data-lucide="archive-restore" class="icon-inline"></i> Mail Restore</h2>
+
+<form id="restore-form">
+    <div class="grid">
+        <label>
+            Source account
+            <select name="source_account_id" id="source-account"
+                    hx-get="/restore/partials/folders"
+                    hx-target="#folder-panel"
+                    hx-include="[name='source_account_id']"
+                    hx-trigger="change">
+                <option value="">Select source…</option>
+                {% for acct in accounts %}
+                <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address }})</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            Destination account
+            <select name="target_account_id" id="target-account">
+                <option value="">Select destination…</option>
+                {% for acct in accounts %}
+                <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address }})</option>
+                {% endfor %}
+            </select>
+        </label>
+    </div>
+
+    <fieldset>
+        <legend>Restore mode</legend>
+        <label><input type="radio" name="restore_mode" value="full" checked> Full restore</label>
+        <label><input type="radio" name="restore_mode" value="folder"> Select folders</label>
+        <label><input type="radio" name="restore_mode" value="selection"> Search & pick</label>
+    </fieldset>
+
+    <div id="folder-panel"></div>
+
+    <fieldset>
+        <legend>Options</legend>
+        <div class="grid">
+            <label>
+                Folder mapping
+                <select name="folder_mapping">
+                    <option value="original">Original folder</option>
+                    <option value="Restored">Restored/ prefix</option>
+                </select>
+            </label>
+            <label>
+                <input type="checkbox" name="skip_duplicates" checked>
+                Skip duplicate messages
+            </label>
+        </div>
+    </fieldset>
+
+    <button type="button" id="start-restore-btn"
+            hx-post="/api/restore"
+            hx-target="#restore-progress"
+            hx-swap="innerHTML"
+            hx-vals='js:{
+                source_account_id: document.getElementById("source-account").value,
+                target_account_id: document.getElementById("target-account").value,
+                restore_mode: document.querySelector("[name=restore_mode]:checked").value,
+                folder_mapping: document.querySelector("[name=folder_mapping]").value,
+                skip_duplicates: document.querySelector("[name=skip_duplicates]").checked
+            }'>
+        <i data-lucide="play" class="icon-sm icon-inline"></i> Start Restore
+    </button>
+</form>
+
+<div id="restore-progress"></div>
+
+<hr>
+<h3>Restore History</h3>
+{% include "partials/restore_history.html" %}
+{% endblock %}

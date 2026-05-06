@@ -1,0 +1,21 @@
+<div id="restore-history">
+    {% if jobs %}
+    <table class="compact">
+        <thead><tr><th>Date</th><th>Source → Destination</th><th>Status</th><th>Restored</th><th>Skipped</th><th>Failed</th></tr></thead>
+        <tbody>
+        {% for job in jobs %}
+        <tr>
+            <td>{{ job.requested_at|time_ago }}</td>
+            <td>{{ job.source_account.name }} → {{ job.target_account.name }}</td>
+            <td><span class="badge badge-{{ 'idle' if job.status.value == 'completed' else 'error' if job.status.value == 'failed' else 'syncing' }}">{{ job.status.value }}</span></td>
+            <td>{{ job.restored_messages }}</td>
+            <td>{{ job.skipped_messages }}</td>
+            <td>{{ job.failed_messages }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">No restore jobs yet.</p>
+    {% endif %}
+</div>

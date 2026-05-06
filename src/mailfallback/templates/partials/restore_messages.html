@@ -1,0 +1,19 @@
+<div id="message-panel">
+    {% if messages %}
+    <table class="compact">
+        <thead><tr><th></th><th>Subject</th><th>From</th><th>Date</th></tr></thead>
+        <tbody>
+        {% for msg in messages %}
+        <tr>
+            <td><input type="checkbox" name="selected_uids" value="{{ msg.uid }}"></td>
+            <td>{{ msg.subject }}</td>
+            <td>{{ msg.from }}</td>
+            <td>{{ msg.date }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">No messages found.</p>
+    {% endif %}
+</div>
