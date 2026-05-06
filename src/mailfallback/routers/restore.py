@@ -347,7 +347,11 @@ def search_messages(
         if status != "OK":
             raise HTTPException(status_code=404, detail="Folder not found")
 
-        status, data = conn.search(None, "TEXT", f'"{q}"')
+        words = q.split()
+        search_criteria = []
+        for word in words:
+            search_criteria.extend(["TEXT", f'"{word}"'])
+        status, data = conn.search(None, *search_criteria)
         if status != "OK" or not data[0]:
             return []
 
