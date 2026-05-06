@@ -25,6 +25,8 @@ from mailfallback.routers import (
     ui_audit,
     ui_profile,
 )
+from mailfallback.routers.restore import browse_router as restore_browse_router
+from mailfallback.routers.restore import router as restore_router
 from mailfallback.services.migration_service import (
     execute_account_migration,
     execute_home_migration,
@@ -161,6 +163,8 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(config_io.router)
     app.include_router(dovecot.router)
+    app.include_router(restore_router)
+    app.include_router(restore_browse_router)
 
     @app.get("/healthz")
     async def healthz():
