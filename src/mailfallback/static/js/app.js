@@ -785,6 +785,40 @@ function initResizableColumns() {
     });
 }
 
+function executeRestore() {
+    var payload = buildRestorePayload();
+    if (!payload.source_account_id || !payload.target_account_id) {
+        alert('Please select both source and destination accounts.');
+        return;
+    }
+    var btn = document.getElementById('start-restore-btn');
+    btn.disabled = true;
+    btn.textContent = 'Starting…';
+
+    fetch('/api/restore', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    }).then(function(r) { return r.json(); }).then(function(data) {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="play" class="icon-sm icon-inline"></i> Start Restore';
+        lucide.createIcons();
+        if (data.job_id) {
+            htmx.ajax('GET', '/restore/partials/progress?job_id=' + data.job_id, {
+                target: '#restore-progress',
+                swap: 'outerHTML'
+            });
+        } else {
+            alert(data.detail || 'Failed to start restore');
+        }
+    }).catch(function(e) {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="play" class="icon-sm icon-inline"></i> Start Restore';
+        lucide.createIcons();
+        alert('Error: ' + e.message);
+    });
+}
+
 function toggleCustomPrefix() {
     var sel = document.getElementById('folder-mapping-select');
     var row = document.getElementById('custom-prefix-row');
