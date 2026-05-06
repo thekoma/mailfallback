@@ -92,6 +92,77 @@ def restore_folders_partial(
     )
 
 
+@router.get("/restore/partials/messages", response_class=HTMLResponse)
+def restore_messages_partial(
+    request: Request,
+    source_account_id: str = "",
+    search_folder: str = "",
+    search_query: str = "",
+    db: Session = Depends(get_db),
+):
+    user = _get_session_user(request, db)
+    if not user or not source_account_id or not search_folder or not search_query:
+        return HTMLResponse("")
+
+    account = get_account(db, source_account_id, user)
+    if not account:
+        return HTMLResponse("")
+
+    from mailfallback.config import settings
+    from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
+    from mailfallback.services.imap_check import connect_imap
+
+    temp_username = None
+    messages = []
+    try:
+        temp_username, temp_password = create_temp_imap_user(db, [account.id])
+        conn = connect_imap(
+            settings.dovecot_imap_host,
+            settings.dovecot_imap_port,
+            "NONE",
+            temp_username,
+            temp_password,
+        )
+        prefix = f"{account.name} ({account.email_address}) [{account.id[-4:]}]/"
+        imap_folder = f"{prefix}{search_folder}"
+        status, _ = conn.select(f'"{imap_folder}"', readonly=True)
+        if status == "OK":
+            import email as email_mod
+
+            status, data = conn.search(None, "TEXT", f'"{search_query}"')
+            if status == "OK" and data[0]:
+                uids = data[0].split()[:100]
+                for uid in uids:
+                    status, msg_data = conn.fetch(
+                        uid, "(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)] FLAGS)"
+                    )
+                    if status != "OK" or not msg_data or not msg_data[0]:
+                        continue
+                    if isinstance(msg_data[0], tuple) and len(msg_data[0]) >= 2:
+                        header_bytes = msg_data[0][1]
+                        parsed = email_mod.message_from_bytes(header_bytes)
+                        messages.append(
+                            {
+                                "uid": int(uid),
+                                "subject": parsed.get("Subject", "(no subject)"),
+                                "from": parsed.get("From", ""),
+                                "date": parsed.get("Date", ""),
+                            }
+                        )
+        conn.logout()
+    except Exception:
+        messages = []
+    finally:
+        if temp_username:
+            delete_temp_imap_user(db, temp_username)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/restore_messages.html",
+        context={"messages": messages},
+    )
+
+
 @router.get("/restore/partials/progress", response_class=HTMLResponse)
 def restore_progress_partial(
     request: Request,
