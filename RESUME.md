@@ -6,62 +6,65 @@ Copia e incolla questo come primo messaggio della prossima sessione:
 
 Leggi CLAUDE.md, la memoria del progetto (tutti i file in memory/), e il git log recente. Poi riprendiamo da dove ci siamo fermati.
 
-256/256 test passano. Il progetto è funzionante con Docker. Container sani.
+286/286 test passano. Il progetto è funzionante con Docker. Container sani. PostgreSQL 18.
 
-## Cosa è stato fatto nella sessione 9 (5 maggio)
+## Cosa è stato fatto nella sessione 10 (6-7 maggio)
 
-### Commit della sessione
-1. `7cdd1b2` — feat: add User.preferences JSONB column and AuditLog model
-2. `0d7357c` — feat: add PATCH /api/preferences endpoint for theme persistence
-3. `5d0622b` — feat: add audit_service.log_action() with action labels
-4. `16bfef3` — feat: add dark mode with toggle, localStorage, and CSS custom properties
-5. `1d44cb5` — feat: add admin audit log page with filters and pagination
-6. `2eea2fe` — feat: wire audit logging into admin and config operations
-7. `6330e53` — feat: wire audit logging into account and sync operations
-8. `8e37ac3` — docs: update README with dark mode and audit logging features
-9. `e5ce8b7` — feat: enable full-text search via Dovecot fts-flatcurve
-10. `fed20a5` — fix: configure Roundcube to search body via FTS and avoid multi-folder crash
+### Infra
+- Migration 006: 4 tabelle mancanti (`groups`, `user_allowed_stores`, `group_members`, `account_groups`) — bug segnalato da Ivan
+- Test anti-drift Alembic (`test_alembic_sync.py`) + pre-commit hook `alembic-drift`
+- Upgrade PostgreSQL 16→18 con dump/restore
+- 4 PR Renovate mergiate (Python 3.14, setup-uv v8, gh-release v3, PG18)
 
-### Dark Mode
-- Toggle sun/moon nel sidebar brand area (top right)
-- Persistenza: localStorage (no flash al reload) + `User.preferences` JSONB in DB (sync cross-device)
-- `PATCH /api/preferences` endpoint con validazione Pydantic
-- 24 CSS custom properties in `:root` + `[data-theme="dark"]` override
-- Tutti i colori hardcoded sostituiti con `var()` references
-- Jinja2 global `get_theme(request)` legge preferenza utente dal DB
-- Pico CSS gestisce il grosso, noi solo i colori custom (badge, danger, info box, stat card, ecc.)
+### Mail Restore (feature completa)
+- `RestoreJob` model + migration 007 + `RestoreMode` enum
+- `restore_service.py` — CRUD con validazione (suspended/migrating/duplicati/credentials)
+- `restore_worker.py` — IMAP read da Dovecot locale → APPEND su server remoto
+  - Retry con backoff [1, 3, 10]s
+  - OAuth2 token refresh per target
+  - Cancel support via flag set
+  - Auto-reconnect su broken pipe / `IMAP4.abort` (sia source che target)
+  - Detect separatore gerarchico del target (`/` vs `.`)
+  - Escape collision separatore nei nomi folder (`unroll.me` → `unroll_me`)
+  - Audit log su completamento/fallimento
+- `dovecot_auth.py` — utenti Dovecot effimeri con password random, scoped per account, cleanup al boot
+- REST API: `POST /api/restore`, `GET /api/restore/{id}`, `POST /api/restore/{id}/cancel`
+- Browse API: `GET /api/accounts/{id}/mailboxes`, `.../messages`, `.../search`
+- UI pagina `/restore` con wizard HTMX:
+  - 3 mode: Full restore / Select folders / Search & pick
+  - Folder browser con conteggio messaggi
+  - Ricerca avanzata Roundcube-style: toggle Subject/Sender(From,Reply-To,Followup-To)/Recipient(To,Cc,Bcc)/Body/Entire message
+  - Filtri Type (All/Unread/Flagged/Unanswered/Deleted/With attachment)
+  - Date range (Since/Before)
+  - Scope (Current folder / All folders)
+  - Multi-word AND search (ogni parola cercata separatamente)
+  - MIME subject decoding (`=?UTF-8?Q?...?=` → testo leggibile)
+  - Tabella risultati: sort per colonna, select all, column toggle (Subject/From/To/Date/Folder/Message-ID), colonne ridimensionabili con drag
+  - Folder mapping: Original / Restored/ prefix / Custom prefix
+  - Custom prefix input per folder di destinazione
+  - Search feedback: spinner + bottone disabilitato durante la ricerca
+  - Progress bar HTMX polling ogni 2s con cancel
+  - Status badge: verde (completed) / giallo amber (partial) / rosso (failed)
+  - Restore History con badge colorati
 
-### Audit Logging
-- `AuditLog` model: timestamp, user_id (SET NULL on delete), username (denormalizzato), action, resource_type/id/name, ip_address, details JSONB
-- `services/audit_service.py`: `log_action()` + `ACTION_LABELS` dict (27 azioni) + `get_action_label()`
-- Admin viewer a `/admin/audit`: tabella paginata (50/page), filtri HTMX per utente/azione/date range
-- Sidebar link con icona `scroll-text`
-- Wired su tutte le operazioni admin (user/store/group CRUD, password reset, migrate) + account (create/edit/delete/suspend/migrate/ownership) + sync trigger + config export/import
-- Alembic migration 005: `preferences` column + `audit_logs` table
+### Commit della sessione (37 commit)
+Troppi per listarli tutti — vedi `git log --oneline --since="2026-05-06"`.
 
-### Full-Text Search
-- `docker/dovecot/conf.d/mfb-fts.conf`: abilita fts-flatcurve (Xapian embedded, già nel Docker image)
-- `fts_search_add_missing = yes`: auto-indicizza al primo search
-- Roundcube configurato con `search_mods` per cercare nel body (triggera FTS)
-- Workaround: `search_scope = 'base'` per evitare crash multi-folder di Roundcube 1.6.15
-- Testato: 300ms per cercare in 5683 messaggi
+## Bug noti e TODO per sessione 11
 
-## Decisione pendente — Apache Tika
+### Bug da fixare
+1. **Cache Dovecot corrotta** — UID 97 in Archive di Live ha dimensione mismatch. Workaround: `doveadm force-resync -u koma "*"`. Serve un bottone admin per triggerare il resync da UI.
 
-Dovecot 2.4 ha `fts_decoder_tika_url` built-in. Aggiungendo un container `apache/tika:latest` e una riga di config, FTS cercherebbe dentro allegati PDF, Word, Excel, PowerPoint, OpenDocument, HTML, archivi ZIP, ecc.
+### TODO prioritari
+1. **Admin: Dovecot mailbox health check** — Bottone in admin per verificare integrità caselle (`doveadm force-resync`), mostrare errori, e triggerare fix
+2. **Admin: FTS reindex** — Bottone per triggerare `doveadm fts rescan` e `doveadm index` da UI, al momento non c'è modo di reindicizzare senza CLI
+3. **Restore: warning separatore** — Quando il target usa `.` come separatore, mostrare warning UI prima del restore con lista folder che verranno rinominate + input per scegliere il carattere di escape (default `_`)
+4. **Restore: test end-to-end reale** — Verificare un full restore Live→Molotov ora che il reconnect e il separator fix sono in place
 
-**Pro:** Zero Dockerfile custom, immagine ufficiale Apache, copre tutti i formati documento comuni
-**Contro:** ~200MB RAM (Java), un container in più da gestire
-**Immagini (OCR):** Solo metadati EXIF senza Tesseract. Non vale la pena per ora.
-
-Mail-archiver (il competitor C#) NON cerca negli allegati — saremmo i primi.
-
-## Prossima sessione — Feature candidates
-
-1. **Tika attachment search** — Decisione pendente (vedi sopra)
+### Feature backlog
+1. **Tika attachment search** — Decisione ancora pendente (container Java ~200MB)
 2. **Export mbox/EML** — Data portability
 3. **Import mbox/EML** — Migrate existing archives
 4. **Retention policies** — Auto-delete from source after N days
 5. **i18n** — Multi-language
 6. **Sender analysis / stats** — Charts
-7. **Mail restore** — Push archived mail back to source
