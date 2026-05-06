@@ -3,7 +3,7 @@
 {% block content %}
 <h2><i data-lucide="archive-restore" class="icon-inline"></i> Mail Restore</h2>
 
-<form id="restore-form">
+<form id="restore-form" onsubmit="return false;">
     <div class="grid">
         <label>
             Source account
@@ -48,7 +48,7 @@
             </label>
             <label>
                 Search query
-                <input type="text" id="search-query" name="search_query" placeholder="Type to search…">
+                <input type="text" id="search-query" name="search_query" placeholder="Type to search…" onkeydown="if(event.key==='Enter'){event.preventDefault();executeSearch();}">
             </label>
         </div>
 
