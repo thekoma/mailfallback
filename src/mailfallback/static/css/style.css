@@ -574,3 +574,19 @@ a.stat-card:hover { border-color: var(--pico-primary); transform: translateY(-2p
 .log-modal::backdrop { background: rgba(0,0,0,0.5); }
 .log-modal .log-modal-content { padding: 0; }
 .log-modal .log-pre { max-height: 55vh; overflow: auto; margin: 0.5rem 0 0 0; padding: 1rem; white-space: pre-wrap; word-break: break-word; }
+
+/* === Restore page === */
+#restore-form fieldset {
+    margin-bottom: 1rem;
+}
+#restore-progress article {
+    margin-top: 1rem;
+}
+#restore-progress progress {
+    width: 100%;
+    margin: 0.5rem 0;
+}
+.error-text {
+    color: var(--mfb-danger-color);
+    margin-top: 0.5rem;
+}
