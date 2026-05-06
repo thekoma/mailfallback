@@ -52,7 +52,7 @@ def restore_folders_partial(
             temp_username,
             temp_password,
         )
-        prefix = f"{account.name} ({account.email_address}) [{account.id[:8]}]/"
+        prefix = f"{account.name} ({account.email_address}) [{account.id[-4:]}]/"
         status, folder_data = conn.list(f'"{prefix}"', "*")
         folders = []
         if status == "OK" and folder_data:

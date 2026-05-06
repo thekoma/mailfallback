@@ -198,7 +198,7 @@ def _resolve_folders(src_conn, source, job):
 
 
 def _get_namespace_prefix(account):
-    short_id = account.id[:8]
+    short_id = account.id[-4:]
     return f"{account.name} ({account.email_address}) [{short_id}]/"
 
 

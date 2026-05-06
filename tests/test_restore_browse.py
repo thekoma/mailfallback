@@ -62,7 +62,7 @@ def test_list_mailboxes(client, db_session, browse_fixtures):
     _login(client, db_session)
     mock_conn, mock_create, mock_delete, mock_connect = _mock_dovecot_connection()
 
-    prefix = f"browseacct (browse@example.com) [{f['account'].id[:8]}]"
+    prefix = f"browseacct (browse@example.com) [{f['account'].id[-4:]}]"
     mock_conn.list.return_value = (
         "OK",
         [
