@@ -299,7 +299,9 @@ def _list_account_folders(conn, prefix):
 def _fetch_message_header(conn, uid, folder_name=None):
     import email as email_mod
 
-    status, msg_data = conn.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)] FLAGS)")
+    status, msg_data = conn.fetch(
+        uid, "(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM TO DATE MESSAGE-ID)] FLAGS)"
+    )
     if status != "OK" or not msg_data or not msg_data[0]:
         return None
     if not isinstance(msg_data[0], tuple) or len(msg_data[0]) < 2:
@@ -308,17 +310,13 @@ def _fetch_message_header(conn, uid, folder_name=None):
     header_bytes = msg_data[0][1]
     parsed = email_mod.message_from_bytes(header_bytes)
 
-    subject_raw = parsed.get("Subject", "(no subject)")
-    subject = _decode_mime_header(subject_raw)
-
-    from_raw = parsed.get("From", "")
-    from_decoded = _decode_mime_header(from_raw)
-
     msg = {
         "uid": int(uid),
-        "subject": subject,
-        "from": from_decoded,
+        "subject": _decode_mime_header(parsed.get("Subject", "(no subject)")),
+        "from": _decode_mime_header(parsed.get("From", "")),
+        "to": _decode_mime_header(parsed.get("To", "")),
         "date": parsed.get("Date", ""),
+        "message_id": parsed.get("Message-ID", ""),
     }
     if folder_name is not None:
         msg["folder"] = folder_name
