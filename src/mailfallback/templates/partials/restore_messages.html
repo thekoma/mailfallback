@@ -10,7 +10,9 @@
                 {% if show_folder %}<label><input type="checkbox" data-col="col-folder" checked onchange="toggleColumn(this)"> Folder</label>{% endif %}
                 <label><input type="checkbox" data-col="col-subject" checked onchange="toggleColumn(this)"> Subject</label>
                 <label><input type="checkbox" data-col="col-from" checked onchange="toggleColumn(this)"> From</label>
+                <label><input type="checkbox" data-col="col-to" onchange="toggleColumn(this)"> To</label>
                 <label><input type="checkbox" data-col="col-date" checked onchange="toggleColumn(this)"> Date</label>
+                <label><input type="checkbox" data-col="col-msgid" onchange="toggleColumn(this)"> Message-ID</label>
             </div>
         </div>
     </div>
@@ -18,10 +20,12 @@
     <table class="compact sortable" id="results-table">
         <thead><tr>
             <th class="col-check"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
-            {% if show_folder %}<th class="col-folder sortable-header" onclick="sortTable(this, 1)">Folder <span class="sort-arrow"></span></th>{% endif %}
-            <th class="col-subject sortable-header" onclick="sortTable(this, {{ 2 if show_folder else 1 }})">Subject <span class="sort-arrow"></span></th>
-            <th class="col-from sortable-header" onclick="sortTable(this, {{ 3 if show_folder else 2 }})">From <span class="sort-arrow"></span></th>
-            <th class="col-date sortable-header" onclick="sortTable(this, {{ 4 if show_folder else 3 }})">Date <span class="sort-arrow"></span></th>
+            {% if show_folder %}<th class="col-folder sortable-header" onclick="sortByCol(this)">Folder <span class="sort-arrow"></span></th>{% endif %}
+            <th class="col-subject sortable-header" onclick="sortByCol(this)">Subject <span class="sort-arrow"></span></th>
+            <th class="col-from sortable-header" onclick="sortByCol(this)">From <span class="sort-arrow"></span></th>
+            <th class="col-to sortable-header" onclick="sortByCol(this)" style="display:none">To <span class="sort-arrow"></span></th>
+            <th class="col-date sortable-header" onclick="sortByCol(this)">Date <span class="sort-arrow"></span></th>
+            <th class="col-msgid sortable-header" onclick="sortByCol(this)" style="display:none">Message-ID <span class="sort-arrow"></span></th>
         </tr></thead>
         <tbody>
         {% for msg in messages %}
@@ -30,7 +34,9 @@
             {% if show_folder %}<td class="col-folder text-muted text-small">{{ msg.folder }}</td>{% endif %}
             <td class="col-subject">{{ msg.subject }}</td>
             <td class="col-from">{{ msg.from }}</td>
+            <td class="col-to" style="display:none">{{ msg.to }}</td>
             <td class="col-date text-small" data-sort="{{ msg.date }}">{{ msg.date }}</td>
+            <td class="col-msgid text-small" style="display:none">{{ msg.message_id }}</td>
         </tr>
         {% endfor %}
         </tbody>

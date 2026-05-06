@@ -700,9 +700,11 @@ function executeSearch() {
 
 /* === Results table: sort, select all, column toggle === */
 
-function sortTable(header, colIdx) {
+function sortByCol(header) {
     var table = document.getElementById('results-table');
     if (!table) return;
+    var headerRow = header.parentNode;
+    var colIdx = Array.from(headerRow.children).indexOf(header);
     var tbody = table.querySelector('tbody');
     var rows = Array.from(tbody.querySelectorAll('tr'));
     var asc = header.dataset.sortDir !== 'asc';
@@ -714,6 +716,7 @@ function sortTable(header, colIdx) {
     rows.sort(function(a, b) {
         var cellA = a.cells[colIdx];
         var cellB = b.cells[colIdx];
+        if (!cellA || !cellB) return 0;
         var valA = (cellA.dataset.sort || cellA.textContent).trim().toLowerCase();
         var valB = (cellB.dataset.sort || cellB.textContent).trim().toLowerCase();
         if (valA < valB) return asc ? -1 : 1;
