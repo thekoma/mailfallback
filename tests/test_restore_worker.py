@@ -125,7 +125,8 @@ def test_execute_restore_handles_append_failure(
     execute_restore_job(db_session, f["job"].id)
 
     db_session.refresh(f["job"])
-    assert f["job"].status == JobStatus.completed
+    assert f["job"].status == JobStatus.failed
     assert f["job"].restored_messages == 0
     assert f["job"].failed_messages == 1
+    assert "failed" in f["job"].error.lower()
     mock_delete_temp.assert_called_once()

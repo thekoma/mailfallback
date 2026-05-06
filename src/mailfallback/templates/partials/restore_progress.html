@@ -9,8 +9,10 @@
         <header>
             <strong>
                 {% if finished %}
-                    {% if job.status.value == "completed" %}
+                    {% if job.status.value == "completed" and job.failed_messages == 0 %}
                     <i data-lucide="check-circle" class="icon-sm icon-inline"></i> Restore completed
+                    {% elif job.status.value == "completed" and job.failed_messages > 0 %}
+                    <i data-lucide="alert-triangle" class="icon-sm icon-inline"></i> Restore completed with errors
                     {% else %}
                     <i data-lucide="x-circle" class="icon-sm icon-inline"></i> Restore failed
                     {% endif %}

@@ -165,7 +165,13 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             with contextlib.suppress(Exception):
                 delete_temp_imap_user(db, temp_username)
         if job.status == JobStatus.running:
-            job.status = JobStatus.completed
+            if job.restored_messages == 0 and job.failed_messages > 0:
+                job.status = JobStatus.failed
+                job.error = f"All {job.failed_messages} messages failed"
+            else:
+                job.status = JobStatus.completed
+                if job.failed_messages > 0:
+                    job.error = f"{job.failed_messages} messages failed"
             job.completed_at = datetime.now(UTC)
         db.commit()
 
