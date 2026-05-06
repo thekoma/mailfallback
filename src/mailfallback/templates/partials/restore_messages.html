@@ -1,20 +1,41 @@
 <div id="message-panel">
     {% if messages %}
-    <table class="compact">
-        <thead><tr><th></th>{% if show_folder %}<th>Folder</th>{% endif %}<th>Subject</th><th>From</th><th>Date</th></tr></thead>
+    <div class="results-toolbar">
+        <small class="text-muted">{{ messages|length }} result{{ 's' if messages|length != 1 }} (max 100)</small>
+        <div class="col-toggle-wrap">
+            <button type="button" class="outline secondary text-small" onclick="toggleColMenu()" id="col-toggle-btn">
+                <i data-lucide="columns-3" class="icon-sm icon-inline"></i> Columns
+            </button>
+            <div id="col-menu" class="col-menu hidden">
+                {% if show_folder %}<label><input type="checkbox" data-col="col-folder" checked onchange="toggleColumn(this)"> Folder</label>{% endif %}
+                <label><input type="checkbox" data-col="col-subject" checked onchange="toggleColumn(this)"> Subject</label>
+                <label><input type="checkbox" data-col="col-from" checked onchange="toggleColumn(this)"> From</label>
+                <label><input type="checkbox" data-col="col-date" checked onchange="toggleColumn(this)"> Date</label>
+            </div>
+        </div>
+    </div>
+    <div class="table-responsive">
+    <table class="compact sortable" id="results-table">
+        <thead><tr>
+            <th class="col-check"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
+            {% if show_folder %}<th class="col-folder sortable-header" onclick="sortTable(this, 1)">Folder <span class="sort-arrow"></span></th>{% endif %}
+            <th class="col-subject sortable-header" onclick="sortTable(this, {{ 2 if show_folder else 1 }})">Subject <span class="sort-arrow"></span></th>
+            <th class="col-from sortable-header" onclick="sortTable(this, {{ 3 if show_folder else 2 }})">From <span class="sort-arrow"></span></th>
+            <th class="col-date sortable-header" onclick="sortTable(this, {{ 4 if show_folder else 3 }})">Date <span class="sort-arrow"></span></th>
+        </tr></thead>
         <tbody>
         {% for msg in messages %}
         <tr>
-            <td><input type="checkbox" name="selected_uids" value="{{ msg.uid }}" data-folder="{{ msg.folder or '' }}"></td>
-            {% if show_folder %}<td class="text-muted text-small">{{ msg.folder }}</td>{% endif %}
-            <td>{{ msg.subject }}</td>
-            <td>{{ msg.from }}</td>
-            <td class="text-small">{{ msg.date }}</td>
+            <td class="col-check"><input type="checkbox" name="selected_uids" value="{{ msg.uid }}" data-folder="{{ msg.folder or '' }}"></td>
+            {% if show_folder %}<td class="col-folder text-muted text-small">{{ msg.folder }}</td>{% endif %}
+            <td class="col-subject">{{ msg.subject }}</td>
+            <td class="col-from">{{ msg.from }}</td>
+            <td class="col-date text-small" data-sort="{{ msg.date }}">{{ msg.date }}</td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
-    <small class="text-muted">{{ messages|length }} result{{ 's' if messages|length != 1 }} (max 100)</small>
+    </div>
     {% else %}
     <p class="text-muted">No messages found.</p>
     {% endif %}
