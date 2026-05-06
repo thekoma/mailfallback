@@ -1,0 +1,41 @@
+<div id="restore-progress"
+    {% if not finished %}
+    hx-get="/restore/partials/progress?job_id={{ job_id }}"
+    hx-trigger="every 2s"
+    hx-swap="outerHTML"
+    {% endif %}>
+    {% if job %}
+    <article>
+        <header>
+            <strong>
+                {% if finished %}
+                    {% if job.status.value == "completed" %}
+                    <i data-lucide="check-circle" class="icon-sm icon-inline"></i> Restore completed
+                    {% else %}
+                    <i data-lucide="x-circle" class="icon-sm icon-inline"></i> Restore failed
+                    {% endif %}
+                {% else %}
+                <i data-lucide="loader" class="icon-sm icon-inline spin"></i> Restoring…
+                {% endif %}
+            </strong>
+        </header>
+        <progress value="{{ job.restored_messages + job.skipped_messages + job.failed_messages }}" max="{{ job.total_messages }}"></progress>
+        <small>
+            {{ job.restored_messages }} restored
+            {% if job.skipped_messages %} · {{ job.skipped_messages }} skipped{% endif %}
+            {% if job.failed_messages %} · {{ job.failed_messages }} failed{% endif %}
+            / {{ job.total_messages }} total
+        </small>
+        {% if job.error %}
+        <p class="error-text">{{ job.error }}</p>
+        {% endif %}
+        {% if not finished %}
+        <footer>
+            <button type="button" class="outline secondary"
+                    hx-post="/api/restore/{{ job.id }}/cancel"
+                    hx-swap="none">Cancel</button>
+        </footer>
+        {% endif %}
+    </article>
+    {% endif %}
+</div>

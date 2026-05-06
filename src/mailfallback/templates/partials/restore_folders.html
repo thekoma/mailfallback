@@ -1,0 +1,18 @@
+<div id="folder-panel">
+    {% if folders %}
+    <table class="compact">
+        <thead><tr><th></th><th>Folder</th><th>Messages</th></tr></thead>
+        <tbody>
+        {% for f in folders %}
+        <tr>
+            <td><input type="checkbox" name="selected_folders" value="{{ f.name }}" checked></td>
+            <td>{{ f.name }}</td>
+            <td>{{ f.messages }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">No folders found.</p>
+    {% endif %}
+</div>
