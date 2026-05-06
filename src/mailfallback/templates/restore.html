@@ -144,11 +144,7 @@
         </div>
     </fieldset>
 
-    <button type="button" id="start-restore-btn"
-            hx-post="/api/restore"
-            hx-target="#restore-progress"
-            hx-swap="outerHTML"
-            hx-vals='js:buildRestorePayload()'>
+    <button type="button" id="start-restore-btn" onclick="executeRestore()">
         <i data-lucide="play" class="icon-sm icon-inline"></i> Start Restore
     </button>
 </form>
