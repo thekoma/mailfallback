@@ -455,7 +455,9 @@ def _get_hierarchy_separator(conn):
 
 def _map_folder(folder_name, folder_mapping, separator="/", escape_char="_"):
     if separator != "/" and separator in folder_name:
+        original = folder_name
         folder_name = folder_name.replace(separator, escape_char)
+        logger.info("Folder renamed: '%s' → '%s' (separator collision)", original, folder_name)
     converted = folder_name.replace("/", separator)
     if folder_mapping == "original":
         return converted
