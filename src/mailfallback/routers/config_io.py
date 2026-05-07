@@ -34,7 +34,7 @@ def export_config(
         user=admin,
         action="config.export",
         resource_type="config",
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     accounts = db.query(Account).all()
     return {
@@ -81,7 +81,7 @@ def import_config(
         user=admin,
         action="config.import",
         resource_type="config",
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
         details={"count": count},
     )
     return {"imported": count}
