@@ -6,9 +6,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from mailfallback.dependencies import get_current_user, get_db, require_admin
-from mailfallback.models import Account, User, UserRole
+from mailfallback.models import User, UserRole
 from mailfallback.services import account_service
-from mailfallback.services.account_service import is_account_owner
 from mailfallback.services.audit_service import log_action
 from mailfallback.services.imap_check import check_imap_credentials
 from mailfallback.services.provider_discovery import discover_provider
@@ -57,6 +56,8 @@ def create(
         store = get_store(db, body.store_id)
         if not store:
             raise HTTPException(status_code=404, detail="Store not found")
+        if user.role != UserRole.admin and store not in user.allowed_stores:
+            raise HTTPException(status_code=403, detail="Store not in allowed list")
     else:
         store = user.store
         if not store:
@@ -162,11 +163,9 @@ def delete(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    account = db.query(Account).filter(Account.id == account_id).first()
+    account = account_service.get_account_for_modify(db, account_id, user)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
-    if user.role != UserRole.admin and not is_account_owner(user, account):
-        raise HTTPException(status_code=403, detail="Only owners can delete accounts")
     if not account_service.delete_account(db, account_id, delete_files=delete_files):
         raise HTTPException(status_code=404, detail="Account not found")
     log_action(

@@ -1,4 +1,9 @@
 import json
+import re
+
+
+def _sanitize_value(value: str) -> str:
+    return re.sub(r"[\n\r\x00-\x1f]", "", str(value)).strip()
 
 
 def generate_mbsyncrc(
@@ -13,7 +18,8 @@ def generate_mbsyncrc(
     token_command: str | None = None,
     extra_config: str | None = None,
 ) -> str:
-    extra = json.loads(extra_config) if extra_config else {}
+    raw_extra = json.loads(extra_config) if extra_config else {}
+    extra = {k: _sanitize_value(v) for k, v in raw_extra.items() if v}
     safe_name = account_name.lower().replace(" ", "_")
     lines = []
 
