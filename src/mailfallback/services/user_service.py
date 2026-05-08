@@ -13,6 +13,9 @@ from mailfallback.security import hash_password, verify_password
 logger = logging.getLogger(__name__)
 
 
+MIN_PASSWORD_LENGTH = 12
+
+
 def create_user(
     db: Session,
     username: str,
@@ -92,7 +95,7 @@ def ensure_admin_exists(db: Session, default_store_id: str) -> None:
         create_user(
             db,
             username="admin",
-            password="changeme",
+            password="changeme1234!",  # pragma: allowlist secret
             role=UserRole.admin,
             store_id=default_store_id,
         )

@@ -76,13 +76,13 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
             name="profile.html",
             context={"user": user, "error": "New passwords do not match", "success": None},
         )
-    if len(new) < 6:
+    if len(new) < 12:
         return templates.TemplateResponse(
             request=request,
             name="profile.html",
             context={
                 "user": user,
-                "error": "Password must be at least 6 characters",
+                "error": "Password must be at least 12 characters",
                 "success": None,
             },
         )

@@ -51,11 +51,14 @@ def app(db_session):
     import mailfallback.config as cfg
 
     original_key = cfg.settings.dovecot_api_key
+    original_metrics_key = cfg.settings.metrics_api_key
     cfg.settings.dovecot_api_key = "test-key"
+    cfg.settings.metrics_api_key = "test-key"
     application = create_app()
     application.dependency_overrides[get_db] = lambda: db_session
     yield application
     cfg.settings.dovecot_api_key = original_key
+    cfg.settings.metrics_api_key = original_metrics_key
 
 
 @pytest.fixture

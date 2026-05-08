@@ -4,8 +4,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from mailfallback.dependencies import get_db, require_admin
-from mailfallback.models import Account, User
+from mailfallback.models import Account, MailStore, User
 from mailfallback.services.audit_service import log_action
+from mailfallback.services.store_service import derive_maildir_path
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -63,17 +64,22 @@ def import_config(
     count = 0
     for acc_data in body.accounts:
         store_id = acc_data.store_id or admin.store_id
+        store = db.query(MailStore).filter(MailStore.id == store_id).first()
+        if not store:
+            continue
         account = Account(
             name=acc_data.name,
             email_address=acc_data.email_address,
             imap_host=acc_data.imap_host,
             imap_port=acc_data.imap_port,
             auth_type=acc_data.auth_type,
-            maildir_path=acc_data.maildir_path,
+            maildir_path="pending",
             sync_schedule=acc_data.sync_schedule,
             store_id=store_id,
         )
         db.add(account)
+        db.flush()
+        account.maildir_path = derive_maildir_path(store.path, account.id)
         count += 1
     db.commit()
     log_action(
