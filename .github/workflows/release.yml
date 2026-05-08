@@ -70,7 +70,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git tag "${VERSION}"
-            git push origin main --tags
+            git push origin --tags
 
             echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
             echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"

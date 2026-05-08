@@ -35,7 +35,7 @@ def export_config(
         user=admin,
         action="config.export",
         resource_type="config",
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     accounts = db.query(Account).all()
     return {
@@ -62,32 +62,38 @@ def import_config(
     db: Session = Depends(get_db),
 ):
     count = 0
-    for acc_data in body.accounts:
-        store_id = acc_data.store_id or admin.store_id
-        store = db.query(MailStore).filter(MailStore.id == store_id).first()
-        if not store:
-            continue
-        account = Account(
-            name=acc_data.name,
-            email_address=acc_data.email_address,
-            imap_host=acc_data.imap_host,
-            imap_port=acc_data.imap_port,
-            auth_type=acc_data.auth_type,
-            maildir_path="pending",
-            sync_schedule=acc_data.sync_schedule,
-            store_id=store_id,
-        )
-        db.add(account)
-        db.flush()
-        account.maildir_path = derive_maildir_path(store.path, account.id)
-        count += 1
+    errors = []
+    for idx, acc_data in enumerate(body.accounts):
+        try:
+            store_id = acc_data.store_id or admin.store_id
+            store = db.query(MailStore).filter(MailStore.id == store_id).first()
+            if not store:
+                errors.append({"index": idx, "name": acc_data.name, "error": "Store not found"})
+                continue
+            account = Account(
+                name=acc_data.name,
+                email_address=acc_data.email_address,
+                imap_host=acc_data.imap_host,
+                imap_port=acc_data.imap_port,
+                auth_type=acc_data.auth_type,
+                maildir_path="pending",
+                sync_schedule=acc_data.sync_schedule,
+                store_id=store_id,
+            )
+            db.add(account)
+            db.flush()
+            account.maildir_path = derive_maildir_path(store.path, account.id)
+            count += 1
+        except Exception as e:
+            db.rollback()
+            errors.append({"index": idx, "name": acc_data.name, "error": str(e)})
     db.commit()
     log_action(
         db,
         user=admin,
         action="config.import",
         resource_type="config",
-        ip_address=request.client.host,
-        details={"count": count},
+        ip_address=request.client.host if request.client else None,
+        details={"count": count, "errors": errors},
     )
-    return {"imported": count}
+    return {"imported": count, "errors": errors}

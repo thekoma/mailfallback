@@ -270,7 +270,13 @@ async def account_form_submit(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/login", status_code=303)
 
     form = await request.form()
-    auth_type = form["auth_type"]
+    try:
+        auth_type = form["auth_type"]
+        name = form["name"]
+    except KeyError as e:
+        request.session["flash_error"] = f"Missing required field: {e}"
+        return RedirectResponse("/accounts/new", status_code=303)
+
     email_address = form.get("email_address", "")
 
     store_id_override = form.get("store_id")
@@ -299,7 +305,11 @@ async def account_form_submit(request: Request, db: Session = Depends(get_db)):
     credentials = form.get("credentials") or None
     tls_type = form.get("tls_type", "IMAPS")
     imap_host = form.get("imap_host", "")
-    imap_port = int(form.get("imap_port", 993))
+    try:
+        imap_port = int(form.get("imap_port", 993))
+    except (ValueError, TypeError):
+        request.session["flash_error"] = "Invalid IMAP port value"
+        return RedirectResponse("/accounts/new", status_code=303)
     auth_mechs = form.get("auth_mechs", "")
 
     try:
@@ -343,7 +353,7 @@ async def account_form_submit(request: Request, db: Session = Depends(get_db)):
 
     account = create_account(
         db,
-        name=form["name"],
+        name=name,
         email_address=email_address,
         imap_host=imap_host,
         imap_port=imap_port,
@@ -372,7 +382,7 @@ async def account_form_submit(request: Request, db: Session = Depends(get_db)):
         resource_type="account",
         resource_id=account.id,
         resource_name=account.email_address or account.name,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse(f"/accounts/{account.id}", status_code=303)
 
@@ -455,10 +465,20 @@ async def account_edit_submit(account_id: str, request: Request, db: Session = D
         "provider",
         "tls_type",
     )
+    clearable_fields = {"sync_schedule"}
     for key in editable:
         val = form.get(key, "")
         if val:
-            updates[key] = int(val) if key == "imap_port" else val
+            if key == "imap_port":
+                try:
+                    updates[key] = int(val)
+                except (ValueError, TypeError):
+                    request.session["flash_error"] = "Invalid IMAP port value"
+                    return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+            else:
+                updates[key] = val
+        elif key in clearable_fields:
+            updates[key] = ""
 
     account = get_account(db, account_id, user)
     if not account:
@@ -509,7 +529,7 @@ async def account_edit_submit(account_id: str, request: Request, db: Session = D
         resource_type="account",
         resource_id=account_id,
         resource_name=account.email_address or account.name,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
@@ -533,7 +553,7 @@ async def account_toggle_visible(
             resource_type="account",
             resource_id=account_id,
             resource_name=account.email_address or account.name,
-            ip_address=request.client.host,
+            ip_address=request.client.host if request.client else None,
             details={"toggled": "visibility"},
         )
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
@@ -560,7 +580,7 @@ async def account_toggle_suspend(
             resource_type="account",
             resource_id=account_id,
             resource_name=account.email_address or account.name,
-            ip_address=request.client.host,
+            ip_address=request.client.host if request.client else None,
         )
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
@@ -586,7 +606,7 @@ async def account_migrate(
             action="account.migrate",
             resource_type="account",
             resource_id=account_id,
-            ip_address=request.client.host,
+            ip_address=request.client.host if request.client else None,
         )
     except ValueError as e:
         return RedirectResponse(f"/accounts/{account_id}?error={e}", status_code=303)
@@ -696,7 +716,7 @@ async def account_add_owner(account_id: str, request: Request, db: Session = Dep
         resource_type="account",
         resource_id=account_id,
         resource_name=form["user_id"],
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
@@ -720,6 +740,6 @@ async def account_remove_owner(account_id: str, request: Request, db: Session = 
         resource_type="account",
         resource_id=account_id,
         resource_name=form["user_id"],
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)

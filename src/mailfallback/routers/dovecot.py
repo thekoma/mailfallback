@@ -14,10 +14,8 @@ router = APIRouter(prefix="/api/internal/dovecot", tags=["dovecot-internal"])
 
 
 def _verify_api_key(x_api_key: str | None = Header(default=None)):
-    if not x_api_key:
-        raise HTTPException(status_code=401, detail="API key required")
-    if not settings.dovecot_api_key:
-        raise HTTPException(status_code=500, detail="Dovecot API key not configured")
+    if not x_api_key or not settings.dovecot_api_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
     if not hmac.compare_digest(x_api_key, settings.dovecot_api_key):
         raise HTTPException(status_code=401, detail="Invalid API key")
 

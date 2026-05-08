@@ -48,6 +48,7 @@ from mailfallback.services.store_service import (
     update_store,
 )
 from mailfallback.services.user_service import (
+    MIN_PASSWORD_LENGTH,
     change_password,
     create_user,
     delete_user,
@@ -81,8 +82,8 @@ async def admin_change_user_password(
 
     form = await request.form()
     new_password = form["new_password"]
-    if len(new_password) < 12:
-        return RedirectResponse("/admin/users", status_code=303)
+    if len(new_password) < MIN_PASSWORD_LENGTH:
+        return RedirectResponse("/admin/users?error=password_too_short", status_code=303)
 
     if not _admin_pw_verified(request):
         admin_password = form.get("admin_password", "")
@@ -99,7 +100,7 @@ async def admin_change_user_password(
         resource_type="user",
         resource_id=target_user_id,
         resource_name=target.username if target else target_user_id,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse("/admin/users", status_code=303)
 
@@ -132,7 +133,7 @@ async def admin_edit_user(
             resource_type="user",
             resource_id=target_user_id,
             resource_name=target.username if target else target_user_id,
-            ip_address=request.client.host,
+            ip_address=request.client.host if request.client else None,
         )
     return RedirectResponse("/admin/users", status_code=303)
 
@@ -159,7 +160,7 @@ async def admin_toggle_user(
             resource_type="user",
             resource_id=target_user_id,
             resource_name=target.username,
-            ip_address=request.client.host,
+            ip_address=request.client.host if request.client else None,
         )
     return RedirectResponse("/admin/users", status_code=303)
 
@@ -183,7 +184,7 @@ async def admin_delete_user(
         action="user.delete",
         resource_type="user",
         resource_id=target_user_id,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse("/admin/users", status_code=303)
 
@@ -212,7 +213,7 @@ async def admin_migrate_user(
         action="user.migrate",
         resource_type="user",
         resource_id=target_user_id,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
 
     def run():
@@ -303,7 +304,7 @@ async def admin_cancel_migration(
         action="user.cancel_migration",
         resource_type="user",
         resource_id=target_user_id,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse("/admin/users", status_code=303)
 
@@ -336,8 +337,14 @@ async def admin_create_user(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/", status_code=303)
 
     form = await request.form()
+    role = form["role"]
+    if role not in ("admin", "user"):
+        return RedirectResponse("/admin/users?error=invalid_role", status_code=303)
+    password = form["password"]
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return RedirectResponse("/admin/users?error=password_too_short", status_code=303)
     store_id = form.get("store_id") or ensure_default_store(db).id
-    new_user = create_user(db, form["username"], form["password"], form["role"], store_id=store_id)
+    new_user = create_user(db, form["username"], password, role, store_id=store_id)
     set_allowed_stores(db, new_user.id, [store_id])
     log_action(
         db,
@@ -346,7 +353,7 @@ async def admin_create_user(request: Request, db: Session = Depends(get_db)):
         resource_type="user",
         resource_id=new_user.id,
         resource_name=new_user.username,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse("/admin/users", status_code=303)
 
@@ -369,7 +376,7 @@ async def admin_set_allowed_stores(
         action="user.set_allowed_stores",
         resource_type="user",
         resource_id=target_user_id,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse("/admin/users", status_code=303)
 
@@ -456,7 +463,7 @@ async def admin_create_store(request: Request, db: Session = Depends(get_db)):
         resource_type="store",
         resource_id=store.id,
         resource_name=store.name,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse("/admin/stores", status_code=303)
 
@@ -476,7 +483,7 @@ async def admin_toggle_store(store_id: str, request: Request, db: Session = Depe
             resource_type="store",
             resource_id=store_id,
             resource_name=store.name,
-            ip_address=request.client.host,
+            ip_address=request.client.host if request.client else None,
         )
     return RedirectResponse("/admin/stores", status_code=303)
 
@@ -497,7 +504,7 @@ async def admin_rename_store(store_id: str, request: Request, db: Session = Depe
             resource_type="store",
             resource_id=store_id,
             resource_name=name,
-            ip_address=request.client.host,
+            ip_address=request.client.host if request.client else None,
         )
     return RedirectResponse("/admin/stores", status_code=303)
 
@@ -514,7 +521,7 @@ async def admin_set_default_store(store_id: str, request: Request, db: Session =
         action="store.set_default",
         resource_type="store",
         resource_id=store_id,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse("/admin/stores", status_code=303)
 
@@ -533,7 +540,7 @@ async def admin_delete_store(store_id: str, request: Request, db: Session = Depe
         action="store.delete",
         resource_type="store",
         resource_id=store_id,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse("/admin/stores", status_code=303)
 
@@ -573,7 +580,7 @@ async def admin_drain_store(store_id: str, request: Request, db: Session = Depen
         action="store.drain",
         resource_type="store",
         resource_id=store_id,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse("/admin/stores", status_code=303)
 
@@ -606,7 +613,7 @@ async def admin_cleanup_orphans(store_id: str, request: Request, db: Session = D
         action="store.cleanup_orphans",
         resource_type="store",
         resource_id=store_id,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse("/admin/stores", status_code=303)
 
@@ -655,7 +662,7 @@ async def admin_create_group(request: Request, db: Session = Depends(get_db)):
         resource_type="group",
         resource_id=group.id,
         resource_name=group.name,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse("/admin/groups", status_code=303)
 
@@ -688,7 +695,7 @@ async def admin_edit_group(group_id: str, request: Request, db: Session = Depend
         resource_type="group",
         resource_id=group_id,
         resource_name=group.name,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse("/admin/groups", status_code=303)
 
@@ -708,6 +715,6 @@ async def admin_delete_group_route(group_id: str, request: Request, db: Session 
         resource_type="group",
         resource_id=group_id,
         resource_name=group_name,
-        ip_address=request.client.host,
+        ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse("/admin/groups", status_code=303)

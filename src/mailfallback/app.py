@@ -134,6 +134,8 @@ def _run_migration(migration_id: str, execute_fn):
     db = SessionLocal()
     try:
         execute_fn(db, migration_id)
+    except Exception:
+        logger.exception("Migration %s failed with unhandled exception", migration_id)
     finally:
         db.close()
 

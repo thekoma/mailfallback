@@ -37,6 +37,8 @@ def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     request.session["user_id"] = user.id
+    if user.preferences:
+        request.session["theme"] = user.preferences.get("theme", "light")
     return {"ok": True, "role": user.role.value}
 
 
@@ -257,4 +259,6 @@ async def oidc_callback(request: Request, db: Session = Depends(get_db)):
     sync_sso_groups(db, user, groups)
 
     request.session["user_id"] = user.id
+    if user.preferences:
+        request.session["theme"] = user.preferences.get("theme", "light")
     return RedirectResponse("/")

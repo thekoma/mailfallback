@@ -70,7 +70,7 @@ def trigger_sync_all(
 @router.post("/{account_id}")
 def trigger_sync(
     account_id: str,
-    request: Request = None,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -100,7 +100,7 @@ def trigger_sync(
         resource_type="account",
         resource_id=account_id,
         resource_name=account.email_address,
-        ip_address=request.client.host if request else None,
+        ip_address=request.client.host if request.client else None,
     )
     return {"job_id": job.id, "status": job.status.value}
 

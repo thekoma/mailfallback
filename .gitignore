@@ -49,3 +49,9 @@ data/
 .env.local
 *.pem
 *.key
+
+# Deepsec
+.deepsec
+
+# Superpowers
+.superpowers/
