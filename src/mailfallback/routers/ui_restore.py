@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from mailfallback.dependencies import get_db
+from mailfallback.models import JobStatus
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.services.account_service import get_account, get_accounts_for_user
 from mailfallback.services.restore_service import get_restore_job, list_restore_jobs_for_user
@@ -16,11 +17,30 @@ def restore_page(request: Request, db: Session = Depends(get_db)):
     if not user:
         return RedirectResponse("/login")
     accounts = get_accounts_for_user(db, user)
-    jobs = list_restore_jobs_for_user(db, user.id)
+    all_jobs = list_restore_jobs_for_user(db, user.id)
+    running_jobs = [j for j in all_jobs if j.status in (JobStatus.pending, JobStatus.running)]
+    jobs = [j for j in all_jobs if j.status not in (JobStatus.pending, JobStatus.running)]
     return templates.TemplateResponse(
         request=request,
         name="restore.html",
-        context={"user": user, "accounts": accounts, "jobs": jobs},
+        context={"user": user, "accounts": accounts, "jobs": jobs, "running_jobs": running_jobs},
+    )
+
+
+@router.get("/restore/partials/running", response_class=HTMLResponse)
+def restore_running_partial(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = _get_session_user(request, db)
+    if not user:
+        return HTMLResponse("")
+    all_jobs = list_restore_jobs_for_user(db, user.id)
+    running_jobs = [j for j in all_jobs if j.status in (JobStatus.pending, JobStatus.running)]
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/restore_running.html",
+        context={"running_jobs": running_jobs},
     )
 
 
@@ -349,7 +369,7 @@ def restore_progress_partial(
         return HTMLResponse("")
 
     job = get_restore_job(db, job_id)
-    finished = job and job.status.value in ("completed", "failed")
+    finished = job and job.status.value in ("completed", "failed", "cancelled")
 
     return templates.TemplateResponse(
         request=request,

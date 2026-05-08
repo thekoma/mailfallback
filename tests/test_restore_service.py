@@ -171,5 +171,5 @@ def test_cancel_restore_job(db_session, restore_fixtures):
     result = cancel_restore_job(db_session, job.id)
     assert result is True
     db_session.refresh(job)
-    assert job.status == JobStatus.failed
+    assert job.status == JobStatus.cancelled
     assert job.error == "Cancelled by user"
