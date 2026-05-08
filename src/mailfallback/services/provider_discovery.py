@@ -2,6 +2,8 @@ import defusedxml.ElementTree as ET
 import dns.resolver
 import httpx
 
+from mailfallback.services.imap_check import validate_host_not_internal
+
 WELL_KNOWN_PROVIDERS = {
     "gmail.com": {
         "provider": "google",
@@ -167,16 +169,25 @@ def discover_provider(domain: str) -> dict | None:
 
 def _discover_autoconfig(domain: str) -> dict | None:
     """Try Thunderbird autoconfig and Microsoft Autodiscover XML endpoints."""
-    urls = [
-        f"https://autoconfig.{domain}/mail/config-v1.1.xml",
-        f"https://{domain}/.well-known/autoconfig/mail/config-v1.1.xml",
+    hosts_and_urls = [
+        (f"autoconfig.{domain}", f"https://autoconfig.{domain}/mail/config-v1.1.xml"),
+        (domain, f"https://{domain}/.well-known/autoconfig/mail/config-v1.1.xml"),
     ]
-    for url in urls:
+    for host, url in hosts_and_urls:
+        try:
+            validate_host_not_internal(host)
+        except ValueError:
+            continue
         result = _parse_autoconfig_xml(url, domain)
         if result:
             return result
 
-    autodiscover_url = f"https://autodiscover.{domain}/autodiscover/autodiscover.xml"
+    autodiscover_host = f"autodiscover.{domain}"
+    try:
+        validate_host_not_internal(autodiscover_host)
+    except ValueError:
+        return None
+    autodiscover_url = f"https://{autodiscover_host}/autodiscover/autodiscover.xml"
     result = _parse_autodiscover_xml(autodiscover_url, domain)
     if result:
         return result
@@ -187,7 +198,7 @@ def _discover_autoconfig(domain: str) -> dict | None:
 def _parse_autoconfig_xml(url: str, domain: str) -> dict | None:
     """Parse Mozilla/Thunderbird autoconfig XML format."""
     try:
-        resp = httpx.get(url, timeout=5, follow_redirects=True)
+        resp = httpx.get(url, timeout=5, follow_redirects=False)
         if resp.status_code != 200:
             return None
         root = ET.fromstring(resp.text)
@@ -235,7 +246,7 @@ def _parse_autodiscover_xml(url: str, domain: str) -> dict | None:
             content=body,
             headers={"Content-Type": "text/xml"},
             timeout=5,
-            follow_redirects=True,
+            follow_redirects=False,
         )
         if resp.status_code != 200:
             return None

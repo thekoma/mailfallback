@@ -7,7 +7,7 @@ from mailfallback.dependencies import get_current_user, get_db
 from mailfallback.models import User
 from mailfallback.services import account_service, sync_service
 from mailfallback.services.audit_service import log_action
-from mailfallback.services.imap_check import check_imap_credentials
+from mailfallback.services.imap_check import check_imap_credentials, validate_host_not_internal
 from mailfallback.services.provider_discovery import discover_provider
 from mailfallback.services.sync_worker import get_live_log, stop_sync_job, submit_sync_job
 
@@ -27,6 +27,10 @@ def test_connection(
     body: TestConnectionRequest,
     user: User = Depends(get_current_user),
 ):
+    try:
+        validate_host_not_internal(body.imap_host)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
     return check_imap_credentials(
         host=body.imap_host,
         port=body.imap_port,

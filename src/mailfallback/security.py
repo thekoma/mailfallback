@@ -3,7 +3,10 @@ import base64
 import hashlib
 
 import bcrypt
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
+
+_KDF_ITERATIONS = 600_000
+_KDF_SALT = b"mailfallback-fernet-v1"
 
 
 def hash_password(password: str) -> str:
@@ -15,6 +18,11 @@ def verify_password(password: str, hashed: str) -> bool:
 
 
 def _derive_fernet_key(secret_key: str) -> bytes:
+    dk = hashlib.pbkdf2_hmac("sha256", secret_key.encode(), _KDF_SALT, _KDF_ITERATIONS)
+    return base64.urlsafe_b64encode(dk)
+
+
+def _derive_fernet_key_legacy(secret_key: str) -> bytes:
     digest = hashlib.sha256(secret_key.encode()).digest()
     return base64.urlsafe_b64encode(digest)
 
@@ -26,4 +34,8 @@ def encrypt_credentials(plaintext: str, secret_key: str) -> str:
 
 def decrypt_credentials(encrypted: str, secret_key: str) -> str:
     f = Fernet(_derive_fernet_key(secret_key))
-    return f.decrypt(encrypted.encode()).decode()
+    try:
+        return f.decrypt(encrypted.encode()).decode()
+    except InvalidToken:
+        f_legacy = Fernet(_derive_fernet_key_legacy(secret_key))
+        return f_legacy.decrypt(encrypted.encode()).decode()

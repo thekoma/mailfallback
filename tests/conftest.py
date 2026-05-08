@@ -63,4 +63,7 @@ def app(db_session):
 
 @pytest.fixture
 def client(app):
+    from mailfallback.middleware.rate_limit import reset_rate_limits
+
+    reset_rate_limits()
     return TestClient(app)

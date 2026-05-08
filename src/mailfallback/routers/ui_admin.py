@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ui"])
 
-ADMIN_PW_COOLDOWN = 15 * 60
+ADMIN_PW_COOLDOWN = 60
 
 
 def _admin_pw_verified(request: Request) -> bool:
@@ -297,6 +297,14 @@ async def admin_cancel_migration(
         else:
             target.migrating = False
             db.commit()
+    log_action(
+        db,
+        user=user,
+        action="user.cancel_migration",
+        resource_type="user",
+        resource_id=target_user_id,
+        ip_address=request.client.host,
+    )
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -355,6 +363,14 @@ async def admin_set_allowed_stores(
     error = set_allowed_stores(db, target_user_id, store_ids)
     if error:
         logger.warning("set_allowed_stores refused for %s: %s", target_user_id, error)
+    log_action(
+        db,
+        user=user,
+        action="user.set_allowed_stores",
+        resource_type="user",
+        resource_id=target_user_id,
+        ip_address=request.client.host,
+    )
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -492,6 +508,14 @@ async def admin_set_default_store(store_id: str, request: Request, db: Session =
     if not user or user.role.value != "admin":
         return RedirectResponse("/", status_code=303)
     set_default_store(db, store_id)
+    log_action(
+        db,
+        user=user,
+        action="store.set_default",
+        resource_type="store",
+        resource_id=store_id,
+        ip_address=request.client.host,
+    )
     return RedirectResponse("/admin/stores", status_code=303)
 
 
@@ -543,6 +567,14 @@ async def admin_drain_store(store_id: str, request: Request, db: Session = Depen
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
 
+    log_action(
+        db,
+        user=user,
+        action="store.drain",
+        resource_type="store",
+        resource_id=store_id,
+        ip_address=request.client.host,
+    )
     return RedirectResponse("/admin/stores", status_code=303)
 
 
@@ -568,6 +600,14 @@ async def admin_cleanup_orphans(store_id: str, request: Request, db: Session = D
     if not user or user.role.value != "admin":
         return RedirectResponse("/", status_code=303)
     delete_orphaned_dirs(db, store_id)
+    log_action(
+        db,
+        user=user,
+        action="store.cleanup_orphans",
+        resource_type="store",
+        resource_id=store_id,
+        ip_address=request.client.host,
+    )
     return RedirectResponse("/admin/stores", status_code=303)
 
 

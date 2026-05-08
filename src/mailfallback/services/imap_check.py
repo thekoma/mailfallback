@@ -1,5 +1,19 @@
 import contextlib
 import imaplib
+import ipaddress
+import socket
+
+
+def validate_host_not_internal(host: str) -> None:
+    """Reject connections to private/loopback/link-local addresses."""
+    try:
+        infos = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror:
+        return  # let the actual connection fail with a proper error
+    for _family, _, _, _, sockaddr in infos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            raise ValueError(f"Connections to private/internal addresses are not allowed: {host}")
 
 
 def connect_imap(
