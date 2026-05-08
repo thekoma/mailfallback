@@ -19,7 +19,7 @@ from mailfallback.services.account_service import (
     update_account,
 )
 from mailfallback.services.audit_service import log_action
-from mailfallback.services.imap_check import check_imap_credentials
+from mailfallback.services.imap_check import check_imap_credentials, validate_host_not_internal
 from mailfallback.services.migration_service import (
     execute_account_migration,
     initiate_account_migration,
@@ -302,6 +302,21 @@ async def account_form_submit(request: Request, db: Session = Depends(get_db)):
     imap_port = int(form.get("imap_port", 993))
     auth_mechs = form.get("auth_mechs", "")
 
+    try:
+        validate_host_not_internal(imap_host)
+    except ValueError as e:
+        selectable_stores = get_selectable_stores(db, user)
+        return templates.TemplateResponse(
+            request=request,
+            name="account_form.html",
+            context={
+                "user": user,
+                "store": store,
+                "selectable_stores": selectable_stores,
+                "error": str(e),
+            },
+        )
+
     if auth_type == "app_password" and credentials:
         result = check_imap_credentials(
             host=imap_host,
@@ -448,6 +463,13 @@ async def account_edit_submit(account_id: str, request: Request, db: Session = D
     account = get_account(db, account_id, user)
     if not account:
         return RedirectResponse("/", status_code=303)
+
+    if "imap_host" in updates:
+        try:
+            validate_host_not_internal(updates["imap_host"])
+        except ValueError as e:
+            request.session["flash_error"] = str(e)
+            return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
     known_providers = {"google", "microsoft", "yahoo", "icloud", "protonmail"}
     if account.provider in known_providers:
@@ -663,7 +685,7 @@ async def account_add_owner(account_id: str, request: Request, db: Session = Dep
     account = get_account(db, account_id, user)
     if not account:
         return RedirectResponse("/", status_code=303)
-    if not is_account_owner(user, account) and user.role.value != "admin":
+    if user.role.value != "admin":
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
     form = await request.form()
     assign_owner(db, account_id, form["user_id"])

@@ -151,6 +151,9 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    from mailfallback.middleware.rate_limit import RateLimitMiddleware
+
+    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.session_secret,

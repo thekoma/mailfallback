@@ -46,7 +46,7 @@ async def profile_change_store(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/profile", status_code=303)
     form = await request.form()
     new_store_id = form["store_id"]
-    allowed_ids = {s.id for s in user.allowed_stores}
+    allowed_ids = {s.id for s in user.allowed_stores if s.enabled}
     if new_store_id not in allowed_ids:
         return RedirectResponse("/profile", status_code=303)
     update_user(db, user.id, store_id=new_store_id)
