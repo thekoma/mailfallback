@@ -49,6 +49,7 @@ class JobStatus(enum.StrEnum):
     running = "running"
     completed = "completed"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 class MigrationStatus(enum.StrEnum):

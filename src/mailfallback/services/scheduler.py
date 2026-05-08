@@ -48,7 +48,7 @@ def _run_scheduled_sync(account_id: str) -> None:
 def sync_scheduler_jobs(db: Session) -> None:
     existing_job_ids = {j.id for j in scheduler.get_jobs()}
 
-    accounts = db.query(Account).filter(not Account.suspended).all()
+    accounts = db.query(Account).filter(Account.suspended.is_(False)).all()
     active_job_ids = set()
 
     for account in accounts:

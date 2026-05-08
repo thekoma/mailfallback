@@ -86,7 +86,7 @@ def cancel_restore_job(db: Session, job_id: str) -> bool:
     job = db.query(RestoreJob).filter(RestoreJob.id == job_id).first()
     if not job or job.status not in (JobStatus.pending, JobStatus.running):
         return False
-    job.status = JobStatus.failed
+    job.status = JobStatus.cancelled
     job.error = "Cancelled by user"
     db.commit()
     return True

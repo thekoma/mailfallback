@@ -183,6 +183,7 @@ def execute_restore_job(db: Session, job_id: str) -> None:
         if temp_username:
             with contextlib.suppress(Exception):
                 delete_temp_imap_user(db, temp_username)
+        db.refresh(job)
         if job.status == JobStatus.running:
             if job.restored_messages == 0 and job.failed_messages > 0:
                 job.status = JobStatus.failed
@@ -199,9 +200,11 @@ def execute_restore_job(db: Session, job_id: str) -> None:
 
             requester = db.query(User).filter(User.id == job.requested_by).first()
             if requester:
-                action = (
-                    "restore.complete" if job.status == JobStatus.completed else "restore.failed"
-                )
+                status_actions = {
+                    JobStatus.completed: "restore.complete",
+                    JobStatus.cancelled: "restore.cancelled",
+                }
+                action = status_actions.get(job.status, "restore.failed")
                 log_action(
                     db,
                     user=requester,
@@ -290,7 +293,7 @@ def _execute_restore(
 
     for full_folder, short_folder in folders:
         if job.id in _cancel_flags:
-            _fail_job(db, job, "Cancelled by user")
+            _cancel_job(db, job)
             return
 
         status, _ = src_conn.select(f'"{full_folder}"', readonly=True)
@@ -323,7 +326,7 @@ def _execute_restore(
 
         for uid_bytes in uids:
             if job.id in _cancel_flags:
-                _fail_job(db, job, "Cancelled by user")
+                _cancel_job(db, job)
                 return
 
             uid = uid_bytes.decode()
@@ -399,7 +402,8 @@ def _restore_single_message(
 
         flags_match = re.search(r"FLAGS \(([^)]*)\)", meta)
         if flags_match:
-            flags_str = flags_match.group(1)
+            raw_flags = flags_match.group(1)
+            flags_str = " ".join(f for f in raw_flags.split() if f.upper() != "\\RECENT")
     if "INTERNALDATE" in meta:
         import re
 
@@ -532,5 +536,12 @@ def _refresh_target_token(creds_json, db, account):
 def _fail_job(db, job, error_msg):
     job.status = JobStatus.failed
     job.error = error_msg
+    job.completed_at = datetime.now(UTC)
+    db.commit()
+
+
+def _cancel_job(db, job):
+    job.status = JobStatus.cancelled
+    job.error = "Cancelled by user"
     job.completed_at = datetime.now(UTC)
     db.commit()

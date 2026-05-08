@@ -151,7 +151,9 @@
 
 <div id="restore-progress"></div>
 
-<hr>
+{% include "partials/restore_running.html" %}
+
 <h3>Restore History</h3>
 {% include "partials/restore_history.html" %}
 {% endblock %}
+{% block scripts %}<script src="/static/js/restore.js"></script>{% endblock %}
