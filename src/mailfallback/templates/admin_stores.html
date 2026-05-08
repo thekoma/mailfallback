@@ -88,7 +88,8 @@
                             {% endif %}
                             <hr class="dropdown-divider">
                             <form method="post" action="/admin/stores/{{ store.id }}/delete" class="inline-form"
-                                onsubmit="return confirm('Delete store {{ store.name }}? Store must be empty (use Drain first).')">
+                                data-confirm="Delete store {{ store.name }}? Store must be empty (use Drain first)."
+                                onsubmit="return confirm(this.dataset.confirm)">
                                 <button type="submit" class="dropdown-item dropdown-danger" onclick="closeDropdown()"
                                     {% if store.accounts | length > 0 or store.users | length > 0 %}disabled{% endif %}>
                                     <i data-lucide="trash-2" class="icon-sm"></i> Delete
@@ -152,7 +153,8 @@
 
                 {% if other_stores %}
                 <form method="post" action="/admin/stores/{{ store.id }}/drain" class="mt-05"
-                    onsubmit="return confirm('Drain all contents of {{ store.name }}? Sync and IMAP access will be blocked during migration.')">
+                    data-confirm="Drain all contents of {{ store.name }}? Sync and IMAP access will be blocked during migration."
+                    onsubmit="return confirm(this.dataset.confirm)">
                     <div class="flex gap-05 items-end">
                         <div>
                             <label class="text-small">Move everything to:</label>
@@ -186,7 +188,8 @@
                     {% endfor %}
                     </div>
                     <form method="post" action="/admin/stores/{{ store.id }}/cleanup-orphans" class="mt-05"
-                        onsubmit="return confirm('Delete {{ orphans | length }} orphaned directories? This cannot be undone.')">
+                        data-confirm="Delete {{ orphans | length }} orphaned directories? This cannot be undone."
+                        onsubmit="return confirm(this.dataset.confirm)">
                         <button type="submit" class="icon-btn danger">
                             <i data-lucide="trash-2" class="icon-md"></i> Clean up {{ orphans | length }} orphan{{ 's' if orphans | length > 1 else '' }}
                         </button>

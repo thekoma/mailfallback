@@ -127,7 +127,8 @@
                 {{ o.username }}
                 {% if (is_owner or user.role.value == "admin") and account.owners | length > 1 %}
                 <form method="post" action="/accounts/{{ account.id }}/remove-owner" class="inline-form" style="display:inline"
-                    onsubmit="return confirm('Remove {{ o.username }} as owner?')">
+                    data-confirm="Remove {{ o.username }} as owner?"
+                    onsubmit="return confirm(this.dataset.confirm)">
                     <input type="hidden" name="user_id" value="{{ o.id }}">
                     <button type="submit" class="icon-btn-inline" title="Remove owner">
                         <i data-lucide="x" class="icon-sm"></i>
@@ -254,7 +255,8 @@
         </div>
         {% else %}
         <form method="post" action="/accounts/{{ account.id }}/migrate"
-            onsubmit="return confirm('Migrate mailbox for {{ account.name }}? Sync will be blocked during migration.')">
+            data-confirm="Migrate mailbox for {{ account.name }}? Sync will be blocked during migration."
+            onsubmit="return confirm(this.dataset.confirm)">
             <label>Current: <strong>{{ account.store.name }}</strong> — Move to</label>
             <div class="flex gap-05 items-end">
                 <select name="target_store_id" style="margin-bottom:0">
@@ -312,7 +314,8 @@
             Also delete maildir folder (<code>{{ account.maildir_path }}</code>)
         </label>
         <input type="text" id="delete-confirm" placeholder="Type to confirm"
-            oninput="checkDeleteConfirm('delete-confirm', '{{ account.email_address or account.name }}', 'delete-btn')">
+            data-expected="{{ account.email_address or account.name }}"
+            oninput="checkDeleteConfirm('delete-confirm', this.dataset.expected, 'delete-btn')">
         <button id="delete-btn" class="icon-btn danger" disabled
             hx-delete="/api/accounts/{{ account.id }}"
             hx-swap="none"
