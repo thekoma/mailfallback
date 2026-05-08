@@ -69,27 +69,34 @@ function autoDetectProvider() {
         });
 }
 
+function _buildLabelNodes(suffix, suffixClass) {
+    var icon = document.createElement('i');
+    icon.setAttribute('data-lucide', 'server');
+    icon.className = 'icon-md icon-inline';
+    var strong = document.createElement('strong');
+    strong.textContent = 'Server settings';
+    var span = document.createElement('span');
+    span.className = suffixClass;
+    span.textContent = suffix;
+    return [icon, document.createTextNode(' '), strong, document.createTextNode(' '), span];
+}
+
 function _updateDisclosureLabel(state, host, port, tls) {
     var details = document.getElementById('server-settings');
     var label = document.getElementById('server-settings-label');
     if (!details || !label) return;
 
-    var icon = '<i data-lucide="server" class="icon-md icon-inline"></i>';
+    label.innerHTML = '';
     if (state === 'detected') {
         var secLabel = tls === 'IMAPS' ? 'SSL/TLS' : tls;
-        label.innerHTML = icon + '<strong>Server settings</strong>' +
-            ' <span class="text-muted text-small">— auto-detected: ' +
-            host + ':' + port + ' (' + secLabel + ')</span>';
+        var suffix = '— auto-detected: ' + host + ':' + port + ' (' + secLabel + ')';
+        _buildLabelNodes(suffix, 'text-muted text-small').forEach(function(n) { label.appendChild(n); });
         details.open = false;
     } else if (state === 'confirm') {
-        label.innerHTML = icon +
-            '<strong>Server settings</strong>' +
-            ' <span class="text-small sync-syncing">— please confirm</span>';
+        _buildLabelNodes('— please confirm', 'text-small sync-syncing').forEach(function(n) { label.appendChild(n); });
         details.open = true;
     } else if (state === 'modified') {
-        label.innerHTML = icon +
-            '<strong>Server settings</strong>' +
-            ' <span class="text-small">— modified</span>';
+        _buildLabelNodes('— modified', 'text-small').forEach(function(n) { label.appendChild(n); });
         var testLink = document.getElementById('test-without-saving');
         if (testLink) testLink.classList.remove('hidden');
     }
@@ -145,12 +152,25 @@ function testWithoutSaving() {
 
 function checkParameters() { testWithoutSaving(); }
 
-function _renderFormError(msg) {
+function _renderFormError(nodes) {
     var el = document.getElementById('form-errors');
     if (!el) return;
-    el.innerHTML = '<div class="error-box"><p class="mb-0">' +
-        '<i data-lucide="alert-circle" class="icon-md icon-inline"></i>' +
-        msg + '</p></div>';
+    el.innerHTML = '';
+    var box = document.createElement('div');
+    box.className = 'error-box';
+    var p = document.createElement('p');
+    p.className = 'mb-0';
+    var icon = document.createElement('i');
+    icon.setAttribute('data-lucide', 'alert-circle');
+    icon.className = 'icon-md icon-inline';
+    p.appendChild(icon);
+    if (typeof nodes === 'string') {
+        p.appendChild(document.createTextNode(nodes));
+    } else {
+        nodes.forEach(function(n) { p.appendChild(n); });
+    }
+    box.appendChild(p);
+    el.appendChild(box);
     lucide.createIcons();
     el.scrollIntoView({behavior: 'smooth', block: 'center'});
 }
@@ -160,27 +180,51 @@ function _clearFormError() {
     if (el) el.innerHTML = '';
 }
 
+function _editSettingsLink() {
+    var a = document.createElement('a');
+    a.href = '#';
+    a.textContent = 'Edit server settings';
+    a.addEventListener('click', function(e) {
+        e.preventDefault();
+        document.getElementById('server-settings').open = true;
+    });
+    return a;
+}
+
 function _classifyError(data) {
     var raw = (data.login_message || data.message || '').toLowerCase();
     if (data.login_ok === false || raw.indexOf('authenticationfailed') !== -1 ||
         raw.indexOf('login failed') !== -1 || raw.indexOf('invalid credentials') !== -1) {
         var email = document.getElementById('email_address').value;
-        return 'We couldn\'t sign in to <strong>' + email + '</strong>. ' +
-            'Many providers — including Gmail, iCloud, Yahoo, and Outlook — require an ' +
-            '<strong>app password</strong> instead of your normal one. ' +
-            '<a href="https://support.google.com/accounts/answer/185833" target="_blank">' +
-            'How to create an app password →</a>';
+        var b1 = document.createElement('strong');
+        b1.textContent = email;
+        var b2 = document.createElement('strong');
+        b2.textContent = 'app password';
+        var a = document.createElement('a');
+        a.href = 'https://support.google.com/accounts/answer/185833';
+        a.target = '_blank';
+        a.textContent = 'How to create an app password →';
+        return [
+            document.createTextNode('We couldn’t sign in to '), b1,
+            document.createTextNode('. Many providers — including Gmail, iCloud, Yahoo, and Outlook — require an '),
+            b2, document.createTextNode(' instead of your normal one. '), a
+        ];
     }
     if (raw.indexOf('errno') !== -1 || raw.indexOf('refused') !== -1 ||
         raw.indexOf('unreachable') !== -1 || raw.indexOf('getaddrinfo') !== -1) {
         var host = document.getElementById('imap_host').value;
-        return 'Couldn\'t reach <strong>' + host + '</strong>. Check the hostname or your ' +
-            'network connection. <a href="#" onclick="document.getElementById(\'server-settings\')' +
-            '.open=true;return false">Edit server settings</a>';
+        var bh = document.createElement('strong');
+        bh.textContent = host;
+        return [
+            document.createTextNode('Couldn’t reach '), bh,
+            document.createTextNode('. Check the hostname or your network connection. '),
+            _editSettingsLink()
+        ];
     }
-    return 'Something went wrong: ' + (data.message || data.login_message || 'Unknown error') +
-        '. <a href="#" onclick="document.getElementById(\'server-settings\').open=true;' +
-        'return false">Edit server settings</a>';
+    return [
+        document.createTextNode('Something went wrong: ' + (data.message || data.login_message || 'Unknown error') + '. '),
+        _editSettingsLink()
+    ];
 }
 
 function _createAccountAndRedirect(payload, oauthProvider) {

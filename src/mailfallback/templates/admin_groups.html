@@ -38,7 +38,8 @@
                     </button>
                     {% if user.role.value == "admin" %}
                     <form method="post" action="/admin/groups/{{ g.id }}/delete" class="inline-form"
-                        onsubmit="return confirm('Delete group {{ g.name }}?')">
+                        data-confirm="Delete group {{ g.name }}?"
+                        onsubmit="return confirm(this.dataset.confirm)">
                         <button type="submit" class="icon-btn danger" title="Delete">
                             <i data-lucide="trash-2" class="icon-md"></i>
                         </button>
