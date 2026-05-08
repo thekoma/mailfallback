@@ -633,8 +633,25 @@ async def account_cancel_migration(
 
     account = db.query(Account).filter(Account.id == account_id).first()
     if account and account.migrating:
-        account.migrating = False
-        db.commit()
+        from mailfallback.models import MigrationStatus, StoreMigration
+
+        active = (
+            db.query(StoreMigration)
+            .filter(
+                StoreMigration.account_id == account_id,
+                StoreMigration.status.in_(
+                    [MigrationStatus.pending, MigrationStatus.copying, MigrationStatus.verifying]
+                ),
+            )
+            .first()
+        )
+        if active:
+            from mailfallback.services.migration_service import request_migration_cancel
+
+            request_migration_cancel(active.id)
+        else:
+            account.migrating = False
+            db.commit()
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
 

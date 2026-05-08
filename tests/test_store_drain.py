@@ -152,10 +152,27 @@ def test_set_allowed_stores_replaces(db_session):
     s2 = create_store(db_session, "s2", "/tmp/allowrepl2")
     user = create_user(db_session, "carol", "pass", UserRole.user, store_id=s1.id)
     set_allowed_stores(db_session, user.id, [s1.id, s2.id])
-    set_allowed_stores(db_session, user.id, [s2.id])
+    assert len(user.allowed_stores) == 2
+    # Removing current home store is now refused
+    error = set_allowed_stores(db_session, user.id, [s2.id])
     db_session.refresh(user)
+    assert error is not None
+    assert len(user.allowed_stores) == 2
+    assert user.store_id == s1.id
+
+
+def test_set_allowed_stores_keeps_current(db_session):
+    s1 = create_store(db_session, "s1", "/tmp/allowkeep1")
+    s2 = create_store(db_session, "s2", "/tmp/allowkeep2")
+    s3 = create_store(db_session, "s3", "/tmp/allowkeep3")
+    user = create_user(db_session, "dan", "pass", UserRole.user, store_id=s1.id)
+    set_allowed_stores(db_session, user.id, [s1.id, s2.id, s3.id])
+    # Removing non-home stores is fine
+    error = set_allowed_stores(db_session, user.id, [s1.id])
+    db_session.refresh(user)
+    assert error is None
     assert len(user.allowed_stores) == 1
-    assert user.store_id == s2.id
+    assert user.store_id == s1.id
 
 
 def test_get_selectable_stores_none_if_single(db_session):

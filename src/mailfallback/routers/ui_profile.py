@@ -42,6 +42,8 @@ async def profile_change_store(request: Request, db: Session = Depends(get_db)):
     user = _get_session_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    if user.migrating:
+        return RedirectResponse("/profile", status_code=303)
     form = await request.form()
     new_store_id = form["store_id"]
     allowed_ids = {s.id for s in user.allowed_stores}
