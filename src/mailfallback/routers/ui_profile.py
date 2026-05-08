@@ -64,24 +64,34 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
     new = form["new_password"]
     confirm = form["confirm_password"]
 
+    store = get_user_store(db, user)
+    selectable_stores = get_selectable_stores(db, user)
+    user_groups = get_user_groups(db, user)
+    base_context = {
+        "user": user,
+        "store": store,
+        "selectable_stores": selectable_stores,
+        "user_groups": user_groups,
+    }
+
     if not user.password_hash or not verify_password(current, user.password_hash):
         return templates.TemplateResponse(
             request=request,
             name="profile.html",
-            context={"user": user, "error": "Current password is incorrect", "success": None},
+            context={**base_context, "error": "Current password is incorrect", "success": None},
         )
     if new != confirm:
         return templates.TemplateResponse(
             request=request,
             name="profile.html",
-            context={"user": user, "error": "New passwords do not match", "success": None},
+            context={**base_context, "error": "New passwords do not match", "success": None},
         )
     if len(new) < 12:
         return templates.TemplateResponse(
             request=request,
             name="profile.html",
             context={
-                "user": user,
+                **base_context,
                 "error": "Password must be at least 12 characters",
                 "success": None,
             },
@@ -91,7 +101,7 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
     return templates.TemplateResponse(
         request=request,
         name="profile.html",
-        context={"user": user, "error": None, "success": "Password updated successfully"},
+        context={**base_context, "error": None, "success": "Password updated successfully"},
     )
 
 
@@ -109,6 +119,7 @@ class PreferencesUpdate(BaseModel):
 @router.patch("/api/preferences")
 def update_preferences(
     body: PreferencesUpdate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -117,4 +128,6 @@ def update_preferences(
     prefs.update(update)
     user.preferences = prefs
     db.commit()
+    if "theme" in update:
+        request.session["theme"] = update["theme"]
     return Response(status_code=204)

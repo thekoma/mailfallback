@@ -33,7 +33,12 @@ def admin_audit_page(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/")
 
     params = dict(request.query_params)
-    page = int(params.pop("page", 1))
+    try:
+        page = int(params.pop("page", 1))
+        if page < 1:
+            page = 1
+    except (ValueError, TypeError):
+        page = 1
     q = _build_query(db, params)
     total = q.count()
     entries = q.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
@@ -68,7 +73,12 @@ def admin_audit_table(request: Request, db: Session = Depends(get_db)):
         return HTMLResponse("")
 
     params = dict(request.query_params)
-    page = int(params.pop("page", 1))
+    try:
+        page = int(params.pop("page", 1))
+        if page < 1:
+            page = 1
+    except (ValueError, TypeError):
+        page = 1
     q = _build_query(db, params)
     total = q.count()
     entries = q.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()

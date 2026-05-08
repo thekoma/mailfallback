@@ -47,6 +47,7 @@ class OwnerAssign(BaseModel):
 @router.post("")
 def create(
     body: AccountCreate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -96,6 +97,15 @@ def create(
             account.extra_config = json.dumps({"patterns": disc["patterns"]})
     db.commit()
     account_service.assign_owner(db, account.id, user.id)
+    log_action(
+        db,
+        user=user,
+        action="account.create",
+        resource_type="account",
+        resource_id=account.id,
+        resource_name=account.email_address or account.name,
+        ip_address=request.client.host if request.client else None,
+    )
     return {"id": account.id, "name": account.name, "maildir_path": account.maildir_path}
 
 
@@ -145,6 +155,7 @@ def get(account_id: str, user: User = Depends(get_current_user), db: Session = D
 def update(
     account_id: str,
     body: AccountUpdate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -152,6 +163,15 @@ def update(
     account = account_service.update_account(db, account_id, user, **updates)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
+    log_action(
+        db,
+        user=user,
+        action="account.edit",
+        resource_type="account",
+        resource_id=account_id,
+        resource_name=account.email_address or account.name,
+        ip_address=request.client.host if request.client else None,
+    )
     return {"id": account.id, "name": account.name}
 
 
@@ -175,7 +195,7 @@ def delete(
         resource_type="account",
         resource_id=account_id,
         resource_name=account.email_address or account.name,
-        ip_address=request.client.host if request else None,
+        ip_address=request.client.host if request.client else None,
     )
     return {"ok": True}
 
@@ -184,7 +204,7 @@ def delete(
 def assign_owner(
     account_id: str,
     body: OwnerAssign,
-    request: Request = None,
+    request: Request,
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -197,7 +217,7 @@ def assign_owner(
             resource_type="account",
             resource_id=account_id,
             resource_name=body.user_id,
-            ip_address=request.client.host if request else None,
+            ip_address=request.client.host if request.client else None,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from None
@@ -208,7 +228,7 @@ def assign_owner(
 def remove_owner(
     account_id: str,
     user_id: str,
-    request: Request = None,
+    request: Request,
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -220,6 +240,6 @@ def remove_owner(
         resource_type="account",
         resource_id=account_id,
         resource_name=user_id,
-        ip_address=request.client.host if request else None,
+        ip_address=request.client.host if request.client else None,
     )
     return {"ok": True}

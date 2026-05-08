@@ -8,7 +8,6 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
-from mailfallback.db import SessionLocal
 from mailfallback.dependencies import get_db
 from mailfallback.models import SyncJob, User
 from mailfallback.services.account_service import get_accounts_for_user
@@ -107,18 +106,8 @@ templates.env.globals["webmail_url"] = settings.webmail_url
 
 
 def _get_theme(request: Request) -> str:
-    user_id = request.session.get("user_id") if hasattr(request, "session") else None
-    if user_id:
-        try:
-            db = SessionLocal()
-            try:
-                user = db.query(User).filter(User.id == user_id).first()
-                if user and user.preferences:
-                    return user.preferences.get("theme", "light")
-            finally:
-                db.close()
-        except Exception as e:
-            logger.debug("Failed to fetch theme preference: %s", e)
+    if hasattr(request, "session"):
+        return request.session.get("theme", "light")
     return "light"
 
 
@@ -145,6 +134,8 @@ async def login_submit(request: Request, db: Session = Depends(get_db)):
             context={"oidc_enabled": settings.oidc_enabled, "error": "Invalid credentials"},
         )
     request.session["user_id"] = user.id
+    if user.preferences:
+        request.session["theme"] = user.preferences.get("theme", "light")
     return RedirectResponse("/", status_code=303)
 
 
