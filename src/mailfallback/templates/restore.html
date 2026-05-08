@@ -153,7 +153,16 @@
 
 {% include "partials/restore_running.html" %}
 
-<h3>Restore History</h3>
+<div style="display:flex;justify-content:space-between;align-items:center">
+    <h3>Restore History</h3>
+    {% if user.role.value == "admin" %}
+    <label class="text-small">
+        <input type="checkbox" role="switch" {% if show_all_users %}checked{% endif %}
+               onchange="window.location.href='/restore' + (this.checked ? '?show_all=1' : '')">
+        Show all users
+    </label>
+    {% endif %}
+</div>
 {% include "partials/restore_history.html" %}
 {% endblock %}
 {% block scripts %}<script src="/static/js/restore.js"></script>{% endblock %}

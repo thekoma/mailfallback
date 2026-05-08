@@ -82,6 +82,10 @@ def list_restore_jobs_for_user(db: Session, user_id: str, limit: int = 50) -> li
     )
 
 
+def list_all_restore_jobs(db: Session, limit: int = 50) -> list[RestoreJob]:
+    return db.query(RestoreJob).order_by(RestoreJob.requested_at.desc()).limit(limit).all()
+
+
 def cancel_restore_job(db: Session, job_id: str) -> bool:
     job = db.query(RestoreJob).filter(RestoreJob.id == job_id).first()
     if not job or job.status not in (JobStatus.pending, JobStatus.running):

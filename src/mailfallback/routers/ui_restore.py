@@ -3,27 +3,42 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from mailfallback.dependencies import get_db
-from mailfallback.models import JobStatus
+from mailfallback.models import JobStatus, UserRole
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.services.account_service import get_account, get_accounts_for_user
-from mailfallback.services.restore_service import get_restore_job, list_restore_jobs_for_user
+from mailfallback.services.restore_service import (
+    get_restore_job,
+    list_all_restore_jobs,
+    list_restore_jobs_for_user,
+)
 
 router = APIRouter(tags=["ui-restore"])
 
 
 @router.get("/restore", response_class=HTMLResponse)
-def restore_page(request: Request, db: Session = Depends(get_db)):
+def restore_page(request: Request, show_all: str = "", db: Session = Depends(get_db)):
     user = _get_session_user(request, db)
     if not user:
         return RedirectResponse("/login")
     accounts = get_accounts_for_user(db, user)
-    all_jobs = list_restore_jobs_for_user(db, user.id)
+    is_admin = user.role == UserRole.admin
+    show_all_users = is_admin and show_all == "1"
+    if show_all_users:
+        all_jobs = list_all_restore_jobs(db)
+    else:
+        all_jobs = list_restore_jobs_for_user(db, user.id)
     running_jobs = [j for j in all_jobs if j.status in (JobStatus.pending, JobStatus.running)]
     jobs = [j for j in all_jobs if j.status not in (JobStatus.pending, JobStatus.running)]
     return templates.TemplateResponse(
         request=request,
         name="restore.html",
-        context={"user": user, "accounts": accounts, "jobs": jobs, "running_jobs": running_jobs},
+        context={
+            "user": user,
+            "accounts": accounts,
+            "jobs": jobs,
+            "running_jobs": running_jobs,
+            "show_all_users": show_all_users,
+        },
     )
 
 
