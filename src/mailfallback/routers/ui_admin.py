@@ -1,4 +1,5 @@
 # src/mailfallback/routers/ui_admin.py
+import logging
 import shutil
 import threading
 import time
@@ -9,7 +10,15 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
-from mailfallback.models import Account, Group, MailStore, StoreMigration, User, UserRole
+from mailfallback.models import (
+    Account,
+    Group,
+    MailStore,
+    MigrationStatus,
+    StoreMigration,
+    User,
+    UserRole,
+)
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import verify_password
 from mailfallback.services.audit_service import log_action
@@ -45,6 +54,8 @@ from mailfallback.services.user_service import (
     list_users,
     update_user,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ui"])
 
@@ -269,8 +280,23 @@ async def admin_cancel_migration(
 
     target = db.query(User).filter(User.id == target_user_id).first()
     if target and target.migrating:
-        target.migrating = False
-        db.commit()
+        active = (
+            db.query(StoreMigration)
+            .filter(
+                StoreMigration.user_id == target_user_id,
+                StoreMigration.status.in_(
+                    [MigrationStatus.pending, MigrationStatus.copying, MigrationStatus.verifying]
+                ),
+            )
+            .first()
+        )
+        if active:
+            from mailfallback.services.migration_service import request_migration_cancel
+
+            request_migration_cancel(active.id)
+        else:
+            target.migrating = False
+            db.commit()
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -326,7 +352,9 @@ async def admin_set_allowed_stores(
         return RedirectResponse("/", status_code=303)
     form = await request.form()
     store_ids = form.getlist("store_ids")
-    set_allowed_stores(db, target_user_id, store_ids)
+    error = set_allowed_stores(db, target_user_id, store_ids)
+    if error:
+        logger.warning("set_allowed_stores refused for %s: %s", target_user_id, error)
     return RedirectResponse("/admin/users", status_code=303)
 
 

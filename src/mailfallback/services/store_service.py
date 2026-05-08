@@ -118,15 +118,19 @@ def get_allowed_stores(db: Session, user: User) -> list[MailStore]:
     return [s for s in user.allowed_stores if s.enabled]
 
 
-def set_allowed_stores(db: Session, user_id: str, store_ids: list[str]) -> None:
+def set_allowed_stores(db: Session, user_id: str, store_ids: list[str]) -> str | None:
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        return
+        return None
+    if user.migrating:
+        return "Cannot change stores while migration is in progress"
     stores = db.query(MailStore).filter(MailStore.id.in_(store_ids)).all()
+    new_ids = {s.id for s in stores}
+    if user.store_id not in new_ids and stores:
+        return "Cannot remove the user's current home store — migrate the user first"
     user.allowed_stores = stores
-    if user.store_id not in {s.id for s in stores} and stores:
-        user.store_id = stores[0].id
     db.commit()
+    return None
 
 
 def get_selectable_stores(db: Session, user: User) -> list[MailStore] | None:

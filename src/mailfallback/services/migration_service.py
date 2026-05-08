@@ -19,6 +19,16 @@ from mailfallback.services.store_service import derive_maildir_path
 
 logger = logging.getLogger(__name__)
 
+_cancel_flags: set[str] = set()
+
+
+def request_migration_cancel(migration_id: str) -> None:
+    _cancel_flags.add(migration_id)
+
+
+class MigrationCancelled(Exception):
+    pass
+
 
 # ---------------------------------------------------------------------------
 # Account migration
@@ -106,6 +116,8 @@ def execute_account_migration(db: Session, migration_id: str) -> None:
             _file_counter = [0]
 
             def on_progress(copied_files: int, copied_bytes: int) -> None:
+                if migration_id in _cancel_flags:
+                    raise MigrationCancelled()
                 migration.copied_files = copied_files
                 migration.copied_bytes = copied_bytes
                 _file_counter[0] += 1
@@ -146,11 +158,19 @@ def execute_account_migration(db: Session, migration_id: str) -> None:
         account.migrating = False
         db.commit()
 
+    except MigrationCancelled:
+        logger.info("Account migration %s cancelled", migration_id)
+        migration.status = MigrationStatus.failed
+        migration.error = "Cancelled by admin"
+        account.migrating = False
+        db.commit()
     except Exception as exc:
         logger.exception("Account migration %s failed", migration_id)
         migration.status = MigrationStatus.failed
         migration.error = str(exc)
         db.commit()
+    finally:
+        _cancel_flags.discard(migration_id)
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +262,8 @@ def execute_home_migration(db: Session, migration_id: str) -> None:
             _file_counter = [0]
 
             def on_progress(copied_files: int, copied_bytes: int) -> None:
+                if migration_id in _cancel_flags:
+                    raise MigrationCancelled()
                 migration.copied_files = copied_files
                 migration.copied_bytes = copied_bytes
                 _file_counter[0] += 1
@@ -281,11 +303,19 @@ def execute_home_migration(db: Session, migration_id: str) -> None:
         user.migrating = False
         db.commit()
 
+    except MigrationCancelled:
+        logger.info("Home migration %s cancelled", migration_id)
+        migration.status = MigrationStatus.failed
+        migration.error = "Cancelled by admin"
+        user.migrating = False
+        db.commit()
     except Exception as exc:
         logger.exception("Home migration %s failed", migration_id)
         migration.status = MigrationStatus.failed
         migration.error = str(exc)
         db.commit()
+    finally:
+        _cancel_flags.discard(migration_id)
 
 
 # ---------------------------------------------------------------------------
