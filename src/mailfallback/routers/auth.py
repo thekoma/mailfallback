@@ -9,8 +9,9 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
-from mailfallback.models import User, UserRole
+from mailfallback.models import Account, AuthType, User, UserRole
 from mailfallback.security import encrypt_credentials
+from mailfallback.services.account_service import is_account_owner
 from mailfallback.services.group_service import sync_sso_groups
 from mailfallback.services.oauth2 import (
     build_google_auth_url,
@@ -48,20 +49,41 @@ def logout(request: Request):
     return {"ok": True}
 
 
+def _verify_oauth_access(request: Request, db: Session, account_id: str) -> Account:
+    user_id = request.session.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = db.query(User).filter(User.id == user_id, User.enabled.is_(True)).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if user.role != UserRole.admin and not is_account_owner(user, account):
+        raise HTTPException(status_code=403, detail="Not authorized for this account")
+    return account
+
+
 @router.get("/auth/google/start")
-def google_oauth_start(request: Request, account_id: str):
+def google_oauth_start(request: Request, account_id: str, db: Session = Depends(get_db)):
+    _verify_oauth_access(request, db, account_id)
     redirect_uri = str(request.url_for("google_oauth_callback"))
     request.session["oauth_account_id"] = account_id
     url = build_google_auth_url(redirect_uri, state=account_id)
     return RedirectResponse(url)
 
 
-def _oauth_failure_redirect(db, account_id, reason="failed"):
-    from mailfallback.models import Account
-
+def _oauth_failure_redirect(db, request, account_id, reason="failed"):
     if account_id:
+        user_id = request.session.get("user_id") if request else None
+        user = db.query(User).filter(User.id == user_id).first() if user_id else None
         account = db.query(Account).filter(Account.id == account_id).first()
-        if account and not account.credentials:
+        if (
+            account
+            and not account.credentials
+            and user
+            and (user.role == UserRole.admin or is_account_owner(user, account))
+        ):
             email = account.email_address
             name = account.name
             db.delete(account)
@@ -84,22 +106,18 @@ async def google_oauth_callback(
     account_id = request.session.pop("oauth_account_id", None)
 
     if error or not code:
-        return _oauth_failure_redirect(db, account_id, reason=error or "denied")
+        return _oauth_failure_redirect(db, request, account_id, reason=error or "denied")
 
     redirect_uri = str(request.url_for("google_oauth_callback"))
     try:
         token = await exchange_google_code(code, redirect_uri)
     except Exception:
-        return _oauth_failure_redirect(db, account_id, reason="token_exchange")
+        return _oauth_failure_redirect(db, request, account_id, reason="token_exchange")
 
     if not account_id:
         raise HTTPException(status_code=400, detail="No account in session")
 
-    from mailfallback.models import Account, AuthType
-
-    account = db.query(Account).filter(Account.id == account_id).first()
-    if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
+    account = _verify_oauth_access(request, db, account_id)
 
     token_data = json.dumps(
         {
@@ -116,7 +134,8 @@ async def google_oauth_callback(
 
 
 @router.get("/auth/microsoft/start")
-def microsoft_oauth_start(request: Request, account_id: str):
+def microsoft_oauth_start(request: Request, account_id: str, db: Session = Depends(get_db)):
+    _verify_oauth_access(request, db, account_id)
     redirect_uri = str(request.url_for("microsoft_oauth_callback"))
     request.session["oauth_account_id"] = account_id
     url = build_microsoft_auth_url(redirect_uri, state=account_id)
@@ -133,22 +152,18 @@ async def microsoft_oauth_callback(
     account_id = request.session.pop("oauth_account_id", None)
 
     if error or not code:
-        return _oauth_failure_redirect(db, account_id, reason=error or "denied")
+        return _oauth_failure_redirect(db, request, account_id, reason=error or "denied")
 
     redirect_uri = str(request.url_for("microsoft_oauth_callback"))
     try:
         token = await exchange_microsoft_code(code, redirect_uri)
     except Exception:
-        return _oauth_failure_redirect(db, account_id, reason="token_exchange")
+        return _oauth_failure_redirect(db, request, account_id, reason="token_exchange")
 
     if not account_id:
         raise HTTPException(status_code=400, detail="No account in session")
 
-    from mailfallback.models import Account, AuthType
-
-    account = db.query(Account).filter(Account.id == account_id).first()
-    if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
+    account = _verify_oauth_access(request, db, account_id)
 
     token_data = json.dumps(
         {
