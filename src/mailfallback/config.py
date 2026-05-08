@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     sync_max_workers: int = 4
     sync_log_dir: str = "/data/logs/sync"
 
+    metrics_api_key: str = ""
     dovecot_enabled: bool = False
     dovecot_api_url: str = "http://dovecot:8080"
     dovecot_api_key: str = ""

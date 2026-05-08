@@ -13,8 +13,13 @@ def test_readyz(client, db_session):
     assert "db" in data["checks"]
 
 
-def test_metrics_endpoint(client, db_session):
+def test_metrics_requires_auth(client, db_session):
     resp = client.get("/metrics")
+    assert resp.status_code == 401
+
+
+def test_metrics_endpoint(client, db_session):
+    resp = client.get("/metrics", headers={"Authorization": "Bearer test-key"})
     assert resp.status_code == 200
     assert "mailfallback_accounts_total" in resp.text
     assert "mailfallback_jobs_pending" in resp.text

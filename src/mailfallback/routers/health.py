@@ -1,5 +1,5 @@
 # src/mailfallback/routers/health.py
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from prometheus_client import CollectorRegistry, Counter, Gauge, generate_latest
 from sqlalchemy import text
@@ -61,7 +61,13 @@ def readyz(db: Session = Depends(get_db)):
 
 
 @router.get("/metrics", response_class=PlainTextResponse)
-def metrics(db: Session = Depends(get_db)):
+def metrics(request: Request, db: Session = Depends(get_db)):
+    from mailfallback.config import settings
+
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    if not settings.metrics_api_key or not token or token != settings.metrics_api_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
     accounts = db.query(Account).all()
     ACCOUNTS_TOTAL.set(len(accounts))
 

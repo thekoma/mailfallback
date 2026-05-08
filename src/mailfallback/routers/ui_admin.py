@@ -81,7 +81,7 @@ async def admin_change_user_password(
 
     form = await request.form()
     new_password = form["new_password"]
-    if len(new_password) < 6:
+    if len(new_password) < 12:
         return RedirectResponse("/admin/users", status_code=303)
 
     if not _admin_pw_verified(request):
