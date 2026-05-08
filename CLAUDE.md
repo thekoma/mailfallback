@@ -57,7 +57,10 @@ src/mailfallback/
 ## Commands
 
 ```bash
-# Run tests
+# Run tests (parallel, ~7s)
+uv run pytest tests/ -n auto -v
+
+# Run tests (sequential, ~47s)
 uv run pytest tests/ -v
 
 # Lint
