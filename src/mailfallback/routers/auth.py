@@ -1,5 +1,6 @@
 # src/mailfallback/routers/auth.py
 import json
+import secrets
 
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -67,9 +68,11 @@ def _verify_oauth_access(request: Request, db: Session, account_id: str) -> Acco
 @router.get("/auth/google/start")
 def google_oauth_start(request: Request, account_id: str, db: Session = Depends(get_db)):
     _verify_oauth_access(request, db, account_id)
+    nonce = secrets.token_urlsafe(32)
     redirect_uri = str(request.url_for("google_oauth_callback"))
     request.session["oauth_account_id"] = account_id
-    url = build_google_auth_url(redirect_uri, state=account_id)
+    request.session["oauth_state"] = nonce
+    url = build_google_auth_url(redirect_uri, state=nonce)
     return RedirectResponse(url)
 
 
@@ -101,12 +104,17 @@ async def google_oauth_callback(
     request: Request,
     code: str | None = None,
     error: str | None = None,
+    state: str | None = None,
     db: Session = Depends(get_db),
 ):
     account_id = request.session.pop("oauth_account_id", None)
+    expected_state = request.session.pop("oauth_state", None)
 
     if error or not code:
         return _oauth_failure_redirect(db, request, account_id, reason=error or "denied")
+
+    if not state or not expected_state or state != expected_state:
+        return _oauth_failure_redirect(db, request, account_id, reason="invalid_state")
 
     redirect_uri = str(request.url_for("google_oauth_callback"))
     try:
@@ -136,9 +144,11 @@ async def google_oauth_callback(
 @router.get("/auth/microsoft/start")
 def microsoft_oauth_start(request: Request, account_id: str, db: Session = Depends(get_db)):
     _verify_oauth_access(request, db, account_id)
+    nonce = secrets.token_urlsafe(32)
     redirect_uri = str(request.url_for("microsoft_oauth_callback"))
     request.session["oauth_account_id"] = account_id
-    url = build_microsoft_auth_url(redirect_uri, state=account_id)
+    request.session["oauth_state"] = nonce
+    url = build_microsoft_auth_url(redirect_uri, state=nonce)
     return RedirectResponse(url)
 
 
@@ -147,12 +157,17 @@ async def microsoft_oauth_callback(
     request: Request,
     code: str | None = None,
     error: str | None = None,
+    state: str | None = None,
     db: Session = Depends(get_db),
 ):
     account_id = request.session.pop("oauth_account_id", None)
+    expected_state = request.session.pop("oauth_state", None)
 
     if error or not code:
         return _oauth_failure_redirect(db, request, account_id, reason=error or "denied")
+
+    if not state or not expected_state or state != expected_state:
+        return _oauth_failure_redirect(db, request, account_id, reason="invalid_state")
 
     redirect_uri = str(request.url_for("microsoft_oauth_callback"))
     try:
@@ -212,7 +227,9 @@ async def oidc_callback(request: Request, db: Session = Depends(get_db)):
     username = userinfo.get("preferred_username") or userinfo.get("email", sub)
     groups = userinfo.get("groups", [])
 
-    role = UserRole.admin if settings.oidc_admin_group in groups else UserRole.user
+    role = UserRole.user
+    if settings.oidc_admin_group and settings.oidc_admin_group in groups:
+        role = UserRole.admin
 
     user = db.query(User).filter(User.oidc_subject == sub).first()
     if not user:
@@ -222,8 +239,20 @@ async def oidc_callback(request: Request, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
     else:
-        user.role = role
-        db.commit()
+        if user.role != role:
+            from mailfallback.services.audit_service import log_action
+
+            log_action(
+                db,
+                user=user,
+                action="user.role_changed",
+                resource_type="user",
+                resource_id=user.id,
+                resource_name=user.username,
+                details={"old_role": user.role.value, "new_role": role.value, "source": "oidc"},
+            )
+            user.role = role
+            db.commit()
 
     sync_sso_groups(db, user, groups)
 
