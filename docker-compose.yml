@@ -48,6 +48,7 @@ services:
       # Then override mfb-ssl.conf: set ssl=yes
     ports:
       - "31143:31143"
+      - "9900:9900"    # OpenMetrics (Prometheus)
       # - "31993:31993"  # IMAPS (uncomment with TLS)
     environment:
       DOVECOT_DB_HOST: db
