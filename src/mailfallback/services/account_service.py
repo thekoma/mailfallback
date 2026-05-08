@@ -104,6 +104,17 @@ def get_account(db: Session, account_id: str, user: User) -> Account | None:
     return None
 
 
+def get_account_for_modify(db: Session, account_id: str, user: User) -> Account | None:
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not account:
+        return None
+    if user.role == UserRole.admin:
+        return account
+    if user in account.owners:
+        return account
+    return None
+
+
 def is_account_owner(user: User, account: Account) -> bool:
     return user in account.owners
 
@@ -125,7 +136,7 @@ _UPDATABLE_ACCOUNT_FIELDS = {
 
 
 def update_account(db: Session, account_id: str, user: User, **kwargs) -> Account | None:
-    account = get_account(db, account_id, user)
+    account = get_account_for_modify(db, account_id, user)
     if not account:
         return None
     if "credentials" in kwargs and kwargs["credentials"] is not None:

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
-from mailfallback.models import Account, Group, MailStore, StoreMigration, User
+from mailfallback.models import Account, Group, MailStore, StoreMigration, User, UserRole
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import verify_password
 from mailfallback.services.audit_service import log_action
@@ -605,8 +605,13 @@ async def admin_edit_group(group_id: str, request: Request, db: Session = Depend
     account_ids = form.getlist("account_ids")
     sso_sync = bool(form.get("sso_sync"))
     update_group(db, group_id, sso_sync=sso_sync)
-    group.members = db.query(User).filter(User.id.in_(member_ids)).all() if member_ids else []
-    set_group_accounts(db, group_id, account_ids)
+    if user.role == UserRole.admin:
+        group.members = db.query(User).filter(User.id.in_(member_ids)).all() if member_ids else []
+        set_group_accounts(db, group_id, account_ids)
+    else:
+        owned_account_ids = {a.id for a in user.accounts}
+        safe_account_ids = [aid for aid in account_ids if aid in owned_account_ids]
+        set_group_accounts(db, group_id, safe_account_ids)
     db.commit()
     log_action(
         db,
