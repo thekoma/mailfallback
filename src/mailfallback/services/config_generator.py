@@ -73,9 +73,12 @@ def _dovecot_acl_file() -> str:
 
 
 def _dovecot_fts_conf(settings: Any) -> str:
-    tika_line = ""
+    tika_block = ""
     if settings.tika_enabled:
-        tika_line = f"\n  fts_tika = {settings.tika_url}/tika/\n"
+        tika_block = f"""
+fts_decoder_driver = tika
+fts_decoder_tika_url = {settings.tika_url}/tika/
+"""
 
     return f"""\
 mail_plugins {{
@@ -89,11 +92,11 @@ fts flatcurve {{
   substring_search = no
   rotate_count = 5000
   rotate_time = 5000s
-  optimize_limit = 10{tika_line}
+  optimize_limit = 10
 }}
 
 fts_search_add_missing = yes
-"""
+{tika_block}"""
 
 
 def _dovecot_auth_conf(settings: Any) -> str:
