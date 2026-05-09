@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Backup Destinations — MFB{% endblock %}
+{% block content %}
+<h2><i data-lucide="cloud-upload" class="icon-xl icon-inline"></i>Backup Destinations</h2>
+
+<p class="text-muted">Manage offsite backup destinations for account maildir data. Each destination is a restic repository backed by S3 or a local path.</p>
+
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Bucket / Path</th>
+            <th>Accounts</th>
+            <th class="text-right">Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for dest in destinations %}
+        <tr>
+            <td>{{ dest.name }}</td>
+            <td>
+                {% if dest.backend_type.value == "s3" %}
+                <span class="badge badge-admin">S3</span>
+                {% else %}
+                <span class="badge">Local</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if dest.backend_type.value == "s3" %}
+                <span class="text-muted text-small">(encrypted)</span>
+                {% else %}
+                <span class="text-muted text-small">(encrypted)</span>
+                {% endif %}
+            </td>
+            <td>{{ dest_account_counts.get(dest.id, 0) }}</td>
+            <td>
+                <div class="actions flex-end">
+                    <form method="post" action="/admin/backup/{{ dest.id }}/delete" class="inline-form"
+                        data-confirm="Delete backup destination {{ dest.name }}?"
+                        onsubmit="return confirm(this.dataset.confirm)">
+                        <button type="submit" class="icon-btn danger"
+                            {% if dest_account_counts.get(dest.id, 0) > 0 %}disabled title="Cannot delete: accounts still reference this destination"{% else %}title="Delete destination"{% endif %}>
+                            <i data-lucide="trash-2" class="icon-md"></i>
+                        </button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+        {% if not destinations %}
+        <tr><td colspan="5" class="text-muted">No backup destinations configured yet.</td></tr>
+        {% endif %}
+    </tbody>
+</table>
+</div>
+
+<hr>
+
+<h3><i data-lucide="plus-circle" class="icon-lg icon-inline"></i>Add Destination</h3>
+<form method="post" action="/admin/backup/new" id="backup-dest-form">
+    <div class="grid-2">
+        <div>
+            <label for="dest_name">Name</label>
+            <input type="text" id="dest_name" name="name" placeholder="Offsite S3 Backup" required>
+        </div>
+        <div>
+            <label for="backend_type">Backend Type</label>
+            <select id="backend_type" name="backend_type" onchange="toggleBackupFields()">
+                <option value="s3">S3</option>
+                <option value="local">Local Path</option>
+            </select>
+        </div>
+    </div>
+
+    <div id="s3-fields">
+        <div class="grid-2">
+            <div>
+                <label for="s3_endpoint">S3 Endpoint</label>
+                <input type="text" id="s3_endpoint" name="s3_endpoint" placeholder="https://s3.amazonaws.com">
+            </div>
+            <div>
+                <label for="s3_bucket">S3 Bucket</label>
+                <input type="text" id="s3_bucket" name="s3_bucket" placeholder="my-backup-bucket">
+            </div>
+            <div>
+                <label for="s3_access_key">Access Key</label>
+                <input type="password" id="s3_access_key" name="s3_access_key" placeholder="AKIA...">
+            </div>
+            <div>
+                <label for="s3_secret_key">Secret Key</label>
+                <input type="password" id="s3_secret_key" name="s3_secret_key" placeholder="secret">
+            </div>
+        </div>
+    </div>
+
+    <div id="local-fields" class="hidden">
+        <div>
+            <label for="local_path">Local Path</label>
+            <input type="text" id="local_path" name="local_path" placeholder="/backups/restic">
+        </div>
+    </div>
+
+    <div class="grid-2-auto mt-05">
+        <div>
+            <label for="restic_password">Restic Password</label>
+            <input type="password" id="restic_password" name="restic_password" placeholder="Repository encryption password" required>
+        </div>
+        <button type="submit" class="icon-btn primary">
+            <i data-lucide="plus-circle" class="icon-md"></i> Add
+        </button>
+    </div>
+</form>
+
+<script>
+function toggleBackupFields() {
+    var bt = document.getElementById('backend_type').value;
+    var s3 = document.getElementById('s3-fields');
+    var local = document.getElementById('local-fields');
+    if (bt === 's3') {
+        s3.classList.remove('hidden');
+        local.classList.add('hidden');
+    } else {
+        s3.classList.add('hidden');
+        local.classList.remove('hidden');
+    }
+}
+</script>
+{% endblock %}

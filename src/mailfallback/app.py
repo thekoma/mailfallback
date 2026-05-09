@@ -23,6 +23,7 @@ from mailfallback.routers import (
     ui_accounts,
     ui_admin,
     ui_audit,
+    ui_backup,
     ui_profile,
     ui_restore,
 )
@@ -183,6 +184,7 @@ def create_app() -> FastAPI:
     app.include_router(ui_accounts.router)
     app.include_router(ui_admin.router)
     app.include_router(ui_audit.router)
+    app.include_router(ui_backup.router)
     app.include_router(ui_profile.router)
     app.include_router(auth.router)
     app.include_router(accounts.router)
