@@ -74,6 +74,25 @@ class TaskStatus(enum.StrEnum):
     failed = "failed"
 
 
+class BackendType(enum.StrEnum):
+    s3 = "s3"
+    local = "local"
+
+
+class RetentionPreset(enum.StrEnum):
+    light = "light"
+    standard = "standard"
+    full = "full"
+    custom = "custom"
+
+
+class BackupStatus(enum.StrEnum):
+    idle = "idle"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+
+
 account_owners = Table(
     "account_owners",
     Base.metadata,
@@ -284,3 +303,43 @@ class BackgroundTask(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     requested_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+
+class BackupDestination(Base):
+    __tablename__ = "backup_destinations"
+
+    id = Column(String, primary_key=True, default=_new_uuid)
+    name = Column(String, nullable=False)
+    backend_type = Column(Enum(BackendType), nullable=False)
+    s3_endpoint = Column(String, nullable=True)
+    s3_bucket = Column(String, nullable=True)
+    s3_access_key = Column(String, nullable=True)
+    s3_secret_key = Column(String, nullable=True)
+    local_path = Column(String, nullable=True)
+    restic_password = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+
+class AccountBackup(Base):
+    __tablename__ = "account_backups"
+
+    id = Column(String, primary_key=True, default=_new_uuid)
+    account_id = Column(
+        String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    destination_id = Column(String, ForeignKey("backup_destinations.id"), nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True, server_default="true")
+    schedule = Column(String, nullable=False, default="0 2 * * *")
+    retention_preset = Column(
+        Enum(RetentionPreset), nullable=False, default=RetentionPreset.standard
+    )
+    keep_daily = Column(Integer, nullable=True)
+    keep_weekly = Column(Integer, nullable=True)
+    keep_monthly = Column(Integer, nullable=True)
+    last_backup_at = Column(DateTime(timezone=True), nullable=True)
+    last_status = Column(Enum(BackupStatus), nullable=False, default=BackupStatus.idle)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    account = relationship("Account", backref="backups")
+    destination = relationship("BackupDestination")
