@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from mailfallback.dependencies import get_db
 from mailfallback.models import JobStatus, UserRole
 from mailfallback.routers.ui import _get_session_user, templates
+from mailfallback.security import decrypt_credentials
 from mailfallback.services.account_service import get_account, get_accounts_for_user
 from mailfallback.services.restore_service import (
     get_restore_job,
@@ -125,6 +126,96 @@ def restore_folders_partial(
         name="partials/restore_folders.html",
         context={"folders": folders},
     )
+
+
+@router.get("/restore/partials/separator-warning", response_class=HTMLResponse)
+def restore_separator_warning_partial(
+    request: Request,
+    target_account_id: str = "",
+    db: Session = Depends(get_db),
+):
+    user = _get_session_user(request, db)
+    if not user or not target_account_id:
+        return HTMLResponse('<div id="separator-warning" class="hidden"></div>')
+
+    account = get_account(db, target_account_id, user)
+    if not account or not account.credentials:
+        return HTMLResponse('<div id="separator-warning" class="hidden"></div>')
+
+    from mailfallback.config import settings
+    from mailfallback.services.imap_check import connect_imap
+
+    separator = None
+    error = None
+    try:
+        creds = decrypt_credentials(account.credentials, settings.secret_key)
+        if account.auth_type.value == "oauth2":
+            import asyncio
+            import json
+
+            token_data = json.loads(creds)
+            refresh_token = token_data.get("refresh_token", "")
+            provider = token_data.get("provider", "google")
+            if refresh_token:
+                from mailfallback.services.oauth2 import (
+                    refresh_google_token,
+                    refresh_microsoft_token,
+                )
+
+                refresh_fn = {"microsoft": refresh_microsoft_token}.get(
+                    provider, refresh_google_token
+                )
+                password = asyncio.run(refresh_fn(refresh_token))
+            else:
+                password = token_data.get("access_token", "")
+        else:
+            password = creds
+
+        conn = connect_imap(
+            account.imap_host,
+            account.imap_port,
+            account.tls_type or "IMAPS",
+            account.imap_user or account.email_address,
+            password,
+            timeout=10,
+        )
+        try:
+            import re
+
+            status, data = conn.list('""', '""')
+            if status == "OK" and data and data[0]:
+                decoded = data[0].decode() if isinstance(data[0], bytes) else data[0]
+                match = re.search(r'"(.)"', decoded)
+                if match:
+                    separator = match.group(1)
+        finally:
+            conn.logout()
+    except Exception:
+        error = "Could not connect to destination server to check folder separator."
+
+    if separator == ".":
+        html = (
+            '<div id="separator-warning" class="warning-box">'
+            '<i data-lucide="triangle-alert" class="icon-sm icon-inline"></i> '
+            "<strong>Dot separator detected.</strong> "
+            "The destination server uses <code>.</code> as its folder hierarchy separator. "
+            "Source folders with dots in their names will be automatically escaped "
+            "(e.g. <code>My.Archive</code> becomes <code>My_Archive</code>)."
+            "<script>lucide.createIcons()</script>"
+            "</div>"
+        )
+    elif error:
+        html = (
+            '<div id="separator-warning" class="info-box">'
+            '<i data-lucide="info" class="icon-sm icon-inline"></i> '
+            f"{error}"
+            "<script>lucide.createIcons()</script>"
+            "</div>"
+        )
+    else:
+        html = '<div id="separator-warning" class="hidden"></div>'
+
+    return HTMLResponse(html)
 
 
 @router.get("/restore/partials/messages", response_class=HTMLResponse)

@@ -32,6 +32,12 @@
     {% endif %}
 </div>
 
+{% if user.role.value == "admin" %}
+<div id="system-status-panel"
+     hx-get="/partials/system-status" hx-trigger="load, every 5s" hx-swap="innerHTML">
+</div>
+{% endif %}
+
 {% if attention %}
 <details open>
     <summary><i data-lucide="alert-triangle" class="icon-md icon-inline"></i><strong>Needs Attention ({{ attention | length }})</strong></summary>

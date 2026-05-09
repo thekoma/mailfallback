@@ -90,14 +90,14 @@
                             {% if account.sync_state.value == 'syncing' %}
                             <a class="dropdown-item dropdown-danger"
                                 hx-post="/api/sync/{{ account.id }}/stop" hx-swap="none"
-                                hx-on::after-request="location.reload()">
+                                hx-on::after-request="startSyncPolling()">
                                 <i data-lucide="square" class="icon-sm"></i> Stop Sync
                             </a>
                             {% else %}
                             <a class="dropdown-item {% if account.migrating or account.suspended or not account.is_authenticated %}dropdown-disabled{% endif %}"
                                 {% if not account.migrating and not account.suspended and account.is_authenticated %}
                                 hx-post="/api/sync/{{ account.id }}" hx-swap="none"
-                                hx-on::after-request="location.reload()"
+                                hx-on::after-request="startSyncPolling()"
                                 {% endif %}>
                                 <i data-lucide="refresh-cw" class="icon-sm"></i> Sync Now
                             </a>
@@ -106,26 +106,26 @@
                             {% if account.enabled %}
                             <a class="dropdown-item"
                                 hx-post="/accounts/{{ account.id }}/toggle-visible" hx-swap="none"
-                                hx-on::after-request="location.reload()">
+                                hx-on::after-request="startSyncPolling()">
                                 <i data-lucide="eye-off" class="icon-sm"></i> Hide
                             </a>
                             {% else %}
                             <a class="dropdown-item"
                                 hx-post="/accounts/{{ account.id }}/toggle-visible" hx-swap="none"
-                                hx-on::after-request="location.reload()">
+                                hx-on::after-request="startSyncPolling()">
                                 <i data-lucide="eye" class="icon-sm"></i> Show
                             </a>
                             {% endif %}
                             {% if account.suspended %}
                             <a class="dropdown-item"
                                 hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
-                                hx-on::after-request="location.reload()">
+                                hx-on::after-request="startSyncPolling()">
                                 <i data-lucide="play-circle" class="icon-sm"></i> Resume
                             </a>
                             {% else %}
                             <a class="dropdown-item"
                                 hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
-                                hx-on::after-request="location.reload()">
+                                hx-on::after-request="startSyncPolling()">
                                 <i data-lucide="pause-circle" class="icon-sm"></i> Suspend
                             </a>
                             {% endif %}

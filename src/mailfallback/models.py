@@ -67,6 +67,13 @@ class RestoreMode(enum.StrEnum):
     selection = "selection"
 
 
+class TaskStatus(enum.StrEnum):
+    pending = "pending"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+
+
 account_owners = Table(
     "account_owners",
     Base.metadata,
@@ -262,3 +269,18 @@ class RestoreJob(Base):
     source_account = relationship("Account", foreign_keys=[source_account_id])
     target_account = relationship("Account", foreign_keys=[target_account_id])
     requester = relationship("User", foreign_keys=[requested_by])
+
+
+class BackgroundTask(Base):
+    __tablename__ = "background_tasks"
+
+    id = Column(String, primary_key=True, default=_new_uuid)
+    task_type = Column(String, nullable=False, index=True)
+    status = Column(Enum(TaskStatus), nullable=False, default=TaskStatus.pending)
+    progress_current = Column(Integer, nullable=False, default=0, server_default="0")
+    progress_total = Column(Integer, nullable=False, default=0, server_default="0")
+    details = Column(JSON, nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    requested_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)

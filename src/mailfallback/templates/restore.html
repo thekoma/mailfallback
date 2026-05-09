@@ -20,7 +20,11 @@
         </label>
         <label>
             Destination account
-            <select name="target_account_id" id="target-account">
+            <select name="target_account_id" id="target-account"
+                    hx-get="/restore/partials/separator-warning"
+                    hx-target="#separator-warning"
+                    hx-include="[name='target_account_id']"
+                    hx-trigger="change">
                 <option value="">Select destination…</option>
                 {% for acct in accounts %}
                 <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address }})</option>
@@ -142,6 +146,7 @@
                 <input type="text" id="custom-prefix" placeholder="e.g. Backup/2024">
             </label>
         </div>
+        <div id="separator-warning" class="hidden"></div>
     </fieldset>
 
     <button type="button" id="start-restore-btn" onclick="executeRestore()">

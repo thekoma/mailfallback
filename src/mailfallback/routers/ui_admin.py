@@ -405,8 +405,77 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
             "scheduler_running": scheduler_running,
             "scheduler_jobs": scheduler_jobs,
             "debug_mode": settings.debug,
+            "dovecot_enabled": settings.dovecot_enabled,
+            "dovecot_status": request.query_params.get("dovecot_status"),
+            "dovecot_error": request.query_params.get("dovecot_error"),
+            "fts_status": request.query_params.get("fts_status"),
+            "resync_status": request.query_params.get("resync_status"),
         },
     )
+
+
+# --- Dovecot management ---
+
+
+@router.post("/admin/dovecot/health-check")
+async def admin_dovecot_health(request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    from mailfallback.services.dovecot_manager import check_dovecot_health
+
+    result = check_dovecot_health()
+    log_action(
+        db,
+        user=user,
+        action="dovecot.health_check",
+        resource_type="system",
+        ip_address=request.client.host if request.client else None,
+        details=result,
+    )
+    error = None if result["ok"] else result.get("error", "Health check failed")
+    return RedirectResponse(
+        f"/settings?dovecot_status={'ok' if result['ok'] else 'error'}&dovecot_error={error or ''}",
+        status_code=303,
+    )
+
+
+@router.post("/admin/dovecot/fts-reindex")
+async def admin_fts_reindex(request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    from mailfallback.services.background_tasks import submit_fts_reindex
+
+    task = submit_fts_reindex(db, user.id)
+    log_action(
+        db,
+        user=user,
+        action="dovecot.fts_reindex",
+        resource_type="system",
+        ip_address=request.client.host if request.client else None,
+    )
+    status = "started" if task else "already_running"
+    return RedirectResponse(f"/settings?fts_status={status}", status_code=303)
+
+
+@router.post("/admin/dovecot/force-resync")
+async def admin_force_resync(request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    from mailfallback.services.background_tasks import submit_force_resync
+
+    task = submit_force_resync(db, user.id)
+    log_action(
+        db,
+        user=user,
+        action="dovecot.force_resync",
+        resource_type="system",
+        ip_address=request.client.host if request.client else None,
+    )
+    status = "started" if task else "already_running"
+    return RedirectResponse(f"/settings?resync_status={status}", status_code=303)
 
 
 # --- Store management ---

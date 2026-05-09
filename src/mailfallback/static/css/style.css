@@ -318,6 +318,19 @@ button.icon-btn.success, a.icon-btn.success { color: var(--mfb-success-color); b
     padding: 1rem;
     border-radius: 0.375rem;
 }
+.warning-box {
+    background: var(--mfb-badge-warning-bg);
+    border: 1px solid var(--mfb-badge-warning-border);
+    color: var(--mfb-badge-warning-color);
+    padding: 1rem;
+    border-radius: 0.375rem;
+}
+.warning-box code {
+    background: rgba(0, 0, 0, 0.1);
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-size: 0.875em;
+}
 
 /* === Compact forms (admin add forms) === */
 .grid-3-auto, .grid-2-auto { align-items: end; }
@@ -621,3 +634,24 @@ a.stat-card:hover { border-color: var(--pico-primary); transform: translateY(-2p
 .resize-handle:hover { background: var(--mfb-sync-color); opacity: 0.4; }
 table.resizable { table-layout: fixed; }
 table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellipsis; }
+
+/* === System Status Panel === */
+.status-strip { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 0.75rem; }
+.status-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 12px; border-radius: 6px; font-size: 0.82rem;
+    cursor: pointer; border: 1px solid transparent; transition: border-color 0.15s;
+    user-select: none;
+}
+.status-badge:hover { filter: brightness(1.15); }
+.status-ok { background: var(--mfb-badge-idle-bg); color: var(--mfb-badge-idle-color); border-color: var(--mfb-badge-idle-border); }
+.status-error { background: var(--mfb-badge-error-bg); color: var(--mfb-badge-error-color); border-color: var(--mfb-badge-error-border); }
+.status-active { background: var(--mfb-badge-warning-bg); color: var(--mfb-badge-warning-color); border-color: var(--mfb-badge-warning-border); }
+.status-neutral { background: var(--mfb-badge-neutral-bg); color: var(--mfb-badge-neutral-color); border-color: var(--mfb-badge-neutral-border); }
+.status-detail {
+    background: var(--mfb-badge-neutral-bg); border: 1px solid var(--mfb-badge-neutral-border);
+    border-radius: 6px; padding: 10px 12px; margin-bottom: 0.75rem; font-size: 0.82rem;
+}
+.status-detail-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.progress-bar-wrap { background: var(--mfb-badge-neutral-border); border-radius: 4px; height: 8px; overflow: hidden; }
+.progress-bar { height: 100%; border-radius: 4px; background: var(--mfb-badge-warning-color); transition: width 0.3s; }
