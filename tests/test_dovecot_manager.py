@@ -7,7 +7,6 @@ from mailfallback.services.dovecot_manager import (
 
 
 def test_reload_dovecot_success(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", True)
     monkeypatch.setattr(
         "mailfallback.services.dovecot_manager.settings.dovecot_api_url", "http://dovecot:8080"
     )
@@ -34,7 +33,6 @@ def test_reload_dovecot_success(monkeypatch):
 
 
 def test_reload_dovecot_failure(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", True)
     monkeypatch.setattr(
         "mailfallback.services.dovecot_manager.settings.dovecot_api_url", "http://dovecot:8080"
     )
@@ -50,7 +48,7 @@ def test_reload_dovecot_failure(monkeypatch):
 
 
 def test_reload_dovecot_disabled(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", False)
+    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_api_url", "")
 
     with patch("mailfallback.services.dovecot_manager.httpx.post") as mock_post:
         result = reload_dovecot()
@@ -60,7 +58,6 @@ def test_reload_dovecot_disabled(monkeypatch):
 
 
 def test_get_mailbox_stats_success(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", True)
     monkeypatch.setattr(
         "mailfallback.services.dovecot_manager.settings.dovecot_api_url", "http://dovecot:8080"
     )
@@ -89,12 +86,11 @@ def test_get_mailbox_stats_success(monkeypatch):
 
 
 def test_get_mailbox_stats_disabled(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", False)
+    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_api_url", "")
     assert get_mailbox_stats("testuser") is None
 
 
 def test_get_mailbox_stats_failure(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", True)
     monkeypatch.setattr(
         "mailfallback.services.dovecot_manager.settings.dovecot_api_url", "http://dovecot:8080"
     )

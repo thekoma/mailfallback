@@ -31,12 +31,25 @@ class Settings(BaseSettings):
     sync_log_dir: str = "/data/logs/sync"
 
     metrics_api_key: str = ""
-    dovecot_enabled: bool = False
+
     dovecot_api_url: str = "http://dovecot:8080"
     dovecot_api_key: str = ""
     dovecot_imap_host: str = "dovecot"
     dovecot_imap_port: int = 31143
+
+    webmail_enabled: bool = False
     webmail_url: str = ""
+
+    tika_enabled: bool = False
+    tika_url: str = "http://tika:9998"
+
+    confs_path: str = "/confs"
+
+    db_host: str = "db"
+    db_port: int = 5432
+    db_name: str = "mailfallback"
+    db_user: str = "mailfallback"
+    db_password: str = "mailfallback"
 
 
 settings = Settings()

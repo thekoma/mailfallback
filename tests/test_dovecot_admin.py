@@ -81,9 +81,8 @@ def test_dovecot_health_admin_error(client, db_session, default_store):
     assert "dovecot_status=error" in resp.headers["location"]
 
 
-def test_settings_page_shows_dovecot_section(client, db_session, default_store, monkeypatch):
+def test_settings_page_shows_dovecot_section(client, db_session, default_store):
     _login_admin(client, db_session, default_store)
-    monkeypatch.setattr("mailfallback.routers.ui_admin.settings.dovecot_enabled", True)
     resp = client.get("/settings")
     assert resp.status_code == 200
     assert "Dovecot Management" in resp.text
@@ -92,26 +91,17 @@ def test_settings_page_shows_dovecot_section(client, db_session, default_store, 
     assert "FTS Reindex" in resp.text
 
 
-def test_settings_page_hides_dovecot_when_disabled(client, db_session, default_store, monkeypatch):
-    _login_admin(client, db_session, default_store)
-    monkeypatch.setattr("mailfallback.routers.ui_admin.settings.dovecot_enabled", False)
-    resp = client.get("/settings")
-    assert resp.status_code == 200
-    assert "Dovecot Management" not in resp.text
-
-
 # --- Service function tests ---
 
 
 def test_check_dovecot_health_disabled(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", False)
+    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_api_url", "")
     result = check_dovecot_health()
     assert result["ok"] is False
     assert "not configured" in result["error"]
 
 
 def test_check_dovecot_health_success(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", True)
     monkeypatch.setattr(
         "mailfallback.services.dovecot_manager.settings.dovecot_api_url", "http://dovecot:8080"
     )
@@ -127,7 +117,6 @@ def test_check_dovecot_health_success(monkeypatch):
 
 
 def test_check_dovecot_health_failure(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", True)
     monkeypatch.setattr(
         "mailfallback.services.dovecot_manager.settings.dovecot_api_url", "http://dovecot:8080"
     )
@@ -144,13 +133,12 @@ def test_check_dovecot_health_failure(monkeypatch):
 
 
 def test_fts_rescan_disabled(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", False)
+    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_api_url", "")
     result = fts_rescan("testuser")
     assert result["ok"] is False
 
 
 def test_fts_rescan_success(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", True)
     monkeypatch.setattr(
         "mailfallback.services.dovecot_manager.settings.dovecot_api_url", "http://dovecot:8080"
     )
@@ -167,7 +155,6 @@ def test_fts_rescan_success(monkeypatch):
 
 
 def test_fts_rescan_error_response(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", True)
     monkeypatch.setattr(
         "mailfallback.services.dovecot_manager.settings.dovecot_api_url", "http://dovecot:8080"
     )
@@ -185,13 +172,12 @@ def test_fts_rescan_error_response(monkeypatch):
 
 
 def test_force_resync_disabled(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", False)
+    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_api_url", "")
     result = force_resync("testuser")
     assert result["ok"] is False
 
 
 def test_force_resync_success(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", True)
     monkeypatch.setattr(
         "mailfallback.services.dovecot_manager.settings.dovecot_api_url", "http://dovecot:8080"
     )
@@ -208,7 +194,6 @@ def test_force_resync_success(monkeypatch):
 
 
 def test_force_resync_failure(monkeypatch):
-    monkeypatch.setattr("mailfallback.services.dovecot_manager.settings.dovecot_enabled", True)
     monkeypatch.setattr(
         "mailfallback.services.dovecot_manager.settings.dovecot_api_url", "http://dovecot:8080"
     )
