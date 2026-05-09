@@ -74,7 +74,7 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
         "user_groups": user_groups,
     }
 
-    if not user.password_hash or not verify_password(current, user.password_hash):
+    if user.password_hash and not verify_password(current, user.password_hash):
         return templates.TemplateResponse(
             request=request,
             name="profile.html",

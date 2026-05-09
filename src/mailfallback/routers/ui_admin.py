@@ -91,7 +91,10 @@ async def admin_change_user_password(
             return RedirectResponse("/admin/users?error=invalid_admin_password", status_code=303)
         request.session["admin_pw_verified_at"] = time.time()
 
-    change_password(db, target_user_id, new_password)
+    try:
+        change_password(db, target_user_id, new_password)
+    except ValueError as e:
+        return RedirectResponse(f"/admin/users?error={e}", status_code=303)
     target = db.query(User).filter(User.id == target_user_id).first()
     log_action(
         db,
