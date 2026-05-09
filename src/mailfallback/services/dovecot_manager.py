@@ -90,6 +90,24 @@ def force_resync(username: str, mailbox: str = "*") -> dict:
         return {"ok": False, "error": str(e)}
 
 
+def index_user(username: str, mailbox: str = "*") -> dict:
+    if not settings.dovecot_api_url:
+        return {"ok": False, "error": "Dovecot API not configured"}
+    try:
+        url = f"{settings.dovecot_api_url}/doveadm/v1"
+        resp = httpx.post(
+            url,
+            json=[["index", {"user": username, "mailboxMask": mailbox}, "idx1"]],
+            auth=_doveadm_auth(),
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return {"ok": True}
+    except Exception as e:
+        logger.warning("Index failed for %s", username, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
 _health_cache: dict = {"ok": None, "error": None, "checked_at": 0.0}
 _HEALTH_TTL = 30
 

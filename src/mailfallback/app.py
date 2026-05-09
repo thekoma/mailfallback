@@ -28,7 +28,11 @@ from mailfallback.routers import (
 )
 from mailfallback.routers.restore import browse_router as restore_browse_router
 from mailfallback.routers.restore import router as restore_router
-from mailfallback.services.config_generator import generate_all_configs
+from mailfallback.services.config_generator import (
+    clear_fts_reindex_flag,
+    generate_all_configs,
+    needs_fts_reindex,
+)
 from mailfallback.services.migration_service import (
     execute_account_migration,
     execute_home_migration,
@@ -53,6 +57,12 @@ async def lifespan(app: FastAPI):
         _cleanup_temp_restore_users(db)
         start_scheduler(db)
         _resume_migrations(db)
+        if needs_fts_reindex(settings):
+            from mailfallback.services.background_tasks import submit_fts_reindex
+
+            logger.info("FTS config changed — triggering automatic reindex")
+            submit_fts_reindex(db, None)
+            clear_fts_reindex_flag(settings)
     finally:
         db.close()
     yield

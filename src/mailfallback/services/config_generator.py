@@ -321,10 +321,43 @@ _DOVECOT_FILES: list[tuple[str, Any]] = [
 ]
 
 
+def _check_fts_config_changed(settings: Any) -> bool:
+    """Return True if FTS config changed (Tika toggled) since last boot."""
+    marker = Path(settings.confs_path) / "dovecot" / ".fts-state"
+    current = "tika" if settings.tika_enabled else "flatcurve"
+    if marker.exists():
+        previous = marker.read_text().strip()
+        if previous == current:
+            return False
+        logger.info("FTS config changed: %s -> %s", previous, current)
+    marker.write_text(current)
+    return True
+
+
+def _purge_fts_indexes(settings: Any) -> None:
+    """Delete all FTS flatcurve indexes to force rebuild."""
+    import shutil
+
+    mailboxes_dirs = [settings.bootstrap_store_path]
+    count = 0
+    for base_dir in mailboxes_dirs:
+        base = Path(base_dir)
+        if not base.exists():
+            continue
+        for idx_dir in base.rglob("fts-flatcurve"):
+            if idx_dir.is_dir():
+                shutil.rmtree(idx_dir)
+                count += 1
+    if count:
+        logger.info("Purged %d FTS indexes for rebuild with new config", count)
+
+
 def generate_dovecot_config(settings: Any) -> list[Path]:
     """Write all Dovecot config files to ``{confs_path}/dovecot/``."""
     base = Path(settings.confs_path) / "dovecot"
     base.mkdir(parents=True, exist_ok=True)
+
+    fts_changed = _check_fts_config_changed(settings)
 
     written: list[Path] = []
 
@@ -345,6 +378,11 @@ def generate_dovecot_config(settings: Any) -> list[Path]:
         written.append(dest)
         logger.info("Wrote %s", dest)
 
+    if fts_changed:
+        _purge_fts_indexes(settings)
+        reindex_marker = base / ".fts-reindex-needed"
+        reindex_marker.write_text("purged")
+
     return written
 
 
@@ -357,6 +395,17 @@ def generate_webmail_config(settings: Any) -> list[Path]:
     dest.write_text(_webmail_custom_php(settings))
     logger.info("Wrote %s", dest)
     return [dest]
+
+
+def needs_fts_reindex(settings: Any) -> bool:
+    """Check if FTS indexes were purged and need rebuilding."""
+    marker = Path(settings.confs_path) / "dovecot" / ".fts-reindex-needed"
+    return marker.exists()
+
+
+def clear_fts_reindex_flag(settings: Any) -> None:
+    marker = Path(settings.confs_path) / "dovecot" / ".fts-reindex-needed"
+    marker.unlink(missing_ok=True)
 
 
 def generate_all_configs(settings: Any) -> list[Path]:

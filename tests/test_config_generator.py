@@ -33,6 +33,7 @@ class FakeSettings:
     webmail_oauth_auth_uri = ""
     webmail_oauth_token_uri = ""
     webmail_oauth_identity_uri = ""
+    bootstrap_store_path = "/data/mailboxes"
 
 
 def _make_settings(tmp_path: Path, **overrides) -> FakeSettings:
