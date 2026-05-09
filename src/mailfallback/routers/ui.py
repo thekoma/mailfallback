@@ -103,6 +103,7 @@ templates.env.filters["time_ago"] = _time_ago
 templates.env.filters["time_ago_class"] = _time_ago_class
 templates.env.filters["number"] = _number_format
 templates.env.globals["webmail_url"] = settings.webmail_url
+templates.env.globals["webmail_enabled"] = settings.webmail_enabled
 
 
 def _get_theme(request: Request) -> str:
