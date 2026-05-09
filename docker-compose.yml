@@ -58,9 +58,7 @@ services:
         condition: service_healthy
 
   webmail:
-    build:
-      context: .
-      dockerfile: docker/roundcube/Dockerfile
+    image: roundcube/roundcubemail:latest
     ports:
       - "8001:80"
     environment:
