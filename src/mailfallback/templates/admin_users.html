@@ -10,6 +10,9 @@
 {% elif error %}
 <script>document.addEventListener('DOMContentLoaded', function() { showToast('{{ error }}', 'error'); });</script>
 {% endif %}
+{% if success %}
+<script>document.addEventListener('DOMContentLoaded', function() { showToast('{{ success }}', 'success'); });</script>
+{% endif %}
 
 <div class="table-wrap">
 <table>
