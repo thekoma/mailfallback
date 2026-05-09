@@ -258,6 +258,17 @@ def system_status_partial(request: Request, db: Session = Depends(get_db)):
         .all()
     )
 
+    has_activity = (
+        dovecot.get("ok") is False
+        or fts.get("status") == "running"
+        or resync.get("status") == "running"
+        or syncing_count > 0
+        or error_accounts
+        or active_restores
+    )
+    if not has_activity:
+        return HTMLResponse("")
+
     return templates.TemplateResponse(
         request=request,
         name="partials/system_status.html",

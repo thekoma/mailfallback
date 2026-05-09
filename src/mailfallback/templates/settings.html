@@ -50,7 +50,7 @@
 {% if fts_status %}
 <p>
     {% if fts_status == 'started' %}
-    <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i> FTS reindex started — check dashboard for progress</span>
+    <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i> FTS reindex started</span>
     {% elif fts_status == 'already_running' %}
     <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i> FTS reindex already running</span>
     {% endif %}
@@ -59,7 +59,7 @@
 {% if resync_status %}
 <p>
     {% if resync_status == 'started' %}
-    <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i> Force resync started — check dashboard for progress</span>
+    <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i> Force resync started</span>
     {% elif resync_status == 'already_running' %}
     <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i> Force resync already running</span>
     {% endif %}

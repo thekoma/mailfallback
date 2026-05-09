@@ -635,8 +635,11 @@ a.stat-card:hover { border-color: var(--pico-primary); transform: translateY(-2p
 table.resizable { table-layout: fixed; }
 table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellipsis; }
 
-/* === System Status Panel === */
-.status-strip { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 0.75rem; }
+/* === Global Status Bar === */
+#global-status-bar:empty { display: none; }
+#global-status-bar { position: sticky; top: 0; z-index: 900; padding: 6px 16px; margin-left: 220px; }
+@media (max-width: 768px) { #global-status-bar { margin-left: 0; } }
+.status-strip { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .status-badge {
     display: inline-flex; align-items: center; gap: 5px;
     padding: 5px 12px; border-radius: 6px; font-size: 0.82rem;
@@ -650,7 +653,7 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 .status-neutral { background: var(--mfb-badge-neutral-bg); color: var(--mfb-badge-neutral-color); border-color: var(--mfb-badge-neutral-border); }
 .status-detail {
     background: var(--mfb-badge-neutral-bg); border: 1px solid var(--mfb-badge-neutral-border);
-    border-radius: 6px; padding: 10px 12px; margin-bottom: 0.75rem; font-size: 0.82rem;
+    border-radius: 6px; padding: 10px 12px; margin-top: 6px; font-size: 0.82rem;
 }
 .status-detail-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 .progress-bar-wrap { background: var(--mfb-badge-neutral-border); border-radius: 4px; height: 8px; overflow: hidden; }
