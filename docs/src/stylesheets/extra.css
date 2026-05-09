@@ -1,0 +1,5 @@
+/* Prevent variable names from wrapping mid-word in config tables */
+.md-typeset table:not([class]) td:first-child code,
+.md-typeset table:not([class]) td:first-child {
+  white-space: nowrap;
+}
