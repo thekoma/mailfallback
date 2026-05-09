@@ -105,7 +105,10 @@ async def admin_change_user_password(
         resource_name=target.username if target else target_user_id,
         ip_address=request.client.host if request.client else None,
     )
-    return RedirectResponse("/admin/users", status_code=303)
+    target_name = target.username if target else target_user_id
+    return RedirectResponse(
+        f"/admin/users?success=Password+updated+for+{target_name}", status_code=303
+    )
 
 
 @router.post("/admin/users/{target_user_id}/edit")
@@ -320,6 +323,7 @@ def admin_users_page(request: Request, db: Session = Depends(get_db)):
     users = list_users(db)
     stores = list_stores(db)
     error = request.query_params.get("error")
+    success = request.query_params.get("success")
     return templates.TemplateResponse(
         request=request,
         name="admin_users.html",
@@ -329,6 +333,7 @@ def admin_users_page(request: Request, db: Session = Depends(get_db)):
             "stores": stores,
             "admin_verified": _admin_pw_verified(request),
             "error": error,
+            "success": success,
         },
     )
 
