@@ -249,7 +249,7 @@ def system_status_partial(request: Request, db: Session = Depends(get_db)):
     if not user or user.role.value != "admin":
         return HTMLResponse("")
 
-    from mailfallback.models import JobStatus, RestoreJob, SyncJob
+    from mailfallback.models import AccountBackup, BackupStatus, JobStatus, RestoreJob, SyncJob
     from mailfallback.services.background_tasks import get_latest_task
     from mailfallback.services.dovecot_manager import get_cached_health
 
@@ -266,6 +266,10 @@ def system_status_partial(request: Request, db: Session = Depends(get_db)):
         .all()
     )
 
+    active_backups = (
+        db.query(AccountBackup).filter(AccountBackup.last_status == BackupStatus.running).count()
+    )
+
     has_activity = (
         dovecot.get("ok") is False
         or fts.get("status") == "running"
@@ -273,6 +277,7 @@ def system_status_partial(request: Request, db: Session = Depends(get_db)):
         or syncing_count > 0
         or error_accounts
         or active_restores
+        or active_backups > 0
     )
     if not has_activity:
         return HTMLResponse("")
@@ -287,6 +292,7 @@ def system_status_partial(request: Request, db: Session = Depends(get_db)):
             "syncing_count": syncing_count,
             "error_accounts": error_accounts,
             "active_restores": active_restores,
+            "active_backups": active_backups,
         },
     )
 
