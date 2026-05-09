@@ -13,6 +13,14 @@ services:
       timeout: 3s
       retries: 5
 
+  init-confs:
+    image: busybox:latest
+    volumes:
+      - dovecot_confd:/confs/dovecot
+      - webmail_conf:/confs/webmail
+    command: chown -R 1000:1000 /confs
+    restart: "no"
+
   mailfallback:
     build:
       context: .
@@ -30,6 +38,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      init-confs:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 5s
