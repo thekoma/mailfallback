@@ -203,6 +203,120 @@ This tells Dovecot's FTS engine to send attachments to Tika for text extraction 
 
 The Tika URL is configurable via `MAILFALLBACK_TIKA_URL` (default: `http://tika:9998`).
 
+## Environment Variable Strategy
+
+### Principle
+
+`.env` in the project root is the single source of truth. Docker Compose reads it automatically for `${}` interpolation in the YAML. Only MFB receives the full `.env` as container environment (`env_file: .env`). All other services receive only the minimum env vars they need via explicit `environment:` in compose — values interpolated from the same `.env`.
+
+### Per-Service Breakdown
+
+| Service | `env_file` | `environment:` vars | Why |
+|---------|-----------|---------------------|-----|
+| **db** | no | `POSTGRES_USER/PASSWORD/DB` (from `${DB_*}`) | PostgreSQL bootstrap requires these at init |
+| **MFB** | `.env` | `MAILFALLBACK_DATABASE_URL` (from `${DB_*}`) | Control plane, needs all settings |
+| **Dovecot** | no | `DOVEADM_PASSWORD` (from `${MAILFALLBACK_DOVECOT_API_KEY}`) | Only env var the stock `dovecot.conf` reads via `$ENV:`. Everything else is in generated config files |
+| **Roundcube** | no | `ROUNDCUBEMAIL_DB_*` (from `${DB_*}`), `ROUNDCUBEMAIL_DEFAULT_HOST/PORT` | Entrypoint script uses these at boot to generate `config.inc.php` and wait for DB. Cannot be replaced by mounted config. OAuth vars go in `custom.php` instead |
+| **Tika** | no | none | Stateless, zero config |
+
+### What Moves from Env to Generated Config
+
+**Dovecot** (7 env vars eliminated):
+- `DOVECOT_DB_HOST/PORT/NAME/USER/PASSWORD` → embedded in generated `mfb-auth.conf`
+- `DOVECOT_OAUTH2_USERINFO_URL` → embedded in generated `mfb-auth.conf`
+- `MFB_USERDB_URL` → embedded in generated `mfb-lua-userdb.lua`
+
+Only `DOVEADM_PASSWORD` remains because the base `dovecot.conf` (inside the official image, not overridable via `conf.d/`) references `$ENV:DOVEADM_PASSWORD`.
+
+**Roundcube** (OAuth vars eliminated):
+- `ROUNDCUBE_OAUTH_CLIENT_ID/SECRET/AUTH_URI/TOKEN_URI/IDENTITY_URI` → embedded in generated `custom.php`
+
+DB vars (`ROUNDCUBEMAIL_DB_*`) and IMAP host/port stay as env vars because Roundcube's entrypoint script processes them before PHP starts.
+
+### Resulting `.env`
+
+```env
+# Database (shared by db, MFB, Roundcube via compose interpolation)
+DB_USER=mailfallback
+DB_PASSWORD=mailfallback
+DB_NAME=mailfallback
+
+# MFB core
+MAILFALLBACK_SECRET_KEY=change-me
+MAILFALLBACK_SESSION_SECRET=change-me
+MAILFALLBACK_DOVECOT_API_KEY=mfb-dovecot-api-key-change-me
+
+# Modules
+MAILFALLBACK_WEBMAIL_ENABLED=true
+MAILFALLBACK_TIKA_ENABLED=false
+
+# OIDC (optional)
+MAILFALLBACK_OIDC_ENABLED=false
+# MAILFALLBACK_OIDC_CLIENT_ID=...
+# MAILFALLBACK_OIDC_CLIENT_SECRET=...
+# MAILFALLBACK_OIDC_DISCOVERY_URL=...
+
+# OAuth providers (optional)
+# MAILFALLBACK_GOOGLE_CLIENT_ID=...
+# MAILFALLBACK_GOOGLE_CLIENT_SECRET=...
+# MAILFALLBACK_MICROSOFT_CLIENT_ID=...
+# MAILFALLBACK_MICROSOFT_CLIENT_SECRET=...
+```
+
+### Resulting Compose
+
+```yaml
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${DB_USER:-mailfallback}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-mailfallback}
+      POSTGRES_DB: ${DB_NAME:-mailfallback}
+
+  mailfallback:
+    env_file: .env
+    environment:
+      MAILFALLBACK_DATABASE_URL: postgresql://${DB_USER:-mailfallback}:${DB_PASSWORD:-mailfallback}@db:5432/${DB_NAME:-mailfallback}
+    volumes:
+      - dovecot_confd:/confs/dovecot
+      - webmail_conf:/confs/webmail
+      - maildirs:/data/mailboxes
+      - maildirs2:/data/mailboxes2
+
+  dovecot:
+    image: dovecot/dovecot:latest-2.4
+    environment:
+      DOVEADM_PASSWORD: ${MAILFALLBACK_DOVECOT_API_KEY:-mfb-dovecot-api-key-change-me}
+    volumes:
+      - dovecot_confd:/etc/dovecot/conf.d:ro
+      - maildirs:/data/mailboxes
+      - maildirs2:/data/mailboxes2
+
+  roundcube:
+    image: roundcube/roundcubemail:latest
+    environment:
+      ROUNDCUBEMAIL_DB_TYPE: pgsql
+      ROUNDCUBEMAIL_DB_HOST: db
+      ROUNDCUBEMAIL_DB_PORT: "5432"
+      ROUNDCUBEMAIL_DB_USER: ${DB_USER:-mailfallback}
+      ROUNDCUBEMAIL_DB_PASSWORD: ${DB_PASSWORD:-mailfallback}
+      ROUNDCUBEMAIL_DB_NAME: ${DB_NAME:-mailfallback}
+      ROUNDCUBEMAIL_DEFAULT_HOST: dovecot
+      ROUNDCUBEMAIL_DEFAULT_PORT: "31143"
+      ROUNDCUBEMAIL_SKIN: elastic
+      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,subscriptions_option
+    volumes:
+      - webmail_conf:/var/roundcube/config:ro
+    profiles:
+      - webmail
+
+  tika:
+    image: apache/tika:latest
+    profiles:
+      - tika
+```
+
 ## Testing
 
 - Unit tests for `config_generator.py`: verify each generated config contains expected values, respects feature flags
