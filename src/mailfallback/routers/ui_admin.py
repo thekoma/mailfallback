@@ -85,7 +85,7 @@ async def admin_change_user_password(
     if len(new_password) < MIN_PASSWORD_LENGTH:
         return RedirectResponse("/admin/users?error=password_too_short", status_code=303)
 
-    if not _admin_pw_verified(request):
+    if user.password_hash and not _admin_pw_verified(request):
         admin_password = form.get("admin_password", "")
         if not admin_password or not verify_password(admin_password, user.password_hash):
             return RedirectResponse("/admin/users?error=invalid_admin_password", status_code=303)
