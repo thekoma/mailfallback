@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     oidc_discovery_url: str = ""
     oidc_admin_group: str = "mailfallback-admin"
     oidc_user_group: str = "mailfallback-user"
+    oidc_userinfo_url: str = ""
 
     google_client_id: str = ""
     google_client_secret: str = ""
