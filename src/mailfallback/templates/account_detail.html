@@ -16,7 +16,7 @@
 </div>
 
 {% if flash_error %}
-<p class="alert-error"><i data-lucide="alert-circle" class="icon-md icon-inline"></i>{{ flash_error }}</p>
+<script>document.addEventListener('DOMContentLoaded', function() { showToast('{{ flash_error }}', 'error'); });</script>
 {% endif %}
 
 {% include "partials/sync_panel.html" %}

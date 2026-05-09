@@ -112,7 +112,14 @@ def _get_theme(request: Request) -> str:
     return "light"
 
 
+def _get_flash(request, flash_type):
+    key = f"flash_{flash_type}"
+    msg = request.session.pop(key, None) if hasattr(request, "session") else None
+    return msg
+
+
 templates.env.globals["get_theme"] = _get_theme
+templates.env.globals["get_flash"] = _get_flash
 
 
 @router.get("/login", response_class=HTMLResponse)
