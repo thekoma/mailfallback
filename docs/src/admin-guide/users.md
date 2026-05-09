@@ -2,7 +2,7 @@
 
 Admins can create, edit, and manage users from the **Users** page in the admin section.
 
-![User management](../../screenshots/07-admin-users.png)
+![User management](../screenshots/07-admin-users.png)
 
 ## User List
 

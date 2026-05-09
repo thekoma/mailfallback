@@ -2,7 +2,7 @@
 
 Mail stores define where email data is physically stored on disk. Each store maps to a filesystem path that holds Maildir directories and Dovecot home directories.
 
-![Mail stores](../../screenshots/08-admin-stores.png)
+![Mail stores](../screenshots/08-admin-stores.png)
 
 ## Store List
 

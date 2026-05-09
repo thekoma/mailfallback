@@ -4,7 +4,7 @@
 
 MailFallBack (MFB) wraps [mbsync/isync](https://isync.sourceforge.io/) with a modern web interface to back up your IMAP mailboxes to local Maildir storage. When your email provider goes down or you lose access, your mail is still available through Dovecot IMAP and Roundcube webmail - read-only, safe, and searchable.
 
-![Dashboard](../../screenshots/02-dashboard.png)
+![Dashboard](screenshots/02-dashboard.png)
 
 ## Key Features
 

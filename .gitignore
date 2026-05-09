@@ -55,3 +55,6 @@ data/
 
 # Superpowers
 .superpowers/
+
+# MkDocs build output
+site/

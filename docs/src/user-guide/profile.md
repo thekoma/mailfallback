@@ -2,7 +2,7 @@
 
 The profile page lets you manage your account settings, change your password, and configure preferences.
 
-![Profile page](../../screenshots/12-profile.png)
+![Profile page](../screenshots/12-profile.png)
 
 ## Change Password
 

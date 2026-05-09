@@ -2,7 +2,7 @@
 
 Groups provide shared access to email accounts across multiple users. When a user is a member of a group, they can see all accounts assigned to that group in Dovecot (IMAP and webmail).
 
-![Groups](../../screenshots/09-admin-groups.png)
+![Groups](../screenshots/09-admin-groups.png)
 
 ## How Groups Work
 
