@@ -105,7 +105,7 @@ def test_dovecot_fts_without_tika(tmp_path):
 
     fts = (tmp_path / "dovecot" / "mfb-fts.conf").read_text()
     assert "fts_flatcurve = yes" in fts
-    assert "fts_tika" not in fts
+    assert "fts_decoder_driver" not in fts
 
 
 def test_dovecot_fts_with_tika(tmp_path):
@@ -114,7 +114,8 @@ def test_dovecot_fts_with_tika(tmp_path):
 
     fts = (tmp_path / "dovecot" / "mfb-fts.conf").read_text()
     assert "fts_flatcurve = yes" in fts
-    assert "fts_tika = http://tika:9998/tika/" in fts
+    assert "fts_decoder_driver = tika" in fts
+    assert "fts_decoder_tika_url = http://tika:9998/tika/" in fts
 
 
 def test_dovecot_acl_content(tmp_path):

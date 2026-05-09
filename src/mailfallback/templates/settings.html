@@ -16,6 +16,35 @@
     <tr><td><i data-lucide="key-round" class="icon-sm icon-inline"></i>OIDC Enabled</td><td>{{ 'Yes' if oidc_enabled else 'No' }}</td></tr>
 </table>
 
+<h3>Modules</h3>
+<table>
+    <tr>
+        <td><i data-lucide="server" class="icon-sm icon-inline"></i>Dovecot IMAP</td>
+        <td><span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Active</span></td>
+    </tr>
+    <tr>
+        <td><i data-lucide="globe" class="icon-sm icon-inline"></i>Webmail (Roundcube)</td>
+        <td>
+            {% if webmail_enabled %}
+            <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Active</span>
+            {% else %}
+            <span class="badge badge-disabled"><i data-lucide="minus-circle" class="icon-sm"></i> Disabled</span>
+            {% endif %}
+        </td>
+    </tr>
+    <tr>
+        <td><i data-lucide="file-search" class="icon-sm icon-inline"></i>Tika (Attachment FTS)</td>
+        <td>
+            {% if tika_enabled %}
+            <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Active</span>
+            <span class="text-muted text-small">{{ tika_url }}</span>
+            {% else %}
+            <span class="badge badge-disabled"><i data-lucide="minus-circle" class="icon-sm"></i> Disabled</span>
+            {% endif %}
+        </td>
+    </tr>
+</table>
+
 <h3>Service Status</h3>
 <table>
     <tr>
