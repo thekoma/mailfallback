@@ -63,8 +63,20 @@
     <main class="content container">
         {% block content %}{% endblock %}
     </main>
+    <div id="toast-container"></div>
     <script src="/static/js/core.js"></script>
     {% block scripts %}{% endblock %}
-    <script>lucide.createIcons();</script>
+    <script>
+    lucide.createIcons();
+    function showToast(msg, type) {
+        var c = document.getElementById('toast-container');
+        var t = document.createElement('div');
+        t.className = 'toast toast-' + (type || 'error');
+        t.textContent = msg;
+        t.onclick = function() { t.classList.add('toast-out'); setTimeout(function() { t.remove(); }, 300); };
+        c.appendChild(t);
+        setTimeout(function() { if (t.parentNode) { t.classList.add('toast-out'); setTimeout(function() { t.remove(); }, 300); } }, 5000);
+    }
+    </script>
 </body>
 </html>

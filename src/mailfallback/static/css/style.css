@@ -306,6 +306,28 @@ button.icon-btn.success, a.icon-btn.success { color: var(--mfb-success-color); b
 .alert-success {
     color: var(--pico-color-green-500);
 }
+
+/* === Toast notifications === */
+.toast {
+    position: fixed; bottom: 2rem; right: 2rem; z-index: 9999;
+    min-width: 300px; max-width: 480px; padding: 1rem 1.25rem;
+    border-radius: 8px; font-size: 0.9rem; font-weight: 500;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    display: flex; align-items: center; gap: 0.5rem;
+    animation: toast-in 0.3s ease-out;
+    cursor: pointer;
+}
+.toast-error {
+    background: #fff; color: var(--mfb-danger-color); border: 2px solid var(--mfb-danger-color);
+}
+.toast-success {
+    background: #fff; color: var(--mfb-success-color); border: 2px solid var(--mfb-success-color);
+}
+[data-theme="dark"] .toast-error { background: #1a1a2e; }
+[data-theme="dark"] .toast-success { background: #1a1a2e; }
+@keyframes toast-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.toast-out { animation: toast-out 0.3s ease-in forwards; }
+@keyframes toast-out { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
 .error-box {
     border: 1px solid var(--mfb-danger-border);
     border-radius: 0.375rem;
