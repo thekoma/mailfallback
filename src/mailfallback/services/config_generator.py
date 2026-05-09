@@ -311,36 +311,34 @@ $config['search_scope'] = 'base';
 # ---------------------------------------------------------------------------
 
 _DOVECOT_FILES: list[tuple[str, Any]] = [
-    ("conf.d/mfb-ssl.conf", _dovecot_ssl_conf),
-    ("conf.d/mfb-service.conf", _dovecot_service_conf),
-    ("conf.d/mfb-stats.conf", _dovecot_stats_conf),
-    ("conf.d/mfb-mail.conf", _dovecot_mail_conf),
-    ("conf.d/mfb-acl.conf", _dovecot_acl_conf),
-    ("conf.d/dovecot-acl", _dovecot_acl_file),
-    ("conf.d/mfb-fts.conf", None),  # needs settings
-    ("conf.d/mfb-auth.conf", None),  # needs settings
-    ("conf.d/mfb-lua-userdb.lua", None),  # needs settings
+    ("mfb-ssl.conf", _dovecot_ssl_conf),
+    ("mfb-service.conf", _dovecot_service_conf),
+    ("mfb-stats.conf", _dovecot_stats_conf),
+    ("mfb-mail.conf", _dovecot_mail_conf),
+    ("mfb-acl.conf", _dovecot_acl_conf),
+    ("dovecot-acl", _dovecot_acl_file),
+    ("mfb-fts.conf", None),
+    ("mfb-auth.conf", None),
+    ("mfb-lua-userdb.lua", None),
 ]
 
 
 def generate_dovecot_config(settings: Any) -> list[Path]:
     """Write all Dovecot config files to ``{confs_path}/dovecot/``."""
     base = Path(settings.confs_path) / "dovecot"
-    conf_d = base / "conf.d"
-    conf_d.mkdir(parents=True, exist_ok=True)
+    base.mkdir(parents=True, exist_ok=True)
 
     written: list[Path] = []
 
     for rel_path, factory in _DOVECOT_FILES:
         dest = base / rel_path
-        dest.parent.mkdir(parents=True, exist_ok=True)
         if factory is not None:
             content = factory()
-        elif rel_path == "conf.d/mfb-fts.conf":
+        elif rel_path == "mfb-fts.conf":
             content = _dovecot_fts_conf(settings)
-        elif rel_path == "conf.d/mfb-auth.conf":
+        elif rel_path == "mfb-auth.conf":
             content = _dovecot_auth_conf(settings)
-        elif rel_path == "conf.d/mfb-lua-userdb.lua":
+        elif rel_path == "mfb-lua-userdb.lua":
             content = _dovecot_lua_userdb(settings)
         else:
             continue  # pragma: no cover

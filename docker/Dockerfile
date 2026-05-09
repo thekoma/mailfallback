@@ -2,10 +2,11 @@ FROM python:3.14-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       isync ca-certificates curl libsasl2-modules-kdexoauth2 \
+       isync ca-certificates curl gosu libsasl2-modules-kdexoauth2 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 1000 vmail && useradd -u 1000 -g vmail -m -s /usr/sbin/nologin vmail \
-    && mkdir -p /data && chown 1000:1000 /data
+    && mkdir -p /data /confs/dovecot /confs/webmail \
+    && chown -R 1000:1000 /data /confs
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -22,8 +23,6 @@ RUN chmod +x /entrypoint.sh
 
 RUN uv sync --frozen --no-dev \
     && chown -R 1000:1000 /app
-
-USER 1000
 
 EXPOSE 8000
 

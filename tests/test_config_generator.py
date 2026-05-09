@@ -71,7 +71,7 @@ def test_dovecot_auth_contains_db_credentials(tmp_path):
     settings = _make_settings(tmp_path, db_host="pghost", db_port=5433, db_name="mydb")
     generate_dovecot_config(settings)
 
-    auth = (tmp_path / "dovecot" / "conf.d" / "mfb-auth.conf").read_text()
+    auth = (tmp_path / "dovecot" / "mfb-auth.conf").read_text()
     assert "pgsql pghost" in auth
     assert "port = 5433" in auth
     assert "dbname = mydb" in auth
@@ -81,7 +81,7 @@ def test_dovecot_auth_contains_api_key(tmp_path):
     settings = _make_settings(tmp_path, dovecot_api_key="super-secret-key")
     generate_dovecot_config(settings)
 
-    auth = (tmp_path / "dovecot" / "conf.d" / "mfb-auth.conf").read_text()
+    auth = (tmp_path / "dovecot" / "mfb-auth.conf").read_text()
     assert "doveadm_password = super-secret-key" in auth
 
 
@@ -89,7 +89,7 @@ def test_dovecot_lua_contains_mfb_url(tmp_path):
     settings = _make_settings(tmp_path, dovecot_api_key="my-key")
     generate_dovecot_config(settings)
 
-    lua = (tmp_path / "dovecot" / "conf.d" / "mfb-lua-userdb.lua").read_text()
+    lua = (tmp_path / "dovecot" / "mfb-lua-userdb.lua").read_text()
     assert 'API_BASE = "http://mailfallback:8000"' in lua
     assert 'API_KEY = "my-key"' in lua
 
@@ -98,7 +98,7 @@ def test_dovecot_fts_without_tika(tmp_path):
     settings = _make_settings(tmp_path, tika_enabled=False)
     generate_dovecot_config(settings)
 
-    fts = (tmp_path / "dovecot" / "conf.d" / "mfb-fts.conf").read_text()
+    fts = (tmp_path / "dovecot" / "mfb-fts.conf").read_text()
     assert "fts_flatcurve = yes" in fts
     assert "fts_tika" not in fts
 
@@ -107,7 +107,7 @@ def test_dovecot_fts_with_tika(tmp_path):
     settings = _make_settings(tmp_path, tika_enabled=True, tika_url="http://tika:9998")
     generate_dovecot_config(settings)
 
-    fts = (tmp_path / "dovecot" / "conf.d" / "mfb-fts.conf").read_text()
+    fts = (tmp_path / "dovecot" / "mfb-fts.conf").read_text()
     assert "fts_flatcurve = yes" in fts
     assert "fts_tika = http://tika:9998/tika/" in fts
 
@@ -116,7 +116,7 @@ def test_dovecot_acl_content(tmp_path):
     settings = _make_settings(tmp_path)
     generate_dovecot_config(settings)
 
-    acl = (tmp_path / "dovecot" / "conf.d" / "dovecot-acl").read_text()
+    acl = (tmp_path / "dovecot" / "dovecot-acl").read_text()
     assert "* owner lrs" in acl
 
 
@@ -124,7 +124,7 @@ def test_dovecot_acl_path_in_config(tmp_path):
     settings = _make_settings(tmp_path)
     generate_dovecot_config(settings)
 
-    acl_conf = (tmp_path / "dovecot" / "conf.d" / "mfb-acl.conf").read_text()
+    acl_conf = (tmp_path / "dovecot" / "mfb-acl.conf").read_text()
     assert "acl_global_path = /etc/dovecot/conf.d/dovecot-acl" in acl_conf
 
 
