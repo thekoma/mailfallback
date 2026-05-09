@@ -2,6 +2,7 @@
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
@@ -22,6 +23,20 @@ router = APIRouter(prefix="/api/restore", tags=["restore"])
 browse_router = APIRouter(prefix="/api", tags=["browse"])
 
 
+class RestoreCreate(BaseModel):
+    source_account_id: str
+    target_account_id: str
+    restore_mode: str = "full"
+    folder_mapping: str = "original"
+    skip_duplicates: bool = True
+    selected_folders: list[str] | None = None
+    selected_uids: dict | None = None
+
+
+def _sanitize_imap_string(value: str) -> str:
+    return re.sub(r'["\\\x00-\x1f]', "", value)
+
+
 # ---------------------------------------------------------------------------
 # Restore job endpoints
 # ---------------------------------------------------------------------------
@@ -29,39 +44,29 @@ browse_router = APIRouter(prefix="/api", tags=["browse"])
 
 @router.post("")
 def create_restore(
-    body: dict,
+    body: RestoreCreate,
     request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    source_account_id = body.get("source_account_id")
-    target_account_id = body.get("target_account_id")
-    restore_mode = body.get("restore_mode", "full")
-
-    if not source_account_id or not target_account_id:
-        raise HTTPException(
-            status_code=400,
-            detail="source_account_id and target_account_id required",
-        )
-
-    source = account_service.get_account(db, source_account_id, user)
+    source = account_service.get_account(db, body.source_account_id, user)
     if not source:
         raise HTTPException(status_code=404, detail="Source account not found")
 
-    target = account_service.get_account(db, target_account_id, user)
+    target = account_service.get_account(db, body.target_account_id, user)
     if not target:
         raise HTTPException(status_code=404, detail="Target account not found")
 
     job = create_restore_job(
         db,
-        source_account_id=source_account_id,
-        target_account_id=target_account_id,
-        restore_mode=restore_mode,
+        source_account_id=body.source_account_id,
+        target_account_id=body.target_account_id,
+        restore_mode=body.restore_mode,
         requested_by=user.id,
-        folder_mapping=body.get("folder_mapping", "original"),
-        skip_duplicates=body.get("skip_duplicates", True),
-        selected_folders=body.get("selected_folders"),
-        selected_uids=body.get("selected_uids"),
+        folder_mapping=body.folder_mapping,
+        skip_duplicates=body.skip_duplicates,
+        selected_folders=body.selected_folders,
+        selected_uids=body.selected_uids,
     )
     if not job:
         raise HTTPException(status_code=409, detail="Cannot create restore job")
@@ -97,9 +102,10 @@ def get_restore(
     if not job:
         raise HTTPException(status_code=404, detail="Restore job not found")
 
-    source = account_service.get_account(db, job.source_account_id, user)
-    if not source:
-        raise HTTPException(status_code=404, detail="Restore job not found")
+    if job.requested_by != user.id and user.role.value != "admin":
+        source = account_service.get_account(db, job.source_account_id, user)
+        if not source:
+            raise HTTPException(status_code=404, detail="Restore job not found")
 
     return {
         "job_id": job.id,
@@ -129,14 +135,24 @@ def cancel_restore(
     if not job:
         raise HTTPException(status_code=404, detail="Restore job not found")
 
-    source = account_service.get_account(db, job.source_account_id, user)
-    if not source:
-        raise HTTPException(status_code=404, detail="Restore job not found")
+    if job.requested_by != user.id and user.role.value != "admin":
+        source = account_service.get_account(db, job.source_account_id, user)
+        if not source:
+            raise HTTPException(status_code=404, detail="Restore job not found")
 
     request_cancel(job_id)
     ok = cancel_restore_job(db, job_id)
     if not ok:
         raise HTTPException(status_code=409, detail="Job cannot be cancelled")
+
+    log_action(
+        db,
+        user=user,
+        action="restore.cancel",
+        resource_type="restore",
+        resource_id=job_id,
+        ip_address=request.client.host if request.client else None,
+    )
 
     return {"ok": True, "job_id": job_id}
 
@@ -153,13 +169,17 @@ def _get_namespace_prefix(account):
 
 def _connect_dovecot_for_account(db, account):
     temp_username, temp_password = create_temp_imap_user(db, [account.id])
-    conn = connect_imap(
-        settings.dovecot_imap_host,
-        settings.dovecot_imap_port,
-        "NONE",
-        temp_username,
-        temp_password,
-    )
+    try:
+        conn = connect_imap(
+            settings.dovecot_imap_host,
+            settings.dovecot_imap_port,
+            "NONE",
+            temp_username,
+            temp_password,
+        )
+    except Exception:
+        delete_temp_imap_user(db, temp_username)
+        raise
     return conn, temp_username
 
 
@@ -284,12 +304,15 @@ def list_messages(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    page = max(1, min(page, 10000))
+    page_size = max(1, min(page_size, 200))
+
     account = account_service.get_account(db, account_id, user)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 
     namespace_prefix = _get_namespace_prefix(account)
-    imap_folder = f"{namespace_prefix}{folder}"
+    imap_folder = f"{namespace_prefix}{_sanitize_imap_string(folder)}"
     conn, temp_username = _connect_dovecot_for_account(db, account)
     try:
         status, data = conn.select(f'"{imap_folder}"', readonly=True)
@@ -340,7 +363,7 @@ def search_messages(
         raise HTTPException(status_code=400, detail="Query parameter 'q' is required")
 
     namespace_prefix = _get_namespace_prefix(account)
-    imap_folder = f"{namespace_prefix}{folder}"
+    imap_folder = f"{namespace_prefix}{_sanitize_imap_string(folder)}"
     conn, temp_username = _connect_dovecot_for_account(db, account)
     try:
         status, data = conn.select(f'"{imap_folder}"', readonly=True)
@@ -350,7 +373,8 @@ def search_messages(
         words = q.split()
         search_criteria = []
         for word in words:
-            search_criteria.extend(["TEXT", f'"{word}"'])
+            safe_word = _sanitize_imap_string(word)
+            search_criteria.extend(["TEXT", f'"{safe_word}"'])
         status, data = conn.search(None, *search_criteria)
         if status != "OK" or not data[0]:
             return []

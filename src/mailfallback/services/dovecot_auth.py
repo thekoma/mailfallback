@@ -1,6 +1,7 @@
 import logging
 import secrets
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -37,6 +38,8 @@ def create_temp_imap_user(db: Session, account_ids: list[str]) -> tuple[str, str
 
 
 def delete_temp_imap_user(db: Session, username: str) -> None:
+    if not username.startswith(TEMP_USER_PREFIX):
+        return
     user = db.query(User).filter(User.username == username).first()
     if not user:
         return
@@ -46,7 +49,12 @@ def delete_temp_imap_user(db: Session, username: str) -> None:
 
 
 def cleanup_temp_imap_users(db: Session) -> int:
-    temp_users = db.query(User).filter(User.username.like(f"{TEMP_USER_PREFIX}%")).all()
+    cutoff = datetime.now(UTC) - timedelta(hours=1)
+    temp_users = (
+        db.query(User)
+        .filter(User.username.like(f"{TEMP_USER_PREFIX}%"), User.created_at < cutoff)
+        .all()
+    )
     if not temp_users:
         return 0
     for user in temp_users:

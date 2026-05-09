@@ -729,10 +729,11 @@ async def account_remove_owner(account_id: str, request: Request, db: Session = 
     account = get_account(db, account_id, user)
     if not account:
         return RedirectResponse("/", status_code=303)
-    if not is_account_owner(user, account) and user.role.value != "admin":
-        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
     form = await request.form()
-    remove_owner(db, account_id, form["user_id"])
+    target_user_id = form["user_id"]
+    if user.role.value != "admin" and target_user_id != user.id:
+        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+    remove_owner(db, account_id, target_user_id)
     log_action(
         db,
         user=user,

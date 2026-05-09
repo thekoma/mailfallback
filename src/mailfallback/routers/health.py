@@ -1,4 +1,6 @@
 # src/mailfallback/routers/health.py
+import hmac
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CollectorRegistry, Gauge, generate_latest
@@ -53,8 +55,8 @@ def readyz(db: Session = Depends(get_db)):
     try:
         db.execute(text("SELECT 1"))
         checks["db"] = "ok"
-    except Exception as e:
-        checks["db"] = str(e)
+    except Exception:
+        checks["db"] = "unavailable"
         return JSONResponse(status_code=503, content={"status": "error", "checks": checks})
 
     return {"status": "ok", "checks": checks}
@@ -65,7 +67,9 @@ def metrics(request: Request, db: Session = Depends(get_db)):
     from mailfallback.config import settings
 
     token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-    if not settings.metrics_api_key or not token or token != settings.metrics_api_key:
+    if not settings.metrics_api_key or not token:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    if not hmac.compare_digest(token.encode(), settings.metrics_api_key.encode()):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
     accounts = db.query(Account).all()
@@ -73,6 +77,11 @@ def metrics(request: Request, db: Session = Depends(get_db)):
 
     pending = db.query(SyncJob).filter(SyncJob.status == JobStatus.pending).count()
     JOBS_PENDING.set(pending)
+
+    SYNC_TOTAL._metrics.clear()
+    SYNC_DURATION._metrics.clear()
+    SYNC_LAST_SUCCESS._metrics.clear()
+    MAILDIR_SIZE._metrics.clear()
 
     for account in accounts:
         if account.last_sync_at:

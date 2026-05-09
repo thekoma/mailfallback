@@ -9,7 +9,7 @@ from mailfallback.dependencies import get_current_user, get_db, require_admin
 from mailfallback.models import User, UserRole
 from mailfallback.services import account_service
 from mailfallback.services.audit_service import log_action
-from mailfallback.services.imap_check import check_imap_credentials
+from mailfallback.services.imap_check import check_imap_credentials, validate_host_not_internal
 from mailfallback.services.provider_discovery import discover_provider
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
@@ -57,12 +57,19 @@ def create(
         store = get_store(db, body.store_id)
         if not store:
             raise HTTPException(status_code=404, detail="Store not found")
+        if not store.enabled:
+            raise HTTPException(status_code=403, detail="Store is disabled")
         if user.role != UserRole.admin and store not in user.allowed_stores:
             raise HTTPException(status_code=403, detail="Store not in allowed list")
     else:
         store = user.store
         if not store:
             raise HTTPException(status_code=400, detail="No store assigned")
+
+    try:
+        validate_host_not_internal(body.imap_host)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
 
     if body.auth_type == "app_password" and body.credentials:
         result = check_imap_credentials(
@@ -160,6 +167,9 @@ def update(
     db: Session = Depends(get_db),
 ):
     updates = body.model_dump(exclude_unset=True)
+    if user.role != UserRole.admin:
+        updates.pop("enabled", None)
+        updates.pop("suspended", None)
     account = account_service.update_account(db, account_id, user, **updates)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -179,7 +189,8 @@ def update(
 def delete(
     account_id: str,
     delete_files: bool = False,
-    request: Request = None,
+    *,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):

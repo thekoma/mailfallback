@@ -14,15 +14,25 @@ PAGE_SIZE = 50
 
 
 def _build_query(db: Session, params):
+    from datetime import datetime
+
     q = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
     if params.get("user"):
         q = q.filter(AuditLog.username == params["user"])
     if params.get("action"):
         q = q.filter(AuditLog.action == params["action"])
     if params.get("from"):
-        q = q.filter(AuditLog.timestamp >= params["from"])
+        try:
+            dt = datetime.fromisoformat(params["from"])
+            q = q.filter(AuditLog.timestamp >= dt)
+        except (ValueError, TypeError):
+            pass
     if params.get("to"):
-        q = q.filter(AuditLog.timestamp <= params["to"])
+        try:
+            dt = datetime.fromisoformat(params["to"])
+            q = q.filter(AuditLog.timestamp <= dt)
+        except (ValueError, TypeError):
+            pass
     return q
 
 

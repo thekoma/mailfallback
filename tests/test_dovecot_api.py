@@ -129,11 +129,11 @@ def test_userdb_disabled_user(client, db_session, default_store):
 
 
 def test_userdb_migrating_user(client, db_session, default_store):
-    """Migrating user returns 403."""
+    """Migrating user returns 404 (uniform response to avoid state leakage)."""
     _create_user(db_session, default_store, migrating=True)
 
     resp = client.get("/api/internal/dovecot/userdb/alice", headers=HEADERS)
-    assert resp.status_code == 403
+    assert resp.status_code == 404
 
 
 def test_userdb_shared_account(client, db_session, default_store):

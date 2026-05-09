@@ -20,6 +20,15 @@ def generate_mbsyncrc(
 ) -> str:
     raw_extra = json.loads(extra_config) if extra_config else {}
     extra = {k: _sanitize_value(v) for k, v in raw_extra.items() if v}
+    account_name = _sanitize_value(account_name)
+    imap_host = _sanitize_value(imap_host)
+    username = _sanitize_value(username)
+    maildir_path = _sanitize_value(maildir_path)
+    tls_type = _sanitize_value(tls_type)
+    if password:
+        password = _sanitize_value(password)
+    if token_command:
+        token_command = _sanitize_value(token_command)
     safe_name = account_name.lower().replace(" ", "_")
     lines = []
 

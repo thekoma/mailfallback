@@ -252,7 +252,9 @@ def accounts_page(request: Request, db: Session = Depends(get_db)):
 def accounts_table_partial(request: Request, db: Session = Depends(get_db)):
     user = _get_session_user(request, db)
     if not user:
-        return HTMLResponse("")
+        response = HTMLResponse("")
+        response.headers["HX-Redirect"] = "/login"
+        return response
     accounts = get_accounts_for_user(db, user)
     return templates.TemplateResponse(
         request=request,

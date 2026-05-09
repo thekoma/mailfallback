@@ -126,7 +126,7 @@ def set_allowed_stores(db: Session, user_id: str, store_ids: list[str]) -> str |
         return "Cannot change stores while migration is in progress"
     stores = db.query(MailStore).filter(MailStore.id.in_(store_ids)).all()
     new_ids = {s.id for s in stores}
-    if user.store_id not in new_ids and stores:
+    if user.store_id and user.store_id not in new_ids:
         return "Cannot remove the user's current home store — migrate the user first"
     user.allowed_stores = stores
     db.commit()

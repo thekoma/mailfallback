@@ -130,6 +130,8 @@ def execute_account_migration(db: Session, migration_id: str) -> None:
             migration.status = MigrationStatus.verifying
             db.commit()
 
+            if migration_id in _cancel_flags:
+                raise MigrationCancelled()
             ok, detail = verify_copy(source_path, target_path)
             if not ok:
                 migration.status = MigrationStatus.failed
@@ -139,6 +141,9 @@ def execute_account_migration(db: Session, migration_id: str) -> None:
         else:
             migration.total_files = 0
             migration.total_bytes = 0
+
+        if migration_id in _cancel_flags:
+            raise MigrationCancelled()
 
         # Clean phase — update paths
         migration.status = MigrationStatus.cleaning
@@ -276,6 +281,8 @@ def execute_home_migration(db: Session, migration_id: str) -> None:
             migration.status = MigrationStatus.verifying
             db.commit()
 
+            if migration_id in _cancel_flags:
+                raise MigrationCancelled()
             ok, detail = verify_copy(source_home, target_home)
             if not ok:
                 migration.status = MigrationStatus.failed
@@ -285,6 +292,9 @@ def execute_home_migration(db: Session, migration_id: str) -> None:
         else:
             migration.total_files = 0
             migration.total_bytes = 0
+
+        if migration_id in _cancel_flags:
+            raise MigrationCancelled()
 
         # Clean phase — update user store
         migration.status = MigrationStatus.cleaning

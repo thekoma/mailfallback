@@ -2,6 +2,7 @@
 """Internal API for Dovecot Lua userdb lookups."""
 
 import hmac
+import re
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
@@ -23,14 +24,12 @@ def _verify_api_key(x_api_key: str | None = Header(default=None)):
 @router.get("/userdb/{username}", dependencies=[Depends(_verify_api_key)])
 def userdb_lookup(username: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == username).first()
-    if not user or not user.enabled:
+    if not user or not user.enabled or user.migrating:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if user.migrating:
-        raise HTTPException(status_code=403, detail="User is migrating")
-
     store_path = user.store.path.rstrip("/")
-    home = f"{store_path}/.dovecot-home/{username}"
+    safe_username = re.sub(r"[^a-zA-Z0-9@._-]", "_", username)
+    home = f"{store_path}/.dovecot-home/{safe_username}"
 
     # Get user's enabled accounts on enabled stores, ordered by created_at
     owned = (
