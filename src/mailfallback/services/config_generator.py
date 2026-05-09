@@ -59,7 +59,7 @@ def _dovecot_acl_conf() -> str:
 mail_plugins = acl
 
 protocol imap {
-  mail_plugins = acl imap_acl
+  mail_plugins = acl imap_acl fts fts_flatcurve
 }
 
 acl_driver = vfile
@@ -298,7 +298,7 @@ $config['use_subscriptions'] = false;
 $config['check_all_folders'] = true;
 $config['disabled_actions'] = ['mail.compose'];
 $config['search_mods'] = [
-    '*' => ['subject' => 1, 'from' => 1, 'body' => 1],
+    '*' => ['subject' => 1, 'from' => 1, 'text' => 1],
 ];
 $config['search_scope'] = 'base';
 {oauth_block}"""
