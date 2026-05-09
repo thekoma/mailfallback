@@ -48,17 +48,22 @@ def default_store(db_session):
 
 @pytest.fixture
 def app(db_session):
+    import tempfile
+
     import mailfallback.config as cfg
 
     original_key = cfg.settings.dovecot_api_key
     original_metrics_key = cfg.settings.metrics_api_key
+    original_confs_path = cfg.settings.confs_path
     cfg.settings.dovecot_api_key = "test-key"
     cfg.settings.metrics_api_key = "test-key"
+    cfg.settings.confs_path = tempfile.mkdtemp()
     application = create_app()
     application.dependency_overrides[get_db] = lambda: db_session
     yield application
     cfg.settings.dovecot_api_key = original_key
     cfg.settings.metrics_api_key = original_metrics_key
+    cfg.settings.confs_path = original_confs_path
 
 
 @pytest.fixture

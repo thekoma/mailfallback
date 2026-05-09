@@ -28,6 +28,7 @@ from mailfallback.routers import (
 )
 from mailfallback.routers.restore import browse_router as restore_browse_router
 from mailfallback.routers.restore import router as restore_router
+from mailfallback.services.config_generator import generate_all_configs
 from mailfallback.services.migration_service import (
     execute_account_migration,
     execute_home_migration,
@@ -42,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    generate_all_configs(settings)
     db = SessionLocal()
     try:
         default_store = ensure_default_store(db)
