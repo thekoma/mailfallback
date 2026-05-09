@@ -37,6 +37,11 @@
             <td>{{ dest_account_counts.get(dest.id, 0) }}</td>
             <td>
                 <div class="actions flex-end">
+                    <form method="post" action="/admin/backup/{{ dest.id }}/test" class="inline-form">
+                        <button type="submit" class="icon-btn" title="Test connection">
+                            <i data-lucide="plug-zap" class="icon-md"></i>
+                        </button>
+                    </form>
                     <form method="post" action="/admin/backup/{{ dest.id }}/delete" class="inline-form"
                         data-confirm="Delete backup destination {{ dest.name }}?"
                         onsubmit="return confirm(this.dataset.confirm)">
