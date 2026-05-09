@@ -14,7 +14,7 @@ from mailfallback.security import hash_password, verify_password
 logger = logging.getLogger(__name__)
 
 
-MIN_PASSWORD_LENGTH = 12
+MIN_PASSWORD_LENGTH = 8
 
 
 def create_user(
