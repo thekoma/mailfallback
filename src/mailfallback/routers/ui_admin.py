@@ -405,7 +405,7 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
             "scheduler_running": scheduler_running,
             "scheduler_jobs": scheduler_jobs,
             "debug_mode": settings.debug,
-            "dovecot_enabled": True,
+            "dovecot_enabled": bool(settings.dovecot_api_url),
             "dovecot_status": request.query_params.get("dovecot_status"),
             "dovecot_error": request.query_params.get("dovecot_error"),
             "fts_status": request.query_params.get("fts_status"),
