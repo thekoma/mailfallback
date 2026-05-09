@@ -1,0 +1,79 @@
+site_name: MailFallBack
+site_description: Self-hosted email backup service with web UI
+site_url: https://thekoma.github.io/mailfallback/
+repo_url: https://github.com/thekoma/mailfallback
+repo_name: thekoma/mailfallback
+edit_uri: edit/main/docs/src/
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+docs_dir: docs/src
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Configuration: getting-started/configuration.md
+    - Docker Compose: getting-started/docker.md
+    - Kubernetes: getting-started/kubernetes.md
+  - User Guide:
+    - Dashboard: user-guide/dashboard.md
+    - Accounts: user-guide/accounts.md
+    - Restore: user-guide/restore.md
+    - Webmail: user-guide/webmail.md
+    - Profile: user-guide/profile.md
+  - Admin Guide:
+    - User Management: admin-guide/users.md
+    - Mail Stores: admin-guide/stores.md
+    - Groups: admin-guide/groups.md
+    - System Settings: admin-guide/settings.md
+    - Audit Log: admin-guide/audit.md
+    - SSO / OIDC: admin-guide/sso.md
+    - OAuth Providers: admin-guide/oauth-providers.md
+  - Architecture:
+    - Overview: architecture/overview.md
+    - Centralized Config: architecture/config-generation.md
+    - Dovecot Integration: architecture/dovecot.md
+    - FTS & Tika: architecture/fts-tika.md
+    - Data Model: architecture/data-model.md
