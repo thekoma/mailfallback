@@ -33,12 +33,14 @@ def reload_dovecot() -> bool:
 
 
 def check_dovecot_health() -> dict:
-    """Quick health check via doveadm reload (lightweight, idempotent)."""
+    """Quick health check via doveadm processStatus (read-only, no side effects)."""
     if not settings.dovecot_api_url:
         return {"ok": False, "error": "Dovecot API not configured"}
     try:
         url = f"{settings.dovecot_api_url}/doveadm/v1"
-        resp = httpx.post(url, json=[["reload", {}, "health"]], auth=_doveadm_auth(), timeout=5)
+        resp = httpx.post(
+            url, json=[["processStatus", {}, "health"]], auth=_doveadm_auth(), timeout=5
+        )
         resp.raise_for_status()
         return {"ok": True}
     except Exception as e:
