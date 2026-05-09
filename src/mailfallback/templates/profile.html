@@ -55,10 +55,10 @@
     {% endif %}
 
     <label for="new_password">{% if user.password_hash %}New Password{% else %}Set Password{% endif %}</label>
-    <input type="password" id="new_password" name="new_password" required minlength="12">
+    <input type="password" id="new_password" name="new_password" required minlength="8">
 
     <label for="confirm_password">Confirm New Password</label>
-    <input type="password" id="confirm_password" name="confirm_password" required minlength="12">
+    <input type="password" id="confirm_password" name="confirm_password" required minlength="8">
 
     <button type="submit">
         <i data-lucide="save" class="icon-md icon-inline"></i>Update Password

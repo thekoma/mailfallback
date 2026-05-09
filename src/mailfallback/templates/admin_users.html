@@ -6,7 +6,7 @@
 {% if error == "invalid_admin_password" %}
 <p class="alert-error"><i data-lucide="alert-circle" class="icon-md icon-inline"></i>Admin password is incorrect.</p>
 {% elif error == "password_too_short" %}
-<p class="alert-error"><i data-lucide="alert-circle" class="icon-md icon-inline"></i>Password must be at least 12 characters.</p>
+<p class="alert-error"><i data-lucide="alert-circle" class="icon-md icon-inline"></i>Password must be at least 8 characters.</p>
 {% elif error %}
 <p class="alert-error"><i data-lucide="alert-circle" class="icon-md icon-inline"></i>{{ error }}</p>
 {% endif %}

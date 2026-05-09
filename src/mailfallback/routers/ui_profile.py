@@ -10,7 +10,7 @@ from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import verify_password
 from mailfallback.services.group_service import get_user_groups
 from mailfallback.services.store_service import get_selectable_stores, get_user_store
-from mailfallback.services.user_service import change_password, update_user
+from mailfallback.services.user_service import MIN_PASSWORD_LENGTH, change_password, update_user
 
 router = APIRouter(tags=["ui"])
 
@@ -86,13 +86,13 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
             name="profile.html",
             context={**base_context, "error": "New passwords do not match", "success": None},
         )
-    if len(new) < 12:
+    if len(new) < MIN_PASSWORD_LENGTH:
         return templates.TemplateResponse(
             request=request,
             name="profile.html",
             context={
                 **base_context,
-                "error": "Password must be at least 12 characters",
+                "error": f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
                 "success": None,
             },
         )
