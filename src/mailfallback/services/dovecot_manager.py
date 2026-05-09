@@ -14,7 +14,7 @@ def _doveadm_auth() -> httpx.BasicAuth:
 
 def reload_dovecot() -> bool:
     """Send reload command to Dovecot via doveadm HTTP API. Returns True on success."""
-    if not settings.dovecot_enabled:
+    if not settings.dovecot_api_url:
         return False
 
     url = f"{settings.dovecot_api_url}/doveadm/v1"
@@ -34,7 +34,7 @@ def reload_dovecot() -> bool:
 
 def check_dovecot_health() -> dict:
     """Quick health check via doveadm reload (lightweight, idempotent)."""
-    if not settings.dovecot_enabled or not settings.dovecot_api_url:
+    if not settings.dovecot_api_url:
         return {"ok": False, "error": "Dovecot API not configured"}
     try:
         url = f"{settings.dovecot_api_url}/doveadm/v1"
@@ -48,7 +48,7 @@ def check_dovecot_health() -> dict:
 
 def fts_rescan(username: str) -> dict:
     """Trigger FTS rescan for a single user."""
-    if not settings.dovecot_enabled or not settings.dovecot_api_url:
+    if not settings.dovecot_api_url:
         return {"ok": False, "error": "Dovecot API not configured"}
     try:
         url = f"{settings.dovecot_api_url}/doveadm/v1"
@@ -70,7 +70,7 @@ def fts_rescan(username: str) -> dict:
 
 def force_resync(username: str, mailbox: str = "*") -> dict:
     """Force resync of a user's mailboxes."""
-    if not settings.dovecot_enabled or not settings.dovecot_api_url:
+    if not settings.dovecot_api_url:
         return {"ok": False, "error": "Dovecot API not configured"}
     try:
         url = f"{settings.dovecot_api_url}/doveadm/v1"
@@ -110,7 +110,7 @@ def get_mailbox_stats(username: str) -> list[dict] | None:
     Returns a list of dicts with keys: mailbox, messages, unseen, vsize.
     Returns None if Dovecot is unavailable.
     """
-    if not settings.dovecot_enabled:
+    if not settings.dovecot_api_url:
         return None
 
     url = f"{settings.dovecot_api_url}/doveadm/v1"
