@@ -1,0 +1,106 @@
+<h2>System Status — All States</h2>
+<p class="subtitle">How each badge looks in different states, and what the expanded detail shows</p>
+
+<div class="section">
+  <h3>Normal Operation — All Green</h3>
+  <div class="mockup">
+    <div class="mockup-header">Dashboard — Everything OK</div>
+    <div class="mockup-body" style="padding:16px; background:#1a1a2e; color:#e0e0e0; font-size:13px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <span style="background:#1b4332; padding:5px 12px; border-radius:6px;">🟢 Dovecot</span>
+        <span style="background:#1a3050; padding:5px 12px; border-radius:6px;">🔍 FTS idle</span>
+        <span style="background:#1a3050; padding:5px 12px; border-radius:6px;">⚡ 0 syncing</span>
+        <span style="background:#1a3050; padding:5px 12px; border-radius:6px;">📦 0 restores</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>FTS Reindex Running — Expanded</h3>
+  <div class="mockup">
+    <div class="mockup-header">Dashboard — FTS in progress (badge clicked)</div>
+    <div class="mockup-body" style="padding:16px; background:#1a1a2e; color:#e0e0e0; font-size:13px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+        <span style="background:#1b4332; padding:5px 12px; border-radius:6px;">🟢 Dovecot</span>
+        <span style="background:#3a2a00; padding:5px 12px; border-radius:6px; border:1px solid #c59000; font-weight:600;">🔍 FTS 3/8</span>
+        <span style="background:#1a3050; padding:5px 12px; border-radius:6px;">⚡ 2 syncing</span>
+        <span style="background:#1a3050; padding:5px 12px; border-radius:6px;">📦 0 restores</span>
+      </div>
+      <div style="background:#2a2a00; border:1px solid #555; border-radius:6px; padding:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-weight:600;">FTS Reindex</span>
+          <span style="font-size:12px; color:#aaa;">Started 2m ago by admin</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+          <div style="flex:1; background:#333; border-radius:4px; height:8px;">
+            <div style="width:37%; background:#c59000; height:100%; border-radius:4px;"></div>
+          </div>
+          <span style="font-size:12px;">37%</span>
+        </div>
+        <div style="font-size:12px; color:#aaa; line-height:1.6;">
+          <span style="color:#4ade80;">✓ alice</span> ·
+          <span style="color:#4ade80;">✓ bob</span> ·
+          <span style="color:#4ade80;">✓ carol</span> ·
+          <span style="color:#c59000;">⏳ dave</span> ·
+          <span>eve</span> · <span>frank</span> · <span>grace</span> · <span>heidi</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Dovecot Down + Restore Active</h3>
+  <div class="mockup">
+    <div class="mockup-header">Dashboard — Mixed alerts</div>
+    <div class="mockup-body" style="padding:16px; background:#1a1a2e; color:#e0e0e0; font-size:13px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+        <span style="background:#4a1520; padding:5px 12px; border-radius:6px; border:1px solid #e53e3e; font-weight:600;">🔴 Dovecot DOWN</span>
+        <span style="background:#1a3050; padding:5px 12px; border-radius:6px;">🔍 FTS idle</span>
+        <span style="background:#1a3050; padding:5px 12px; border-radius:6px;">⚡ 0 syncing</span>
+        <span style="background:#1a3050; padding:5px 12px; border-radius:6px; border:1px solid #60a5fa;">📦 1 restore</span>
+      </div>
+      <div style="background:#1a2540; border:1px solid #555; border-radius:6px; padding:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-weight:600;">Restore in progress</span>
+          <span style="font-size:12px; color:#aaa;">admin · 5m ago</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+          <div style="flex:1; background:#333; border-radius:4px; height:8px;">
+            <div style="width:65%; background:#60a5fa; height:100%; border-radius:4px;"></div>
+          </div>
+          <span style="font-size:12px;">1,842 / 2,831</span>
+        </div>
+        <div style="font-size:12px; color:#aaa;">
+          work@gmail.com → backup@company.com · 23 skipped
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Sync Errors + Active Syncs</h3>
+  <div class="mockup">
+    <div class="mockup-header">Dashboard — Sync expanded</div>
+    <div class="mockup-body" style="padding:16px; background:#1a1a2e; color:#e0e0e0; font-size:13px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+        <span style="background:#1b4332; padding:5px 12px; border-radius:6px;">🟢 Dovecot</span>
+        <span style="background:#1a3050; padding:5px 12px; border-radius:6px;">🔍 FTS idle</span>
+        <span style="background:#3a2a00; padding:5px 12px; border-radius:6px; border:1px solid #c59000; font-weight:600;">⚡ 3 syncing · 2 errors</span>
+        <span style="background:#1a3050; padding:5px 12px; border-radius:6px;">📦 0 restores</span>
+      </div>
+      <div style="background:#2a2500; border:1px solid #555; border-radius:6px; padding:12px;">
+        <div style="font-weight:600; margin-bottom:8px;">Sync Activity</div>
+        <div style="font-size:12px; line-height:1.8;">
+          <div><span style="color:#4ade80;">⟳</span> work@gmail.com — syncing</div>
+          <div><span style="color:#4ade80;">⟳</span> personal@outlook.com — syncing</div>
+          <div><span style="color:#4ade80;">⟳</span> archive@yahoo.com — syncing</div>
+          <div style="color:#f87171;">✗ old@provider.com — IMAP timeout</div>
+          <div style="color:#f87171;">✗ broken@test.com — auth failed</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
