@@ -92,6 +92,11 @@
                             <input type="password" name="restic_password" placeholder="Leave blank to keep current">
                         </div>
                     </div>
+                    <div class="mt-05">
+                        <label>
+                            <input type="checkbox" name="insecure_tls" value="1" {% if dest.insecure_tls %}checked{% endif %}> Skip TLS verification
+                        </label>
+                    </div>
                     <button type="submit" class="icon-btn primary mt-05">
                         <i data-lucide="save" class="icon-md"></i> Save
                     </button>
@@ -156,6 +161,11 @@
         <div>
             <label for="restic_password">Restic Password</label>
             <input type="password" id="restic_password" name="restic_password" placeholder="Repository encryption password" required>
+        </div>
+        <div>
+            <label>
+                <input type="checkbox" name="insecure_tls" value="1"> Skip TLS verification
+            </label>
         </div>
         <button type="submit" class="icon-btn primary">
             <i data-lucide="plus-circle" class="icon-md"></i> Add

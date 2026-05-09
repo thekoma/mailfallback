@@ -71,12 +71,21 @@ def get_retention_args(
     return args
 
 
-def _run_restic(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_restic(
+    args: list[str], env: dict[str, str], insecure_tls: bool = False
+) -> subprocess.CompletedProcess[str]:
     """Run a restic command with the given args and env."""
-    cmd = ["restic", *args]
+    cmd = ["restic"]
+    if insecure_tls:
+        cmd.append("--insecure-tls")
+    cmd.extend(args)
     full_env = {**os.environ, **env}
     logger.debug("Running: %s", " ".join(cmd))
     return subprocess.run(cmd, capture_output=True, text=True, env=full_env)
+
+
+def _is_insecure(destination: BackupDestination) -> bool:
+    return getattr(destination, "insecure_tls", False)
 
 
 def test_destination(destination: BackupDestination) -> dict:
@@ -84,7 +93,7 @@ def test_destination(destination: BackupDestination) -> dict:
     test_id = "__mfb_connection_test__"
     env = build_env(destination, test_id)
     try:
-        result = _run_restic(["init", "--json"], env)
+        result = _run_restic(["init", "--json"], env, _is_insecure(destination))
     except Exception as e:
         return {"ok": False, "error": str(e)[:200]}
     if result.returncode == 0 or "already initialized" in result.stderr.lower():
@@ -95,7 +104,7 @@ def test_destination(destination: BackupDestination) -> dict:
 def init_repo(destination: BackupDestination, account_id: str) -> bool:
     """Initialize a restic repository. Returns True if init succeeded or repo exists."""
     env = build_env(destination, account_id)
-    result = _run_restic(["init"], env)
+    result = _run_restic(["init"], env, _is_insecure(destination))
     if result.returncode == 0:
         logger.info("Restic repo initialized for account %s", account_id)
         return True
@@ -110,7 +119,7 @@ def init_repo(destination: BackupDestination, account_id: str) -> bool:
 def run_backup(destination: BackupDestination, account_id: str, maildir_path: str) -> dict:
     """Run a restic backup of the maildir path. Returns parsed JSON output."""
     env = build_env(destination, account_id)
-    result = _run_restic(["backup", "--json", maildir_path], env)
+    result = _run_restic(["backup", "--json", maildir_path], env, _is_insecure(destination))
     if result.returncode != 0:
         raise RuntimeError(f"Restic backup failed: {result.stderr}")
 
@@ -129,7 +138,7 @@ def run_backup(destination: BackupDestination, account_id: str, maildir_path: st
 def list_snapshots(destination: BackupDestination, account_id: str) -> list[dict]:
     """List all snapshots in the restic repository."""
     env = build_env(destination, account_id)
-    result = _run_restic(["snapshots", "--json"], env)
+    result = _run_restic(["snapshots", "--json"], env, _is_insecure(destination))
     if result.returncode != 0:
         raise RuntimeError(f"Restic snapshots failed: {result.stderr}")
     try:
@@ -146,7 +155,11 @@ def restore_snapshot(
 ) -> dict:
     """Restore a specific snapshot to the target path."""
     env = build_env(destination, account_id)
-    result = _run_restic(["restore", snapshot_id, "--target", target_path], env)
+    result = _run_restic(
+        ["restore", snapshot_id, "--target", target_path],
+        env,
+        _is_insecure(destination),
+    )
     if result.returncode != 0:
         raise RuntimeError(f"Restic restore failed: {result.stderr}")
     return {"snapshot_id": snapshot_id, "target_path": target_path, "output": result.stdout}
@@ -165,7 +178,7 @@ def apply_retention(
     retention_args = get_retention_args(preset, keep_daily, keep_weekly, keep_monthly)
     if not retention_args:
         return {"pruned": False, "reason": "no retention args"}
-    result = _run_restic(["forget", "--prune", *retention_args], env)
+    result = _run_restic(["forget", "--prune", *retention_args], env, _is_insecure(destination))
     if result.returncode != 0:
         raise RuntimeError(f"Restic forget failed: {result.stderr}")
     return {"pruned": True, "output": result.stdout}
@@ -180,7 +193,7 @@ def forget_all(destination: BackupDestination, account_id: str) -> bool:
         return True
 
     snapshot_ids = [s["short_id"] for s in snapshots]
-    result = _run_restic(["forget", "--prune", *snapshot_ids], env)
+    result = _run_restic(["forget", "--prune", *snapshot_ids], env, _is_insecure(destination))
     if result.returncode != 0:
         logger.error("Failed to forget all snapshots: %s", result.stderr)
         return False
