@@ -68,6 +68,14 @@
     {% block scripts %}{% endblock %}
     <script>
     lucide.createIcons();
+    {% set _flash_success = get_flash(request, "success") %}
+    {% set _flash_error = get_flash(request, "error") %}
+    {% if _flash_success %}
+    document.addEventListener('DOMContentLoaded', function() { showToast('{{ _flash_success }}', 'success'); });
+    {% endif %}
+    {% if _flash_error %}
+    document.addEventListener('DOMContentLoaded', function() { showToast('{{ _flash_error }}', 'error'); });
+    {% endif %}
     function showToast(msg, type) {
         var c = document.getElementById('toast-container');
         var t = document.createElement('div');

@@ -3,16 +3,6 @@
 {% block content %}
 <h2><i data-lucide="users" class="icon-xl icon-inline"></i>User Management</h2>
 
-{% if error == "invalid_admin_password" %}
-<script>document.addEventListener('DOMContentLoaded', function() { showToast('Admin password is incorrect.', 'error'); });</script>
-{% elif error == "password_too_short" %}
-<script>document.addEventListener('DOMContentLoaded', function() { showToast('Password must be at least 8 characters.', 'error'); });</script>
-{% elif error %}
-<script>document.addEventListener('DOMContentLoaded', function() { showToast('{{ error }}', 'error'); });</script>
-{% endif %}
-{% if success %}
-<script>document.addEventListener('DOMContentLoaded', function() { showToast('{{ success }}', 'success'); });</script>
-{% endif %}
 
 <div class="table-wrap">
 <table>

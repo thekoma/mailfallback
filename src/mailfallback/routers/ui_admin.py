@@ -83,18 +83,21 @@ async def admin_change_user_password(
     form = await request.form()
     new_password = form["new_password"]
     if len(new_password) < MIN_PASSWORD_LENGTH:
-        return RedirectResponse("/admin/users?error=password_too_short", status_code=303)
+        request.session["flash_error"] = f"Password must be at least {MIN_PASSWORD_LENGTH} chars"
+        return RedirectResponse("/admin/users", status_code=303)
 
     if user.password_hash and not _admin_pw_verified(request):
         admin_password = form.get("admin_password", "")
         if not admin_password or not verify_password(admin_password, user.password_hash):
-            return RedirectResponse("/admin/users?error=invalid_admin_password", status_code=303)
+            request.session["flash_error"] = "Admin password is incorrect"
+            return RedirectResponse("/admin/users", status_code=303)
         request.session["admin_pw_verified_at"] = time.time()
 
     try:
         change_password(db, target_user_id, new_password)
     except ValueError as e:
-        return RedirectResponse(f"/admin/users?error={e}", status_code=303)
+        request.session["flash_error"] = str(e)
+        return RedirectResponse("/admin/users", status_code=303)
     target = db.query(User).filter(User.id == target_user_id).first()
     log_action(
         db,
@@ -106,9 +109,8 @@ async def admin_change_user_password(
         ip_address=request.client.host if request.client else None,
     )
     target_name = target.username if target else target_user_id
-    return RedirectResponse(
-        f"/admin/users?success=Password+updated+for+{target_name}", status_code=303
-    )
+    request.session["flash_success"] = f"Password updated for {target_name}"
+    return RedirectResponse("/admin/users", status_code=303)
 
 
 @router.post("/admin/users/{target_user_id}/edit")
@@ -141,6 +143,7 @@ async def admin_edit_user(
             resource_name=target.username if target else target_user_id,
             ip_address=request.client.host if request.client else None,
         )
+        request.session["flash_success"] = f"User {target.username if target else ''} updated"
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -158,7 +161,8 @@ async def admin_toggle_user(
 
     target = db.query(User).filter(User.id == target_user_id).first()
     if target:
-        update_user(db, target_user_id, enabled=not target.enabled)
+        new_state = not target.enabled
+        update_user(db, target_user_id, enabled=new_state)
         log_action(
             db,
             user=user,
@@ -168,6 +172,8 @@ async def admin_toggle_user(
             resource_name=target.username,
             ip_address=request.client.host if request.client else None,
         )
+        status_label = "enabled" if new_state else "disabled"
+        request.session["flash_success"] = f"User {target.username} {status_label}"
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -183,6 +189,8 @@ async def admin_delete_user(
     if target_user_id == user.id:
         return RedirectResponse("/admin/users", status_code=303)
 
+    target = db.query(User).filter(User.id == target_user_id).first()
+    target_name = target.username if target else target_user_id
     delete_user(db, target_user_id)
     log_action(
         db,
@@ -192,6 +200,7 @@ async def admin_delete_user(
         resource_id=target_user_id,
         ip_address=request.client.host if request.client else None,
     )
+    request.session["flash_success"] = f"User {target_name} deleted"
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -211,7 +220,8 @@ async def admin_migrate_user(
     try:
         migration = initiate_home_migration(db, target_user_id, target_store_id)
     except ValueError as e:
-        return RedirectResponse(f"/admin/users?error={e}", status_code=303)
+        request.session["flash_error"] = str(e)
+        return RedirectResponse("/admin/users", status_code=303)
 
     log_action(
         db,
@@ -322,8 +332,6 @@ def admin_users_page(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/")
     users = list_users(db)
     stores = list_stores(db)
-    error = request.query_params.get("error")
-    success = request.query_params.get("success")
     return templates.TemplateResponse(
         request=request,
         name="admin_users.html",
@@ -332,8 +340,6 @@ def admin_users_page(request: Request, db: Session = Depends(get_db)):
             "users": users,
             "stores": stores,
             "admin_verified": _admin_pw_verified(request),
-            "error": error,
-            "success": success,
         },
     )
 
@@ -347,10 +353,12 @@ async def admin_create_user(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     role = form["role"]
     if role not in ("admin", "user"):
-        return RedirectResponse("/admin/users?error=invalid_role", status_code=303)
+        request.session["flash_error"] = "Invalid role"
+        return RedirectResponse("/admin/users", status_code=303)
     password = form["password"]
     if len(password) < MIN_PASSWORD_LENGTH:
-        return RedirectResponse("/admin/users?error=password_too_short", status_code=303)
+        request.session["flash_error"] = f"Password must be at least {MIN_PASSWORD_LENGTH} chars"
+        return RedirectResponse("/admin/users", status_code=303)
     store_id = form.get("store_id") or ensure_default_store(db).id
     new_user = create_user(db, form["username"], password, role, store_id=store_id)
     set_allowed_stores(db, new_user.id, [store_id])
@@ -363,6 +371,7 @@ async def admin_create_user(request: Request, db: Session = Depends(get_db)):
         resource_name=new_user.username,
         ip_address=request.client.host if request.client else None,
     )
+    request.session["flash_success"] = f"User {new_user.username} created"
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -498,7 +507,6 @@ def admin_stores_page(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/")
     stores = list_stores(db)
     all_users = list_users(db)
-    error = request.query_params.get("error")
 
     store_stats = {}
     store_orphans = {}
@@ -521,7 +529,6 @@ def admin_stores_page(request: Request, db: Session = Depends(get_db)):
             "user": user,
             "stores": stores,
             "all_users": all_users,
-            "error": error,
             "store_stats": store_stats,
             "store_orphans": store_orphans,
         },
@@ -544,6 +551,7 @@ async def admin_create_store(request: Request, db: Session = Depends(get_db)):
         resource_name=store.name,
         ip_address=request.client.host if request.client else None,
     )
+    request.session["flash_success"] = f"Store {store.name} created"
     return RedirectResponse("/admin/stores", status_code=303)
 
 
@@ -554,7 +562,8 @@ async def admin_toggle_store(store_id: str, request: Request, db: Session = Depe
         return RedirectResponse("/", status_code=303)
     store = db.query(MailStore).filter(MailStore.id == store_id).first()
     if store:
-        update_store(db, store_id, enabled=not store.enabled)
+        new_state = not store.enabled
+        update_store(db, store_id, enabled=new_state)
         log_action(
             db,
             user=user,
@@ -564,6 +573,8 @@ async def admin_toggle_store(store_id: str, request: Request, db: Session = Depe
             resource_name=store.name,
             ip_address=request.client.host if request.client else None,
         )
+        status_label = "enabled" if new_state else "disabled"
+        request.session["flash_success"] = f"Store {store.name} {status_label}"
     return RedirectResponse("/admin/stores", status_code=303)
 
 
@@ -612,7 +623,8 @@ async def admin_delete_store(store_id: str, request: Request, db: Session = Depe
         return RedirectResponse("/", status_code=303)
     ok, error = delete_store(db, store_id)
     if not ok:
-        return RedirectResponse(f"/admin/stores?error={error}", status_code=303)
+        request.session["flash_error"] = error
+        return RedirectResponse("/admin/stores", status_code=303)
     log_action(
         db,
         user=user,
@@ -621,6 +633,7 @@ async def admin_delete_store(store_id: str, request: Request, db: Session = Depe
         resource_id=store_id,
         ip_address=request.client.host if request.client else None,
     )
+    request.session["flash_success"] = "Store deleted"
     return RedirectResponse("/admin/stores", status_code=303)
 
 
@@ -636,7 +649,8 @@ async def admin_drain_store(store_id: str, request: Request, db: Session = Depen
     try:
         migrations = initiate_store_drain(db, store_id, target_store_id)
     except ValueError as e:
-        return RedirectResponse(f"/admin/stores?error={e}", status_code=303)
+        request.session["flash_error"] = str(e)
+        return RedirectResponse("/admin/stores", status_code=303)
 
     if migrations:
         migration_ids = [m.id for m in migrations]
