@@ -79,6 +79,16 @@ def _run_restic(args: list[str], env: dict[str, str]) -> subprocess.CompletedPro
     return subprocess.run(cmd, capture_output=True, text=True, env=full_env)
 
 
+def test_destination(destination: BackupDestination) -> dict:
+    """Test connectivity to a backup destination. Returns {ok: bool, error: str}."""
+    test_id = "__mfb_connection_test__"
+    env = build_env(destination, test_id)
+    result = _run_restic(env, ["init", "--json"], timeout=30)
+    if result.returncode == 0 or "already initialized" in result.stderr.lower():
+        return {"ok": True}
+    return {"ok": False, "error": result.stderr.strip()[:200]}
+
+
 def init_repo(destination: BackupDestination, account_id: str) -> bool:
     """Initialize a restic repository. Returns True if init succeeded or repo exists."""
     env = build_env(destination, account_id)

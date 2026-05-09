@@ -94,6 +94,17 @@ async def admin_create_backup_destination(request: Request, db: Session = Depend
 
     db.add(dest)
     db.commit()
+    db.refresh(dest)
+
+    from mailfallback.services.restic_service import test_destination
+
+    test_result = test_destination(dest)
+    if not test_result["ok"]:
+        db.delete(dest)
+        db.commit()
+        error_msg = test_result.get("error", "Unknown error")
+        request.session["flash_error"] = f"Connection test failed: {error_msg}"
+        return RedirectResponse("/admin/backup", status_code=303)
 
     log_action(
         db,
@@ -139,6 +150,30 @@ async def admin_delete_backup_destination(
         ip_address=request.client.host if request.client else None,
     )
     request.session["flash_success"] = f"Backup destination {dest_name} deleted"
+    return RedirectResponse("/admin/backup", status_code=303)
+
+
+@router.post("/admin/backup/{dest_id}/test")
+async def admin_test_backup_destination(
+    dest_id: str, request: Request, db: Session = Depends(get_db)
+):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+
+    dest = db.query(BackupDestination).filter(BackupDestination.id == dest_id).first()
+    if not dest:
+        request.session["flash_error"] = "Destination not found"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    from mailfallback.services.restic_service import test_destination
+
+    result = test_destination(dest)
+    if result["ok"]:
+        request.session["flash_success"] = f"{dest.name}: connection OK"
+    else:
+        error_msg = result.get("error", "Unknown error")
+        request.session["flash_error"] = f"{dest.name}: {error_msg}"
     return RedirectResponse("/admin/backup", status_code=303)
 
 
