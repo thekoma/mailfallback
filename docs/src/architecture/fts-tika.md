@@ -6,31 +6,25 @@ MailFallBack uses Dovecot's FTS (Full-Text Search) Flatcurve engine to index mes
 
 ### Indexing Pipeline
 
-```
-Message arrives in Maildir (via mbsync)
-        |
-        v
-User searches via IMAP SEARCH
-        |
-        v
-Dovecot checks FTS index
-        |
-        +-- Index exists --> return results
-        |
-        +-- Index missing --> index message
-                |
-                v
-        Extract text from headers + body
-                |
-                +-- Plain text / HTML body --> index directly
-                |
-                +-- Attachment --> send to Tika decoder (if enabled)
-                                        |
-                                        v
-                                  Tika extracts text
-                                        |
-                                        v
-                                  Text added to FTS index
+```mermaid
+flowchart TD
+    MSG["Message arrives in Maildir<br/>(via mbsync)"]
+    SEARCH["User searches via IMAP SEARCH"]
+    CHECK{"Dovecot checks<br/>FTS index"}
+    RESULTS["Return results"]
+    INDEX["Index message"]
+    EXTRACT["Extract text from<br/>headers + body"]
+    PLAIN{"Content type?"}
+    DIRECT["Index directly"]
+    TIKA["Send to Tika decoder<br/>(if enabled)"]
+    TIKA_EXT["Tika extracts text"]
+    ADD["Text added to FTS index"]
+
+    MSG --> SEARCH --> CHECK
+    CHECK -- "Index exists" --> RESULTS
+    CHECK -- "Index missing" --> INDEX --> EXTRACT --> PLAIN
+    PLAIN -- "Plain text / HTML body" --> DIRECT --> ADD
+    PLAIN -- "Attachment" --> TIKA --> TIKA_EXT --> ADD
 ```
 
 ### Flatcurve Engine

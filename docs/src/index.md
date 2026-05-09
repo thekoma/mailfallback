@@ -23,32 +23,22 @@ MailFallBack (MFB) wraps [mbsync/isync](https://isync.sourceforge.io/) with a mo
 
 ## Architecture at a Glance
 
-```
-                   +------------------+
-                   |   Web Browser    |
-                   +--------+---------+
-                            |
-               +------------+------------+
-               |                         |
-        +------+------+          +-------+------+
-        | MFB Web UI  |          |  Roundcube   |
-        | :8000       |          |  :8001       |
-        +------+------+          +-------+------+
-               |                         |
-               |    +--------+           |
-               +--->| Dovecot|<----------+
-               |    | :31143 |
-               |    +---+----+
-               |        |
-        +------+--------+------+
-        |    PostgreSQL         |
-        |    :5432              |
-        +-----------+-----------+
-                    |
-             +------+------+
-             |  Maildir    |
-             |  Storage    |
-             +-------------+
+```mermaid
+graph TD
+    Browser["Web Browser"]
+    MFB["MFB Web UI<br/>:8000"]
+    RC["Roundcube<br/>:8001"]
+    DOV["Dovecot<br/>:31143"]
+    PG["PostgreSQL<br/>:5432"]
+    MAIL["Maildir Storage"]
+
+    Browser --> MFB
+    Browser --> RC
+    MFB --> DOV
+    RC --> DOV
+    MFB --> PG
+    DOV --> PG
+    PG --- MAIL
 ```
 
 MFB is the control plane. It generates configuration for Dovecot and Roundcube, manages accounts and users in PostgreSQL, and runs mbsync to pull mail from upstream IMAP servers into Maildir storage. Dovecot serves that storage as read-only IMAP. Roundcube provides browser-based access to Dovecot.

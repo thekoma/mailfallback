@@ -4,63 +4,61 @@ MailFallBack is a multi-container application where the MFB service acts as the 
 
 ## Component Diagram
 
-```
-+----------------------------------------------------------+
-|                      Web Browser                         |
-+----+---------------------------+-------------------------+
-     |                           |
-     | :8000                     | :8001
-     v                           v
-+----+----------+         +------+-------+
-|  MFB Web UI   |         |  Roundcube   |
-|  FastAPI       |         |  Webmail     |
-|               |         |              |
-|  - Dashboard  |         |  - Read mail |
-|  - Accounts   |         |  - Search    |
-|  - Admin      |         |  - Download  |
-|  - Restore    |         +---------+----+
-+--+---+---+----+                   |
-   |   |   |                        | IMAP :31143
-   |   |   |  Lua userdb            |
-   |   |   |  HTTP callback         |
-   |   |   |<-----------+          |
-   |   |   |             |          |
-   |   |   +---+   +-----+----------+
-   |   |       |   |    Dovecot      |
-   |   |       |   |    IMAP 2.4     |
-   |   |       |   |                 |
-   |   |       |   |  - SQL passdb   |
-   |   |       |   |  - Lua userdb   |
-   |   |       |   |  - ACL r/o      |
-   |   |       |   |  - FTS Flatcurve|
-   |   |       |   +----+-------+----+
-   |   |       |        |       |
-   |   |  doveadm :8080 |       | FTS decoder :9998
-   |   |<-------+-------+       |
-   |   |                  +-----+------+
-   |   |                  | Apache     |
-   |   |                  | Tika       |
-   |   |                  +------------+
-   |   |
-   |   | mbsync subprocess
-   |   v
-   | +------------------+
-   | | Upstream IMAP     |
-   | | (Gmail, Outlook,  |
-   | |  any IMAP server) |
-   | +------------------+
-   |
-   | SQL :5432
-   v
-+--+-----------+     +----------------+
-| PostgreSQL   |     | Maildir        |
-|              |     | Storage        |
-| - users      |     |                |
-| - accounts   |     | /data/mailboxes|
-| - sync_jobs  |     |   /{uuid}/     |
-| - audit_logs |     |     INBOX/     |
-| - rc_* tables|     |     Sent/      |
-+--------------+     +----------------+
+```mermaid
+graph TD
+    Browser["Web Browser"]
+
+    subgraph MFB ["MFB Web UI :8000"]
+        direction LR
+        D[Dashboard]
+        A[Accounts]
+        ADM[Admin]
+        RST[Restore]
+    end
+
+    subgraph RC ["Roundcube :8001"]
+        direction LR
+        RM[Read mail]
+        SR[Search]
+        DL[Download]
+    end
+
+    subgraph DOV ["Dovecot IMAP 2.4"]
+        direction LR
+        PASSDB[SQL passdb]
+        USERDB[Lua userdb]
+        ACL[ACL r/o]
+        FTS[FTS Flatcurve]
+    end
+
+    TIKA["Apache Tika<br/>:9998"]
+    UPSTREAM["Upstream IMAP<br/>(Gmail, Outlook, ...)"]
+
+    subgraph PG ["PostgreSQL :5432"]
+        direction LR
+        USERS[users]
+        ACCTS[accounts]
+        JOBS[sync_jobs]
+        AUDIT[audit_logs]
+        RCT["rc_* tables"]
+    end
+
+    subgraph MAIL ["Maildir Storage"]
+        direction LR
+        MDIR["/data/mailboxes/{uuid}/"]
+    end
+
+    Browser --> MFB
+    Browser --> RC
+    RC -- "IMAP :31143" --> DOV
+    MFB -- "Lua userdb HTTP callback" --> DOV
+    DOV -- "doveadm :8080" --> MFB
+    DOV -- "FTS decoder :9998" --> TIKA
+    MFB -- "mbsync subprocess" --> UPSTREAM
+    MFB -- "SQL :5432" --> PG
+    DOV --> PG
+    DOV --> MAIL
+    MFB --> MAIL
 ```
 
 ## Data Flow
@@ -94,21 +92,19 @@ This means no manual editing of Dovecot or Roundcube configuration is needed. MF
 
 ## Service Dependencies
 
-```
-db (PostgreSQL)
-  ^
-  |
-  +-- mailfallback (must be healthy)
-  |     ^
-  |     |
-  |     +-- dovecot (reads generated configs, calls Lua userdb)
-  |           ^
-  |           |
-  |           +-- webmail (connects to Dovecot IMAP)
-  |           |
-  |           +-- tika (Dovecot FTS decoder)
-  |
-  +-- webmail (shares database)
+```mermaid
+graph BT
+    PG["db (PostgreSQL)"]
+    MFB["mailfallback<br/>(must be healthy)"]
+    DOV["dovecot<br/>(reads generated configs,<br/>calls Lua userdb)"]
+    WM["webmail<br/>(connects to Dovecot IMAP,<br/>shares database)"]
+    TIKA["tika<br/>(Dovecot FTS decoder)"]
+
+    MFB --> PG
+    DOV --> MFB
+    WM --> DOV
+    WM --> PG
+    TIKA --> DOV
 ```
 
 MFB must be healthy before Dovecot starts, because Dovecot needs the generated config files. Roundcube must wait for Dovecot. Tika has no dependencies and can start independently.

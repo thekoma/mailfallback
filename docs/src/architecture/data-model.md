@@ -4,36 +4,92 @@ MFB stores all data in PostgreSQL. This page documents the database tables, thei
 
 ## Entity Relationship Diagram
 
-```
-+----------+       +----------------+       +-----------+
-|  User    |<----->| account_owners |<----->| Account   |
-+----+-----+  M:N  +----------------+  M:N  +-----+-----+
-     |                                             |
-     | 1:N                                         | 1:N
-     v                                             v
-+----+-----+                               +------+------+
-| Group    |                               | SyncJob     |
-| (owner)  |                               +-------------+
-+----+-----+
-     |
-     | M:N (group_members)      M:N (account_groups)
-     v                          v
-+----+-----+              +-----+------+
-|  User    |              |  Account   |
-+----------+              +------------+
+```mermaid
+erDiagram
+    User ||--o{ account_owners : ""
+    Account ||--o{ account_owners : ""
+    User ||--o{ Group : "owns"
+    Account ||--o{ SyncJob : "1:N"
+    User }o--o{ group_members : ""
+    Group ||--o{ group_members : ""
+    Account }o--o{ account_groups : ""
+    Group ||--o{ account_groups : ""
+    MailStore ||--o{ User : "store_id FK"
+    MailStore ||--o{ Account : "store_id FK"
+    User }o--o{ user_allowed_stores : ""
+    MailStore ||--o{ user_allowed_stores : ""
 
-+-----------+     +----------+
-| MailStore |<----| User     |  (store_id FK)
-|           |<----| Account  |  (store_id FK)
-+-----------+     +----------+
+    User {
+        uuid id PK
+        string username
+        string password_hash
+        enum role
+        string oidc_subject
+        boolean enabled
+        string store_id FK
+        boolean migrating
+    }
 
-+-----------------+     +-------------+
-| StoreMigration  |     | RestoreJob  |
-+-----------------+     +-------------+
+    Account {
+        uuid id PK
+        string name
+        string email_address
+        string provider
+        string imap_host
+        enum auth_type
+        string maildir_path
+        string store_id FK
+        boolean enabled
+    }
 
-+-----------------+     +-----------------+
-| AuditLog        |     | BackgroundTask  |
-+-----------------+     +-----------------+
+    Group {
+        uuid id PK
+        string name
+        string owner_id FK
+        boolean sso_sync
+    }
+
+    MailStore {
+        uuid id PK
+        string name
+        string path
+        boolean enabled
+        boolean is_default
+    }
+
+    SyncJob {
+        uuid id PK
+        string account_id FK
+        enum status
+        string source
+        datetime started_at
+    }
+
+    StoreMigration {
+        uuid id PK
+        string user_id FK
+        string account_id FK
+        enum status
+    }
+
+    RestoreJob {
+        uuid id PK
+        string source_account_id FK
+        string target_account_id FK
+        enum status
+    }
+
+    AuditLog {
+        uuid id PK
+        string action
+        string resource_type
+    }
+
+    BackgroundTask {
+        uuid id PK
+        string task_type
+        enum status
+    }
 ```
 
 ## Tables
