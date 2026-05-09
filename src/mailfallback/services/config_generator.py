@@ -98,10 +98,10 @@ fts_search_add_missing = yes
 
 def _dovecot_auth_conf(settings: Any) -> str:
     oauth2_section = ""
-    if settings.oidc_enabled and settings.oidc_discovery_url:
+    if settings.oidc_enabled and settings.oidc_userinfo_url:
         oauth2_section = f"""\
 
-oauth2_introspection_url = {settings.oidc_discovery_url.rsplit("/", 1)[0]}/userinfo
+oauth2_introspection_url = {settings.oidc_userinfo_url}
 oauth2_introspection_mode = auth
 oauth2_username_attribute = preferred_username
 
