@@ -274,20 +274,15 @@ end
 
 def _webmail_custom_php(settings: Any) -> str:
     oauth_block = ""
-    if settings.oidc_enabled and settings.oidc_client_id:
-        # Derive OAuth endpoints from the OIDC discovery URL
-        # e.g. https://auth.example.com/application/o/mailfallback/.well-known/openid-configuration
-        # base = https://auth.example.com/application/o/mailfallback
-        base_url = settings.oidc_discovery_url.replace("/.well-known/openid-configuration", "")
-        identity_uri = base_url.rsplit("/application/o/", 1)[0] + "/application/o/userinfo/"
+    if settings.webmail_oauth_client_id:
         oauth_block = f"""
 $config['oauth_provider'] = 'generic';
 $config['oauth_provider_name'] = 'SSO';
-$config['oauth_client_id'] = '{settings.oidc_client_id}';
-$config['oauth_client_secret'] = '{settings.oidc_client_secret}';
-$config['oauth_auth_uri'] = '{base_url}/authorize/';
-$config['oauth_token_uri'] = '{base_url}/token/';
-$config['oauth_identity_uri'] = '{identity_uri}';
+$config['oauth_client_id'] = '{settings.webmail_oauth_client_id}';
+$config['oauth_client_secret'] = '{settings.webmail_oauth_client_secret}';
+$config['oauth_auth_uri'] = '{settings.webmail_oauth_auth_uri}';
+$config['oauth_token_uri'] = '{settings.webmail_oauth_token_uri}';
+$config['oauth_identity_uri'] = '{settings.webmail_oauth_identity_uri}';
 $config['oauth_scope'] = 'openid email profile offline_access';
 $config['oauth_identity_fields'] = ['preferred_username'];
 $config['oauth_login_redirect'] = false;

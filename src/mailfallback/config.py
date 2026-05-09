@@ -39,6 +39,11 @@ class Settings(BaseSettings):
 
     webmail_enabled: bool = False
     webmail_url: str = ""
+    webmail_oauth_client_id: str = ""
+    webmail_oauth_client_secret: str = ""
+    webmail_oauth_auth_uri: str = ""
+    webmail_oauth_token_uri: str = ""
+    webmail_oauth_identity_uri: str = ""
 
     tika_enabled: bool = False
     tika_url: str = "http://tika:9998"

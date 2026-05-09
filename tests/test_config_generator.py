@@ -28,6 +28,11 @@ class FakeSettings:
     oidc_client_id = ""
     oidc_client_secret = ""
     oidc_discovery_url = ""
+    webmail_oauth_client_id = ""
+    webmail_oauth_client_secret = ""
+    webmail_oauth_auth_uri = ""
+    webmail_oauth_token_uri = ""
+    webmail_oauth_identity_uri = ""
 
 
 def _make_settings(tmp_path: Path, **overrides) -> FakeSettings:
@@ -160,10 +165,11 @@ def test_webmail_config_with_oauth(tmp_path):
     settings = _make_settings(
         tmp_path,
         webmail_enabled=True,
-        oidc_enabled=True,
-        oidc_client_id="my-client-id",
-        oidc_client_secret="my-client-secret",
-        oidc_discovery_url="https://auth.example.com/application/o/mailfallback/.well-known/openid-configuration",
+        webmail_oauth_client_id="rc-client-id",
+        webmail_oauth_client_secret="rc-secret",
+        webmail_oauth_auth_uri="https://sso.example.com/authorize/",
+        webmail_oauth_token_uri="https://sso.example.com/token/",
+        webmail_oauth_identity_uri="https://sso.example.com/userinfo/",
     )
     written = generate_all_configs(settings)
 
@@ -173,9 +179,9 @@ def test_webmail_config_with_oauth(tmp_path):
 
     content = custom_php.read_text()
     assert "$config['oauth_provider'] = 'generic'" in content
-    assert "$config['oauth_client_id'] = 'my-client-id'" in content
-    assert "$config['oauth_client_secret'] = 'my-client-secret'" in content
-    assert "authorize" in content
+    assert "$config['oauth_client_id'] = 'rc-client-id'" in content
+    assert "$config['oauth_client_secret'] = 'rc-secret'" in content
+    assert "https://sso.example.com/authorize/" in content
     assert "token" in content
 
 
