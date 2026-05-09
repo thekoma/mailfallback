@@ -33,7 +33,7 @@
             <a href="/" {% if request.url.path == "/" %}class="active"{% endif %}><i data-lucide="home" class="icon-nav"></i>Dashboard</a>
             <a href="/accounts" {% if request.url.path.startswith("/accounts") %}class="active"{% endif %}><i data-lucide="mail" class="icon-nav"></i>Accounts</a>
             <a href="/restore" {% if request.url.path.startswith("/restore") %}class="active"{% endif %}><i data-lucide="archive-restore" class="icon-nav"></i>Restore</a>
-            {% if webmail_url %}
+            {% if webmail_enabled and webmail_url %}
             <a href="{{ webmail_url }}" target="_blank" rel="noopener"><i data-lucide="globe" class="icon-nav"></i>Webmail</a>
             {% endif %}
             {% if user.role.value == "admin" %}

@@ -32,6 +32,7 @@ def test_webmail_link_hidden_by_default(client, db_session, default_store):
 
 def test_webmail_link_shown_when_configured(db_session, default_store, monkeypatch):
     import sys
+    import tempfile
 
     # Remove modules from cache to force reload with new settings
     modules_to_remove = ["mailfallback.routers.ui", "mailfallback.app"]
@@ -41,6 +42,8 @@ def test_webmail_link_shown_when_configured(db_session, default_store, monkeypat
 
     # Monkeypatch BEFORE importing to ensure the global is set correctly
     monkeypatch.setattr("mailfallback.config.settings.webmail_url", "http://localhost:8001")
+    monkeypatch.setattr("mailfallback.config.settings.webmail_enabled", True)
+    monkeypatch.setattr("mailfallback.config.settings.confs_path", tempfile.mkdtemp())
 
     # Now import and create app - the ui module will be imported with the new setting
     from mailfallback.app import create_app
@@ -50,6 +53,7 @@ def test_webmail_link_shown_when_configured(db_session, default_store, monkeypat
     from mailfallback.routers import ui
 
     ui.templates.env.globals["webmail_url"] = "http://localhost:8001"
+    ui.templates.env.globals["webmail_enabled"] = True
 
     application = create_app()
     application.dependency_overrides[get_db] = lambda: db_session
