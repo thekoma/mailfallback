@@ -678,15 +678,16 @@ async def admin_edit_group(group_id: str, request: Request, db: Session = Depend
     form = await request.form()
     member_ids = form.getlist("member_ids")
     account_ids = form.getlist("account_ids")
-    sso_sync = bool(form.get("sso_sync"))
-    update_group(db, group_id, sso_sync=sso_sync)
     if user.role == UserRole.admin:
+        sso_sync = bool(form.get("sso_sync"))
+        update_group(db, group_id, sso_sync=sso_sync)
         group.members = db.query(User).filter(User.id.in_(member_ids)).all() if member_ids else []
         set_group_accounts(db, group_id, account_ids)
     else:
         owned_account_ids = {a.id for a in user.accounts}
         safe_account_ids = [aid for aid in account_ids if aid in owned_account_ids]
-        set_group_accounts(db, group_id, safe_account_ids)
+        non_owned_ids = [a.id for a in group.accounts if a.id not in owned_account_ids]
+        set_group_accounts(db, group_id, safe_account_ids + non_owned_ids)
     db.commit()
     log_action(
         db,

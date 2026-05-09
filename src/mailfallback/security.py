@@ -1,9 +1,12 @@
 # src/mailfallback/security.py
 import base64
 import hashlib
+import logging
 
 import bcrypt
 from cryptography.fernet import Fernet, InvalidToken
+
+logger = logging.getLogger(__name__)
 
 _KDF_ITERATIONS = 600_000
 _KDF_SALT = b"mailfallback-fernet-v1"
@@ -38,4 +41,6 @@ def decrypt_credentials(encrypted: str, secret_key: str) -> str:
         return f.decrypt(encrypted.encode()).decode()
     except InvalidToken:
         f_legacy = Fernet(_derive_fernet_key_legacy(secret_key))
-        return f_legacy.decrypt(encrypted.encode()).decode()
+        plaintext = f_legacy.decrypt(encrypted.encode()).decode()
+        logger.warning("Legacy KDF used for decryption — credentials should be re-encrypted")
+        return plaintext

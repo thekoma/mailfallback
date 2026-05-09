@@ -1,6 +1,8 @@
 # src/mailfallback/routers/auth.py
 import json
+import re
 import secrets
+import urllib.parse
 
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -39,6 +41,17 @@ def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
     request.session["user_id"] = user.id
     if user.preferences:
         request.session["theme"] = user.preferences.get("theme", "light")
+    from mailfallback.services.audit_service import log_action
+
+    log_action(
+        db,
+        user=user,
+        action="user.login",
+        resource_type="user",
+        resource_id=user.id,
+        resource_name=user.username,
+        ip_address=request.client.host if request.client else None,
+    )
     return {"ok": True, "role": user.role.value}
 
 
@@ -93,8 +106,11 @@ def _oauth_failure_redirect(db, request, account_id, reason="failed"):
             name = account.name
             db.delete(account)
             db.commit()
+            q_reason = urllib.parse.quote(str(reason))
+            q_email = urllib.parse.quote(str(email or ""))
+            q_name = urllib.parse.quote(str(name or ""))
             return RedirectResponse(
-                f"/accounts/new?oauth_failed=true&reason={reason}&email={email}&name={name}",
+                f"/accounts/new?oauth_failed=true&reason={q_reason}&email={q_email}&name={q_name}",
                 status_code=303,
             )
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
@@ -226,8 +242,19 @@ async def oidc_callback(request: Request, db: Session = Depends(get_db)):
     userinfo = token.get("userinfo", {})
 
     sub = userinfo.get("sub")
-    username = userinfo.get("preferred_username") or userinfo.get("email", sub)
+    if not sub or not isinstance(sub, str) or not sub.strip():
+        raise HTTPException(status_code=400, detail="Invalid OIDC token: missing sub claim")
+
+    raw_username = userinfo.get("preferred_username") or userinfo.get("email", sub)
+    username = re.sub(r"[^a-zA-Z0-9@._-]", "_", str(raw_username))[:255]
     groups = userinfo.get("groups", [])
+
+    if (
+        settings.oidc_user_group
+        and settings.oidc_user_group not in groups
+        and not (settings.oidc_admin_group and settings.oidc_admin_group in groups)
+    ):
+        raise HTTPException(status_code=403, detail="Not a member of the required group")
 
     role = UserRole.user
     if settings.oidc_admin_group and settings.oidc_admin_group in groups:
@@ -241,7 +268,7 @@ async def oidc_callback(request: Request, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
     else:
-        if user.role != role:
+        if settings.oidc_admin_group and user.role != role:
             from mailfallback.services.audit_service import log_action
 
             log_action(
@@ -257,6 +284,19 @@ async def oidc_callback(request: Request, db: Session = Depends(get_db)):
             db.commit()
 
     sync_sso_groups(db, user, groups)
+
+    from mailfallback.services.audit_service import log_action
+
+    log_action(
+        db,
+        user=user,
+        action="user.login",
+        resource_type="user",
+        resource_id=user.id,
+        resource_name=user.username,
+        details={"method": "oidc"},
+        ip_address=request.client.host if request.client else None,
+    )
 
     request.session["user_id"] = user.id
     if user.preferences:

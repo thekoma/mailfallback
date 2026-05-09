@@ -1,6 +1,7 @@
 # src/mailfallback/services/user_service.py
 import logging
 import os
+import re
 import socket
 import time
 from email.utils import formatdate
@@ -57,6 +58,8 @@ def list_users(db: Session) -> list[User]:
 
 
 def change_password(db: Session, user_id: str, new_password: str) -> bool:
+    if len(new_password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return False
@@ -72,6 +75,8 @@ def update_user(db: Session, user_id: str, **kwargs) -> User | None:
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return None
+    if "store_id" in kwargs and user.migrating:
+        kwargs.pop("store_id")
     for key, value in kwargs.items():
         if key in _UPDATABLE_USER_FIELDS:
             setattr(user, key, value)
@@ -101,14 +106,20 @@ def ensure_admin_exists(db: Session, default_store_id: str) -> None:
         )
 
 
+def _sanitize_path_component(name: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9@._-]", "_", name)
+
+
 def create_welcome_email(store_path: str, username: str) -> None:
-    inbox_new = os.path.join(store_path, ".dovecot-home", username, "root-inbox", "new")
+    safe_username = _sanitize_path_component(username)
+    inbox_new = os.path.join(store_path, ".dovecot-home", safe_username, "root-inbox", "new")
     os.makedirs(inbox_new, exist_ok=True)
 
     # Also create cur/ and tmp/ for valid Maildir
     for sub in ("cur", "tmp"):
         os.makedirs(
-            os.path.join(store_path, ".dovecot-home", username, "root-inbox", sub), exist_ok=True
+            os.path.join(store_path, ".dovecot-home", safe_username, "root-inbox", sub),
+            exist_ok=True,
         )
 
     timestamp = int(time.time())

@@ -61,6 +61,8 @@ def test_delete_temp_imap_user(db_session, default_store):
 
 
 def test_cleanup_temp_imap_users(db_session, default_store):
+    from datetime import UTC, datetime, timedelta
+
     acct = Account(
         name="cleanup",
         imap_host="imap.test.com",
@@ -73,6 +75,12 @@ def test_cleanup_temp_imap_users(db_session, default_store):
 
     create_temp_imap_user(db_session, [acct.id])
     create_temp_imap_user(db_session, [acct.id])
+
+    # Backdate created_at so they pass the 1-hour cutoff
+    old_time = datetime.now(UTC) - timedelta(hours=2)
+    for u in db_session.query(User).filter(User.username.like(f"{TEMP_USER_PREFIX}%")).all():
+        u.created_at = old_time
+    db_session.commit()
 
     count = cleanup_temp_imap_users(db_session)
     assert count == 2
@@ -96,7 +104,14 @@ def test_cleanup_does_not_affect_real_users(db_session, default_store):
     db_session.add(acct)
     db_session.commit()
 
+    from datetime import UTC, datetime, timedelta
+
     create_temp_imap_user(db_session, [acct.id])
+    # Backdate so cleanup finds it
+    old_time = datetime.now(UTC) - timedelta(hours=2)
+    for u in db_session.query(User).filter(User.username.like(f"{TEMP_USER_PREFIX}%")).all():
+        u.created_at = old_time
+    db_session.commit()
     cleanup_temp_imap_users(db_session)
 
     assert db_session.query(User).filter(User.username == "realuser").first() is not None

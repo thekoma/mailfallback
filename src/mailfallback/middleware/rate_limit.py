@@ -10,6 +10,12 @@ _RATE_LIMITED_PATHS = {
     "/login": (10, 60),
     "/profile/password": (5, 60),
     "/api/sync/all": (3, 60),
+    "/api/accounts": (5, 60),
+    "/api/restore": (3, 60),
+}
+
+_RATE_LIMITED_PREFIXES = {
+    "/api/sync/": (5, 60),
 }
 
 _counters: dict[str, list[float]] = defaultdict(list)
@@ -25,6 +31,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         config = _RATE_LIMITED_PATHS.get(request.url.path)
+        if not config:
+            for prefix, prefix_config in _RATE_LIMITED_PREFIXES.items():
+                if request.url.path.startswith(prefix):
+                    config = prefix_config
+                    break
         if not config:
             return await call_next(request)
 
