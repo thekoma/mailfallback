@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
-from mailfallback.models import SyncJob, User
+from mailfallback.models import Account, SyncJob, User, UserRole
 from mailfallback.services.account_service import get_accounts_for_user
 from mailfallback.services.user_service import authenticate_user
 
@@ -235,29 +235,74 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/partials/system-status", response_class=HTMLResponse)
+def system_status_partial(request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return HTMLResponse("")
+
+    from mailfallback.models import JobStatus, RestoreJob, SyncJob
+    from mailfallback.services.background_tasks import get_latest_task
+    from mailfallback.services.dovecot_manager import get_cached_health
+
+    dovecot = get_cached_health()
+    fts = get_latest_task(db, "fts_reindex")
+    resync = get_latest_task(db, "force_resync")
+
+    syncing_count = db.query(SyncJob).filter(SyncJob.status == JobStatus.running).count()
+    error_accounts = db.query(Account).filter(Account.sync_state == "error").all()
+
+    active_restores = (
+        db.query(RestoreJob)
+        .filter(RestoreJob.status.in_([JobStatus.pending, JobStatus.running]))
+        .all()
+    )
+
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/system_status.html",
+        context={
+            "dovecot": dovecot,
+            "fts": fts,
+            "resync": resync,
+            "syncing_count": syncing_count,
+            "error_accounts": error_accounts,
+            "active_restores": active_restores,
+        },
+    )
+
+
 @router.get("/accounts", response_class=HTMLResponse)
-def accounts_page(request: Request, db: Session = Depends(get_db)):
+def accounts_page(request: Request, show_all: str = "", db: Session = Depends(get_db)):
     user = _get_session_user(request, db)
     if not user:
         return RedirectResponse("/login")
-    accounts = get_accounts_for_user(db, user)
+    is_admin = user.role == UserRole.admin
+    show_all_users = is_admin and show_all == "1"
+    accounts = db.query(Account).all() if show_all_users else get_accounts_for_user(db, user)
     return templates.TemplateResponse(
         request=request,
         name="accounts.html",
-        context={"user": user, "accounts": accounts},
+        context={"user": user, "accounts": accounts, "show_all_users": show_all_users},
     )
 
 
 @router.get("/partials/accounts-table", response_class=HTMLResponse)
-def accounts_table_partial(request: Request, db: Session = Depends(get_db)):
+def accounts_table_partial(request: Request, show_all: str = "", db: Session = Depends(get_db)):
     user = _get_session_user(request, db)
     if not user:
         response = HTMLResponse("")
         response.headers["HX-Redirect"] = "/login"
         return response
-    accounts = get_accounts_for_user(db, user)
-    return templates.TemplateResponse(
+    is_admin = user.role == UserRole.admin
+    show_all_users = is_admin and show_all == "1"
+    accounts = db.query(Account).all() if show_all_users else get_accounts_for_user(db, user)
+    any_syncing = any(a.sync_state.value == "syncing" for a in accounts)
+    response = templates.TemplateResponse(
         request=request,
         name="partials/accounts_table.html",
         context={"user": user, "accounts": accounts},
     )
+    if not any_syncing:
+        response.headers["HX-Trigger"] = "sync-idle"
+    return response

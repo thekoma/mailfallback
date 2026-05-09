@@ -1,0 +1,119 @@
+<div class="status-strip">
+    <span class="status-badge {% if dovecot.ok %}status-ok{% elif dovecot.ok is none %}status-neutral{% else %}status-error{% endif %}"
+          onclick="toggleStatusDetail('dovecot')">
+        <i data-lucide="{% if dovecot.ok %}check-circle{% elif dovecot.ok is none %}help-circle{% else %}x-circle{% endif %}" class="icon-sm"></i>
+        Dovecot {% if dovecot.ok %}UP{% elif dovecot.ok is none %}?{% else %}DOWN{% endif %}
+    </span>
+
+    <span class="status-badge {% if fts.status == 'running' %}status-active{% elif fts.status == 'failed' %}status-error{% else %}status-neutral{% endif %}"
+          onclick="toggleStatusDetail('fts')">
+        <i data-lucide="search" class="icon-sm {% if fts.status == 'running' %}spin{% endif %}"></i>
+        FTS {% if fts.status == 'running' %}{{ fts.progress_current }}/{{ fts.progress_total }}{% elif fts.status == 'failed' %}error{% else %}idle{% endif %}
+    </span>
+
+    <span class="status-badge {% if syncing_count > 0 and error_accounts %}status-active{% elif error_accounts %}status-error{% elif syncing_count > 0 %}status-active{% else %}status-neutral{% endif %}"
+          onclick="toggleStatusDetail('sync')">
+        <i data-lucide="refresh-cw" class="icon-sm {% if syncing_count > 0 %}spin{% endif %}"></i>
+        {{ syncing_count }} syncing{% if error_accounts %} · {{ error_accounts|length }} errors{% endif %}
+    </span>
+
+    <span class="status-badge {% if active_restores %}status-active{% else %}status-neutral{% endif %}"
+          onclick="toggleStatusDetail('restore')">
+        <i data-lucide="archive-restore" class="icon-sm"></i>
+        {{ active_restores|length }} restore{{ 's' if active_restores|length != 1 else '' }}
+    </span>
+</div>
+
+<div id="status-detail-dovecot" class="status-detail" style="display:none;">
+    {% if dovecot.ok %}
+    <span class="text-small text-muted">IMAP + doveadm API responding normally</span>
+    {% elif dovecot.ok is none %}
+    <span class="text-small text-muted">Not checked yet</span>
+    {% else %}
+    <span class="text-small" style="color:var(--mfb-badge-error-fg);">{{ dovecot.error }}</span>
+    {% endif %}
+</div>
+
+<div id="status-detail-fts" class="status-detail" style="display:none;">
+    {% if fts.status == 'running' %}
+    <div class="status-detail-header">
+        <strong>FTS Reindex</strong>
+        <span class="text-small text-muted">{% if fts.started_at %}started {{ fts.started_at|time_ago }}{% endif %}</span>
+    </div>
+    <div class="progress-bar-wrap">
+        {% set pct = (fts.progress_current * 100 // fts.progress_total) if fts.progress_total > 0 else 0 %}
+        <div class="progress-bar" style="width:{{ pct }}%"></div>
+    </div>
+    {% if fts.user_statuses %}
+    <div class="text-small" style="margin-top:4px;">
+        {% for us in fts.user_statuses %}
+        {% if us.status == 'ok' %}<span style="color:var(--mfb-badge-idle-fg);">&#10003; {{ us.username }}</span>{% else %}<span style="color:var(--mfb-badge-error-fg);">&#10007; {{ us.username }}</span>{% endif %}
+        {% if not loop.last %} · {% endif %}
+        {% endfor %}
+        {% if fts.current_user %} · <span style="color:var(--mfb-badge-warning-fg);">&#9203; {{ fts.current_user }}</span>{% endif %}
+    </div>
+    {% endif %}
+    {% elif fts.status == 'completed' %}
+    <span class="text-small text-muted">Last reindex: {{ fts.completed_at|time_ago }} — {{ fts.details.users_processed if fts.details else '?' }} users</span>
+    {% elif fts.status == 'failed' %}
+    <span class="text-small" style="color:var(--mfb-badge-error-fg);">Failed: {{ fts.details.errors[0] if fts.details and fts.details.errors else 'unknown' }}</span>
+    {% else %}
+    <span class="text-small text-muted">No recent reindex</span>
+    {% endif %}
+
+    {% if resync.status == 'running' %}
+    <div class="status-detail-header" style="margin-top:8px;">
+        <strong>Force Resync</strong>
+        <span class="text-small text-muted">{{ resync.progress_current }}/{{ resync.progress_total }}</span>
+    </div>
+    <div class="progress-bar-wrap">
+        {% set rpct = (resync.progress_current * 100 // resync.progress_total) if resync.progress_total > 0 else 0 %}
+        <div class="progress-bar" style="width:{{ rpct }}%"></div>
+    </div>
+    {% endif %}
+</div>
+
+<div id="status-detail-sync" class="status-detail" style="display:none;">
+    {% if syncing_count == 0 and not error_accounts %}
+    <span class="text-small text-muted">All accounts idle</span>
+    {% else %}
+    {% if syncing_count > 0 %}
+    <span class="text-small">{{ syncing_count }} sync job{{ 's' if syncing_count != 1 else '' }} running</span><br>
+    {% endif %}
+    {% for acct in error_accounts %}
+    <div class="text-small" style="color:var(--mfb-badge-error-fg);">
+        &#10007; <a href="/accounts/{{ acct.id }}">{{ acct.name }}</a> — {{ acct.last_error[:60] if acct.last_error else 'sync failed' }}
+    </div>
+    {% endfor %}
+    {% endif %}
+</div>
+
+<div id="status-detail-restore" class="status-detail" style="display:none;">
+    {% if not active_restores %}
+    <span class="text-small text-muted">No active restore jobs</span>
+    {% else %}
+    {% for job in active_restores %}
+    <div style="margin-bottom:6px;">
+        <div class="status-detail-header">
+            <strong>{{ job.source_account.name }} → {{ job.target_account.name }}</strong>
+            <span class="text-small text-muted">{{ job.restored_messages }}/{{ job.total_messages }}</span>
+        </div>
+        {% if job.total_messages > 0 %}
+        <div class="progress-bar-wrap">
+            <div class="progress-bar" style="width:{{ (job.restored_messages * 100 // job.total_messages) }}%"></div>
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+</div>
+
+<script>
+function toggleStatusDetail(id) {
+    var el = document.getElementById('status-detail-' + id);
+    if (!el) return;
+    var visible = el.style.display !== 'none';
+    document.querySelectorAll('.status-detail').forEach(function(d) { d.style.display = 'none'; });
+    if (!visible) el.style.display = 'block';
+}
+</script>

@@ -1,4 +1,5 @@
 import logging
+import time
 
 import httpx
 
@@ -29,6 +30,78 @@ def reload_dovecot() -> bool:
     except Exception:
         logger.warning("Failed to reload Dovecot", exc_info=True)
         return False
+
+
+def check_dovecot_health() -> dict:
+    """Quick health check via doveadm reload (lightweight, idempotent)."""
+    if not settings.dovecot_enabled or not settings.dovecot_api_url:
+        return {"ok": False, "error": "Dovecot API not configured"}
+    try:
+        url = f"{settings.dovecot_api_url}/doveadm/v1"
+        resp = httpx.post(url, json=[["reload", {}, "health"]], auth=_doveadm_auth(), timeout=5)
+        resp.raise_for_status()
+        return {"ok": True}
+    except Exception as e:
+        logger.warning("Dovecot health check failed", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def fts_rescan(username: str) -> dict:
+    """Trigger FTS rescan for a single user."""
+    if not settings.dovecot_enabled or not settings.dovecot_api_url:
+        return {"ok": False, "error": "Dovecot API not configured"}
+    try:
+        url = f"{settings.dovecot_api_url}/doveadm/v1"
+        resp = httpx.post(
+            url,
+            json=[["ftsRescan", {"user": username}, "fts1"]],
+            auth=_doveadm_auth(),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data and data[0][0] == "error":
+            return {"ok": False, "error": data[0][1].get("exitCode", "unknown")}
+        return {"ok": True}
+    except Exception as e:
+        logger.warning("FTS rescan failed for %s", username, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+def force_resync(username: str, mailbox: str = "*") -> dict:
+    """Force resync of a user's mailboxes."""
+    if not settings.dovecot_enabled or not settings.dovecot_api_url:
+        return {"ok": False, "error": "Dovecot API not configured"}
+    try:
+        url = f"{settings.dovecot_api_url}/doveadm/v1"
+        resp = httpx.post(
+            url,
+            json=[["forceResync", {"user": username, "mailboxMask": mailbox}, "resync1"]],
+            auth=_doveadm_auth(),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data and data[0][0] == "error":
+            return {"ok": False, "error": data[0][1].get("exitCode", "unknown")}
+        return {"ok": True}
+    except Exception as e:
+        logger.warning("Force resync failed for %s", username, exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+_health_cache: dict = {"ok": None, "error": None, "checked_at": 0.0}
+_HEALTH_TTL = 30
+
+
+def get_cached_health() -> dict:
+    now = time.monotonic()
+    if now - _health_cache["checked_at"] > _HEALTH_TTL:
+        result = check_dovecot_health()
+        _health_cache["ok"] = result.get("ok")
+        _health_cache["error"] = result.get("error")
+        _health_cache["checked_at"] = now
+    return {"ok": _health_cache["ok"], "error": _health_cache["error"]}
 
 
 def get_mailbox_stats(username: str) -> list[dict] | None:

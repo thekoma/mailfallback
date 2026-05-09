@@ -34,6 +34,9 @@ ACTION_LABELS = {
     "restore.start": "Started mail restore",
     "restore.complete": "Completed mail restore",
     "restore.failed": "Mail restore failed",
+    "dovecot.health_check": "Dovecot health check",
+    "dovecot.fts_reindex": "FTS reindex all users",
+    "dovecot.force_resync": "Force resync all users",
 }
 
 

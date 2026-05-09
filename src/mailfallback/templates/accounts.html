@@ -4,9 +4,16 @@
 <div class="flex-between">
     <h2><i data-lucide="mail" class="icon-xl icon-inline"></i>Accounts</h2>
     <div class="actions">
-        <button class="icon-btn" title="Sync All Accounts"
+        {% if user.role.value == "admin" %}
+        <label class="text-small">
+            <input type="checkbox" role="switch" {% if show_all_users %}checked{% endif %}
+                   onchange="window.location.href='/accounts' + (this.checked ? '?show_all=1' : '')">
+            Show all users
+        </label>
+        {% endif %}
+        <button class="icon-btn" title="Sync All Accounts" id="sync-all-btn"
             hx-post="/api/sync/all" hx-swap="none"
-            hx-on::after-request="location.reload()">
+            hx-on::after-request="startSyncPolling()">
             <i data-lucide="refresh-cw" class="icon-md"></i> Sync All
         </button>
         <a href="/accounts/new" class="icon-btn primary">
@@ -18,8 +25,25 @@
 {% if not accounts %}
 <p class="text-muted">No accounts configured yet. Click <strong>New Account</strong> to add your first email backup.</p>
 {% else %}
-<div hx-get="/partials/accounts-table" hx-trigger="every 30s" hx-swap="innerHTML">
+<div id="accounts-table-wrap"
+     hx-get="/partials/accounts-table{% if show_all_users %}?show_all=1{% endif %}" hx-trigger="every 30s" hx-swap="innerHTML">
     {% include "partials/accounts_table.html" %}
 </div>
 {% endif %}
+
+<script>
+function startSyncPolling() {
+    var wrap = document.getElementById('accounts-table-wrap');
+    if (!wrap) return;
+    wrap.setAttribute('hx-trigger', 'every 2s');
+    htmx.process(wrap);
+    wrap.addEventListener('htmx:afterSettle', function handler(e) {
+        if (e.detail.xhr && e.detail.xhr.getResponseHeader('HX-Trigger') === 'sync-idle') {
+            wrap.setAttribute('hx-trigger', 'every 30s');
+            htmx.process(wrap);
+            wrap.removeEventListener('htmx:afterSettle', handler);
+        }
+    });
+}
+</script>
 {% endblock %}

@@ -34,4 +34,53 @@
         <td>{{ 'On' if debug_mode else 'Off' }}</td>
     </tr>
 </table>
+
+{% if dovecot_enabled %}
+<h3><i data-lucide="server" class="icon-lg icon-inline"></i>Dovecot Management</h3>
+{% if dovecot_status %}
+<p>
+    {% if dovecot_status == 'ok' %}
+    <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Healthy</span>
+    {% else %}
+    <span class="badge badge-error"><i data-lucide="alert-circle" class="icon-sm"></i> Error</span>
+    {% if dovecot_error %}<span class="text-muted text-small">{{ dovecot_error }}</span>{% endif %}
+    {% endif %}
+</p>
+{% endif %}
+{% if fts_status %}
+<p>
+    {% if fts_status == 'ok' %}
+    <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> FTS reindex completed</span>
+    {% else %}
+    <span class="badge badge-error"><i data-lucide="alert-circle" class="icon-sm"></i> FTS reindex had errors</span>
+    {% endif %}
+</p>
+{% endif %}
+{% if resync_status %}
+<p>
+    {% if resync_status == 'ok' %}
+    <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Force resync completed</span>
+    {% else %}
+    <span class="badge badge-error"><i data-lucide="alert-circle" class="icon-sm"></i> Force resync had errors</span>
+    {% endif %}
+</p>
+{% endif %}
+<div class="actions">
+    <form method="post" action="/admin/dovecot/health-check" class="inline-form">
+        <button type="submit" class="icon-btn">
+            <i data-lucide="activity" class="icon-md"></i> Health Check
+        </button>
+    </form>
+    <form method="post" action="/admin/dovecot/force-resync" class="inline-form">
+        <button type="submit" class="icon-btn">
+            <i data-lucide="refresh-cw" class="icon-md"></i> Force Resync
+        </button>
+    </form>
+    <form method="post" action="/admin/dovecot/fts-reindex" class="inline-form">
+        <button type="submit" class="icon-btn">
+            <i data-lucide="search" class="icon-md"></i> FTS Reindex
+        </button>
+    </form>
+</div>
+{% endif %}
 {% endblock %}
