@@ -2,7 +2,7 @@
 
 The dashboard is the landing page after login. It provides an overview of your email backup status at a glance.
 
-![Dashboard](../../screenshots/02-dashboard.png)
+![Dashboard](../screenshots/02-dashboard.png)
 
 ## Stat Cards
 

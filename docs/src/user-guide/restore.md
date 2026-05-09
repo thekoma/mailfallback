@@ -2,7 +2,7 @@
 
 The restore feature pushes backed-up messages from a source account back to a live IMAP server through a target account. This is useful when you need to recover mail after an account compromise, provider outage, or data loss.
 
-![Restore page](../../screenshots/06-restore.png)
+![Restore page](../screenshots/06-restore.png)
 
 ## How Restore Works
 

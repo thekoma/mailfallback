@@ -6,7 +6,7 @@ Accounts represent email mailboxes that MFB backs up. Each account connects to a
 
 The accounts page shows all your email accounts in a table.
 
-![Accounts list](../../screenshots/03-accounts.png)
+![Accounts list](../screenshots/03-accounts.png)
 
 | Column | Description |
 |--------|-------------|
@@ -28,7 +28,7 @@ The kebab dropdown on each row provides:
 
 Click the "Add Account" button to create a new backup account.
 
-![New account form](../../screenshots/04-new-account.png)
+![New account form](../screenshots/04-new-account.png)
 
 ### Provider Auto-Discovery
 
@@ -99,7 +99,7 @@ Leave empty to disable automatic sync (manual sync only).
 
 Click on an account name or select "View Details" from the kebab menu.
 
-![Account detail](../../screenshots/05-account-detail.png)
+![Account detail](../screenshots/05-account-detail.png)
 
 The detail page shows:
 

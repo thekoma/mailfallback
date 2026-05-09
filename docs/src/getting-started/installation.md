@@ -58,7 +58,7 @@ The database schema is applied automatically on first start.
 
 Open `http://localhost:8000` in your browser.
 
-![Login page](../../screenshots/01-login.png)
+![Login page](../screenshots/01-login.png)
 
 Log in with the default credentials:
 

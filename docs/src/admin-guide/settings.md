@@ -2,7 +2,7 @@
 
 The System page provides system-wide configuration and operational controls.
 
-![System settings](../../screenshots/10-settings.png)
+![System settings](../screenshots/10-settings.png)
 
 ## Modules
 

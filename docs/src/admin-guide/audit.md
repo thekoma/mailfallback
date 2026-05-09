@@ -2,7 +2,7 @@
 
 Every administrative action in MFB is recorded in the audit log. This provides a tamper-evident record of who did what, when, and from where.
 
-![Audit log](../../screenshots/11-audit-log.png)
+![Audit log](../screenshots/11-audit-log.png)
 
 ## What Gets Logged
 
