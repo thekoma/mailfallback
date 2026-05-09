@@ -74,7 +74,7 @@ def run_fts_reindex(task_id: str) -> None:
         task.started_at = datetime.now(UTC)
         db.commit()
 
-        from mailfallback.services.dovecot_manager import fts_rescan
+        from mailfallback.services.dovecot_manager import fts_rescan, index_user
         from mailfallback.services.user_service import list_users
 
         users = list_users(db)
@@ -92,6 +92,8 @@ def run_fts_reindex(task_id: str) -> None:
         for i, user in enumerate(users):
             _task_progress[task_id]["current_user"] = user.username
             result = fts_rescan(user.username)
+            if result["ok"]:
+                result = index_user(user.username)
             status = "ok" if result["ok"] else "error"
             _task_progress[task_id]["user_statuses"].append(
                 {"username": user.username, "status": status}
