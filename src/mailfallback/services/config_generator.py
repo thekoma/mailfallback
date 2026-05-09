@@ -76,8 +76,11 @@ def _dovecot_fts_conf(settings: Any) -> str:
     tika_block = ""
     if settings.tika_enabled:
         tika_block = f"""
-fts_decoder_driver = tika
-fts_decoder_tika_url = {settings.tika_url}/tika/
+# Tika attachment indexing — requires fts_decoder module compiled in Dovecot.
+# The official dovecot/dovecot:latest-2.4 image does NOT include this module.
+# Uncomment when using a custom Dovecot build with fts_decoder support.
+# fts_decoder_driver = tika
+# fts_decoder_tika_url = {settings.tika_url}/tika/
 """
 
     return f"""\
