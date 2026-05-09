@@ -317,6 +317,7 @@ class BackupDestination(Base):
     s3_secret_key = Column(String, nullable=True)
     local_path = Column(String, nullable=True)
     restic_password = Column(String, nullable=False)
+    insecure_tls = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 

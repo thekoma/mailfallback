@@ -67,10 +67,13 @@ async def admin_create_backup_destination(request: Request, db: Session = Depend
         request.session["flash_error"] = "Restic password is required"
         return RedirectResponse("/admin/backup", status_code=303)
 
+    insecure_tls = bool(form.get("insecure_tls"))
+
     dest = BackupDestination(
         name=name,
         backend_type=backend_type,
         restic_password=encrypt_credentials(restic_password, settings.secret_key),
+        insecure_tls=insecure_tls,
     )
 
     if backend_type == "s3":
@@ -184,6 +187,8 @@ async def admin_edit_backup_destination(
     restic_password = form.get("restic_password", "").strip()
     if restic_password:
         dest.restic_password = encrypt_credentials(restic_password, settings.secret_key)
+
+    dest.insecure_tls = bool(form.get("insecure_tls"))
 
     db.commit()
 
