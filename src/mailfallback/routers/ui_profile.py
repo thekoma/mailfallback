@@ -97,7 +97,14 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
             },
         )
 
-    change_password(db, user.id, new)
+    try:
+        change_password(db, user.id, new)
+    except ValueError as e:
+        return templates.TemplateResponse(
+            request=request,
+            name="profile.html",
+            context={**base_context, "error": str(e), "success": None},
+        )
     return templates.TemplateResponse(
         request=request,
         name="profile.html",
