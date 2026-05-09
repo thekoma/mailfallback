@@ -53,6 +53,12 @@
 
     <div class="sidebar-overlay" id="sidebar-overlay"></div>
 
+    {% if user and user.role.value == "admin" %}
+    <div id="global-status-bar"
+         hx-get="/partials/system-status" hx-trigger="load, every 5s" hx-swap="innerHTML">
+    </div>
+    {% endif %}
+
     <main class="content container">
         {% block content %}{% endblock %}
     </main>
