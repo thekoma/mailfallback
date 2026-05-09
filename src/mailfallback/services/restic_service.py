@@ -83,7 +83,10 @@ def test_destination(destination: BackupDestination) -> dict:
     """Test connectivity to a backup destination. Returns {ok: bool, error: str}."""
     test_id = "__mfb_connection_test__"
     env = build_env(destination, test_id)
-    result = _run_restic(env, ["init", "--json"], timeout=30)
+    try:
+        result = _run_restic(["init", "--json"], env)
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
     if result.returncode == 0 or "already initialized" in result.stderr.lower():
         return {"ok": True}
     return {"ok": False, "error": result.stderr.strip()[:200]}
