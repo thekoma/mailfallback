@@ -64,7 +64,9 @@
                 {% if not account.enabled %}
                 <span class="badge badge-disabled"><i data-lucide="eye-off" class="icon-sm"></i> Hidden</span>
                 {% endif %}
-                {% if account.suspended %}
+                {% if account.suspended and account.name.startswith("Backup ") %}
+                <span class="badge badge-syncing"><i data-lucide="cloud-download" class="icon-sm"></i> Backup Restore</span>
+                {% elif account.suspended %}
                 <span class="badge badge-disabled"><i data-lucide="pause-circle" class="icon-sm"></i> Suspended</span>
                 {% elif account.sync_state.value == 'syncing' %}
                 <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm"></i> syncing</span>
