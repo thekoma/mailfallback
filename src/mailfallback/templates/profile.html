@@ -42,10 +42,10 @@
 <h3><i data-lucide="key-round" class="icon-lg icon-inline"></i>Change Password</h3>
 
 {% if error %}
-<p class="alert-error">{{ error }}</p>
+<script>document.addEventListener('DOMContentLoaded', function() { showToast('{{ error }}', 'error'); });</script>
 {% endif %}
 {% if success %}
-<p class="alert-success">{{ success }}</p>
+<script>document.addEventListener('DOMContentLoaded', function() { showToast('{{ success }}', 'success'); });</script>
 {% endif %}
 
 <form method="post" action="/profile/password" class="container-narrow">

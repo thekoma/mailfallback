@@ -4,11 +4,11 @@
 <h2><i data-lucide="users" class="icon-xl icon-inline"></i>User Management</h2>
 
 {% if error == "invalid_admin_password" %}
-<p class="alert-error"><i data-lucide="alert-circle" class="icon-md icon-inline"></i>Admin password is incorrect.</p>
+<script>document.addEventListener('DOMContentLoaded', function() { showToast('Admin password is incorrect.', 'error'); });</script>
 {% elif error == "password_too_short" %}
-<p class="alert-error"><i data-lucide="alert-circle" class="icon-md icon-inline"></i>Password must be at least 8 characters.</p>
+<script>document.addEventListener('DOMContentLoaded', function() { showToast('Password must be at least 8 characters.', 'error'); });</script>
 {% elif error %}
-<p class="alert-error"><i data-lucide="alert-circle" class="icon-md icon-inline"></i>{{ error }}</p>
+<script>document.addEventListener('DOMContentLoaded', function() { showToast('{{ error }}', 'error'); });</script>
 {% endif %}
 
 <div class="table-wrap">
