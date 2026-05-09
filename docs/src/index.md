@@ -30,7 +30,7 @@ graph TD
     RC["Roundcube<br/>:8001"]
     DOV["Dovecot<br/>:31143"]
     PG["PostgreSQL<br/>:5432"]
-    MAIL["Maildir Storage"]
+    MAIL[("Maildir Storage")]
 
     Browser --> MFB
     Browser --> RC
@@ -38,7 +38,8 @@ graph TD
     RC --> DOV
     MFB --> PG
     DOV --> PG
-    PG --- MAIL
+    MFB -- "mbsync" --> MAIL
+    DOV -- "IMAP" --> MAIL
 ```
 
 MFB is the control plane. It generates configuration for Dovecot and Roundcube, manages accounts and users in PostgreSQL, and runs mbsync to pull mail from upstream IMAP servers into Maildir storage. Dovecot serves that storage as read-only IMAP. Roundcube provides browser-based access to Dovecot.

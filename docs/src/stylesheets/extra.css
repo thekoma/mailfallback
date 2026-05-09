@@ -1,5 +1,7 @@
 /* Prevent variable names from wrapping mid-word in config tables */
-.md-typeset table:not([class]) td:first-child code,
-.md-typeset table:not([class]) td:first-child {
-  white-space: nowrap;
+.md-typeset table:not([class]) td:first-child,
+.md-typeset table:not([class]) td:first-child code {
+  white-space: nowrap !important;
+  word-break: normal !important;
+  overflow-wrap: normal !important;
 }

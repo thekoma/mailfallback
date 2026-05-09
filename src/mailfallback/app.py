@@ -69,6 +69,9 @@ async def lifespan(app: FastAPI):
     yield
     stop_scheduler()
     shutdown_sync_executor()
+    from mailfallback.services.backup_worker import shutdown_backup_executor
+
+    shutdown_backup_executor()
 
 
 def _backfill_allowed_stores(db):

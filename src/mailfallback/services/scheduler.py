@@ -90,8 +90,45 @@ def sync_scheduler_jobs(db: Session) -> None:
             scheduler.remove_job(job_id)
 
 
+def _run_scheduled_backup(account_backup_id: str) -> None:
+    from mailfallback.services.backup_worker import submit_backup
+
+    submit_backup(account_backup_id)
+
+
+def backup_scheduler_jobs(db: Session) -> None:
+    from mailfallback.models import AccountBackup
+
+    existing_job_ids = {j.id for j in scheduler.get_jobs()}
+    active_backups = db.query(AccountBackup).filter(AccountBackup.enabled.is_(True)).all()
+
+    for ab in active_backups:
+        job_id = f"backup-{ab.id}"
+        try:
+            trigger = CronTrigger.from_crontab(ab.schedule)
+        except Exception:
+            logger.warning("Invalid backup cron for %s: %s", ab.id, ab.schedule)
+            continue
+        if job_id in existing_job_ids:
+            scheduler.reschedule_job(job_id, trigger=trigger)
+        else:
+            scheduler.add_job(
+                _run_scheduled_backup,
+                trigger,
+                args=[ab.id],
+                id=job_id,
+                replace_existing=True,
+            )
+
+    active_ids = {f"backup-{ab.id}" for ab in active_backups}
+    for job_id in existing_job_ids:
+        if job_id.startswith("backup-") and job_id not in active_ids:
+            scheduler.remove_job(job_id)
+
+
 def start_scheduler(db: Session) -> None:
     sync_scheduler_jobs(db)
+    backup_scheduler_jobs(db)
     if not scheduler.running:
         scheduler.start()
 
@@ -102,6 +139,7 @@ def refresh_scheduler() -> None:
     db = SessionLocal()
     try:
         sync_scheduler_jobs(db)
+        backup_scheduler_jobs(db)
     finally:
         db.close()
 
