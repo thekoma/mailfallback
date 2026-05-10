@@ -266,6 +266,10 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
     setup_state = get_setup_state(db, user)
 
+    # First-time explainer on the chain hero — shown once, dismissed via
+    # POST /profile/dismiss-chain-explainer which sets this preference.
+    show_chain_explainer = not (user.preferences or {}).get("chain_hero_seen", False)
+
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
@@ -276,6 +280,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             "attention": attention,
             "recent_jobs": recent_jobs,
             "setup_state": setup_state,
+            "show_chain_explainer": show_chain_explainer,
         },
     )
 

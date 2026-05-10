@@ -55,6 +55,24 @@
 {# ── Chain hero (Wave 4): visualises the four-stage data-flow model ── #}
 <section class="card chain-hero mt-1" role="status" aria-live="polite">
     <h3><i data-lucide="link" class="icon-md icon-inline"></i> Mail safety chain</h3>
+    {% if show_chain_explainer %}
+    <div class="chain-explainer" role="region" aria-label="What this means">
+        <p class="text-small">
+            <strong>How MailFallBack keeps your mail safe.</strong>
+            Each stage in this chain is a step further from the original mailbox:
+            <strong>Source</strong> is your provider (Gmail, Outlook, …);
+            <strong>Local backup</strong> is the always-on Maildir on this server;
+            <strong>Repository</strong> is an off-site, encrypted store you control;
+            <strong>Snapshot</strong> is a point-in-time capture inside a Repository.
+            Click any stage's link below to manage it.
+        </p>
+        <form method="post" action="/profile/dismiss-chain-explainer" style="display:inline">
+            <button type="submit" class="icon-btn">
+                <i data-lucide="check" class="icon-sm"></i> Got it — don't show again
+            </button>
+        </form>
+    </div>
+    {% endif %}
     <div class="chain-stages">
         <div class="chain-stage">
             <div class="chain-stage-label">
