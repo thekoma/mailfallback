@@ -692,6 +692,22 @@ a.chain-stage:hover { background: var(--pico-card-sectioning-background-color); 
 .stats-pill { white-space: nowrap; }
 .stats-pill code { font-size: 0.78rem; }
 .stats-sep { color: var(--pico-muted-border-color); }
+
+/* === Wide-page layout: bypass the 900px content cap on data-heavy pages === */
+body.page-wide .content { max-width: 1200px; }
+
+/* === Table column hygiene: nowrap by default, opt-in wrap on .cell-wrap === */
+.table-wrap th, .table-wrap td { white-space: nowrap; }
+.table-wrap th.cell-wrap, .table-wrap td.cell-wrap { white-space: normal; }
+.cell-stats { font-variant-numeric: tabular-nums; }
+
+/* === Recovery sub-row in the accounts table === */
+tr.recovery-row td {
+    background: rgba(255, 255, 255, 0.025);
+    font-size: 0.88rem;
+    border-top: 1px dashed var(--pico-muted-border-color);
+}
+tr.recovery-row > td:first-child { padding-left: 1.75rem; }
 .stats-dot {
     display: inline-block;
     width: 8px;

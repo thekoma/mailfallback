@@ -65,11 +65,11 @@ def remove_owner(db: Session, account_id: str, user_id: str) -> None:
 
 
 def get_accounts_for_user(db: Session, user: User) -> list[Account]:
-    # Eager-load Account.backup_policies so callers (notably the accounts list page) can
-    # render the Repository pill without an N+1 storm.
-    backup_load = selectinload(Account.backup_policies)
+    # Eager-load backup_policies + recoveries so the /accounts list page can
+    # render the Repository pill and nested recovery rows without N+1.
+    eager = (selectinload(Account.backup_policies), selectinload(Account.recoveries))
     if user.role == UserRole.admin:
-        return db.query(Account).options(backup_load).all()
+        return db.query(Account).options(*eager).all()
     owned = {a.id for a in user.accounts}
     via_groups = (
         db.query(Account.id)
@@ -82,7 +82,7 @@ def get_accounts_for_user(db: Session, user: User) -> list[Account]:
     all_ids = owned | group_ids
     if not all_ids:
         return []
-    return db.query(Account).options(backup_load).filter(Account.id.in_(all_ids)).all()
+    return db.query(Account).options(*eager).filter(Account.id.in_(all_ids)).all()
 
 
 def get_account(db: Session, account_id: str, user: User) -> Account | None:
