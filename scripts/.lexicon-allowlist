@@ -1,0 +1,4 @@
+# scripts/.lexicon-allowlist
+# Lines matching `path:line` prefix are excluded from lexicon-check warnings.
+# Format: path/to/file.html:123: <reason>
+# Comments start with #.
