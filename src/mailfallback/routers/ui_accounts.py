@@ -445,6 +445,8 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
 
     recoveries = list_recoveries_for_account(db, account_id)
 
+    timeline_global, folder_timeline_data = _build_bento_timeline(jobs[:30])
+
     return templates.TemplateResponse(
         request=request,
         name="account_detail.html",
@@ -465,8 +467,39 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
             "backup_config": backup_config,
             "backup_destinations": backup_destinations,
             "recoveries": recoveries,
+            "timeline_global": timeline_global,
+            "folder_timeline_data": folder_timeline_data,
         },
     )
+
+
+def _build_bento_timeline(jobs: list) -> tuple[list[dict], dict[str, list[dict]]]:
+    """Build the bento timeline data: global bar list + per-folder hover overlay.
+
+    `timeline_global`: oldest-first list of {ts, status} for the timeline strip.
+    `folder_timeline_data`: {folder_name: [{ts, added}, ...]} for the linked-view
+    hover effect — when the user hovers a treemap cell, the JS swaps the bars
+    to reflect that folder's added_done per sync run.
+    """
+    timeline_global: list[dict] = []
+    folder_data: dict[str, list[dict]] = {}
+    for job in reversed(jobs):  # oldest → newest, so bars read left-to-right
+        ts = (job.completed_at or job.started_at or job.requested_at).isoformat()
+        timeline_global.append({"ts": ts, "status": job.status.value})
+        if not job.parsed_summary:
+            continue
+        try:
+            snap = json.loads(job.parsed_summary)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for entry in snap.get("per_folder", []) or []:
+            name = entry.get("name")
+            if not name:
+                continue
+            folder_data.setdefault(name, []).append(
+                {"ts": ts, "added": int(entry.get("added_done", 0) or 0)}
+            )
+    return timeline_global, folder_data
 
 
 @router.post("/accounts/{account_id}/edit")
