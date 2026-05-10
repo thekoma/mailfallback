@@ -507,6 +507,15 @@ a.stat-card:hover { border-color: var(--pico-primary); transform: translateY(-2p
 }
 .chain-hero-empty ol { margin: 0.5rem 0 1rem 1.25rem; }
 .chain-hero-empty li { margin-bottom: 0.25rem; }
+/* First-time explainer callout, dismissed once seen */
+.chain-explainer {
+    background: var(--pico-card-sectioning-background-color);
+    border-left: 3px solid var(--pico-primary);
+    padding: 0.5rem 0.75rem;
+    margin: 0.5rem 0 0.75rem;
+    border-radius: 0.25rem;
+}
+.chain-explainer p { margin: 0 0 0.5rem; }
 /* Per-account chain status header (Task 7.3) */
 .chain-status { font-size: 0.9rem; }
 
