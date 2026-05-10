@@ -3,6 +3,10 @@
 {% block content %}
 <h2><i data-lucide="home" class="icon-xl icon-inline"></i>Dashboard</h2>
 
+{% if setup_state and setup_state.is_admin and (not setup_state.complete or not setup_state.has_repository or not setup_state.has_backup_policy) %}
+{% include "partials/setup_checklist.html" %}
+{% endif %}
+
 {% if chain_summary and chain_summary.mailboxes == 0 %}
 {# ── Empty-state teaching hero (Wave 4) ── #}
 <section class="card chain-hero chain-hero-empty mt-1" role="status" aria-live="polite">

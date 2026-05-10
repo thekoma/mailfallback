@@ -510,6 +510,29 @@ a.stat-card:hover { border-color: var(--pico-primary); transform: translateY(-2p
 /* Per-account chain status header (Task 7.3) */
 .chain-status { font-size: 0.9rem; }
 
+/* Setup checklist (first-run helper card on dashboard) */
+.setup-checklist h3 { margin-top: 0; margin-bottom: 0.25rem; }
+.setup-checklist > p { margin-top: 0; margin-bottom: 0.75rem; }
+.setup-list { list-style: none; padding: 0; margin: 0; }
+.setup-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--pico-muted-border-color);
+    font-size: 0.95rem;
+}
+.setup-item:first-child { border-top: none; }
+.setup-item.done span { color: var(--pico-muted-color); }
+.setup-icon-done { color: var(--mfb-success-color); flex-shrink: 0; }
+.setup-icon-required { color: var(--pico-color-red-500); flex-shrink: 0; }
+.setup-icon-recommended { color: var(--pico-muted-color); flex-shrink: 0; }
+.setup-cta { margin-left: auto; flex-shrink: 0; }
+@media (max-width: 600px) {
+    .setup-item { flex-wrap: wrap; }
+    .setup-cta { margin-left: 0; margin-top: 0.25rem; }
+}
+
 /* === Attention list === */
 .attention-item {
     display: flex;
