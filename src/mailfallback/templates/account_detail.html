@@ -21,6 +21,32 @@
 
 {% include "partials/sync_panel.html" %}
 
+{# ── Wave 4 chain status header — one line, per-account ── #}
+<div class="chain-status flex gap-05 items-center mb-05" role="status" aria-live="polite">
+    <span class="stats-pill" title="Local backup">
+        {% if account.last_sync_at %}
+        <span class="stats-dot stats-dot-ok"></span>
+        Local backup — {{ account.last_sync_at | time_ago }}
+        {% else %}
+        <span class="stats-dot"></span>
+        Local backup — never synced
+        {% endif %}
+    </span>
+    <span class="stats-sep">·</span>
+    <span class="stats-pill" title="Off-site Repository">
+        {% if backup_config and backup_config.last_successful_run_at %}
+        <span class="stats-dot stats-dot-ok"></span>
+        Repository — {{ backup_config.last_successful_run_at | time_ago }}
+        {% elif backup_config %}
+        <span class="stats-dot"></span>
+        Repository — no back-up yet
+        {% else %}
+        <span class="stats-dot"></span>
+        Repository — not configured
+        {% endif %}
+    </span>
+</div>
+
 {# ── Stats Strip ── #}
 <div class="stats-strip"
     id="stats-strip"

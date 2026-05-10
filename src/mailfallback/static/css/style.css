@@ -474,6 +474,42 @@ a.stat-card:hover { border-color: var(--pico-primary); transform: translateY(-2p
 .chooser-card h3 { margin-top: 0; margin-bottom: 0.5rem; }
 .chooser-card p { margin: 0; }
 
+/* === Wave 4 chain hero (mobile-first) === */
+.chain-hero h3 { margin-top: 0; margin-bottom: 0.75rem; }
+.chain-stages {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+}
+.chain-stage {
+    flex: 1 1 140px;
+    min-width: 140px;
+}
+.chain-stage-label {
+    font-size: 0.85rem;
+    color: var(--pico-muted-color);
+    margin-bottom: 0.15rem;
+}
+.chain-stage-value {
+    font-size: 0.95rem;
+    line-height: 1.3;
+}
+.chain-arrow {
+    font-size: 1.2rem;
+    color: var(--pico-muted-color);
+    flex: 0 0 auto;
+}
+@media (max-width: 600px) {
+    .chain-arrow { display: none; }
+    .chain-stages { gap: 0.75rem; }
+    .chain-stage { flex-basis: 100%; border-left: 2px solid var(--pico-muted-border-color); padding-left: 0.5rem; }
+}
+.chain-hero-empty ol { margin: 0.5rem 0 1rem 1.25rem; }
+.chain-hero-empty li { margin-bottom: 0.25rem; }
+/* Per-account chain status header (Task 7.3) */
+.chain-status { font-size: 0.9rem; }
+
 /* === Attention list === */
 .attention-item {
     display: flex;
