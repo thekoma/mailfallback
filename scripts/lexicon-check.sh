@@ -13,11 +13,15 @@ ALLOWLIST="scripts/.lexicon-allowlist"
 # Allowed qualifiers (case-insensitive): "backup" must be adjacent to one of these to pass.
 ALLOWED='(local|off-site|offsite|locale|configuration|destination|policy|deposito|repository|snapshot|completed|failed|started|now|history|profile|tables|worker|service|operations|jobs?|email)'
 
-# Filter `grep -REn` output by matching the regex against the CONTENT only (after path:line:).
-# Usage: filter_content_matches REGEX
+# Filter `grep -REn` output by matching the regex against the CONTENT only
+# (after path:line:). The match must be a STANDALONE WORD — surrounding
+# characters cannot be [a-zA-Z_-], which excludes identifiers like
+# `backup_config`, `BackupDestination`, `id="backup_dest"`, URL paths
+# `/admin/backup/...`, and template includes `partials/account_backup.html`.
+# Usage: filter_content_matches WORD
 filter_content_matches() {
-    local regex="$1"
-    awk -v re="$regex" '
+    local word="$1"
+    awk -v word="$word" '
         BEGIN { IGNORECASE = 1 }
         {
             # grep -REn output: path:lineno:content
@@ -25,7 +29,8 @@ filter_content_matches() {
             rest = substr($0, i + 1);
             j = index(rest, ":");
             content = substr(rest, j + 1);
-            if (content ~ re) print $0;
+            standalone = "(^|[^a-zA-Z_/-])" word "([^a-zA-Z_/-]|$)";
+            if (content ~ standalone) print $0;
         }
     '
 }
@@ -49,13 +54,13 @@ strip_qualified() {
 
 # Templates: any line containing bare "backup" in the content.
 TPL_HITS=$(grep -REn '[Bb]ackup' "$SCOPE_TEMPLATES" --include='*.html' 2>/dev/null \
-    | filter_content_matches '[Bb]ackup' \
+    | filter_content_matches 'backup' \
     | strip_qualified \
     || true)
 
 # Routers: only lines that are flash messages.
 ROUTER_HITS=$(grep -REn 'flash_(success|error)' "$SCOPE_ROUTERS" --include='*.py' 2>/dev/null \
-    | filter_content_matches '[Bb]ackup' \
+    | filter_content_matches 'backup' \
     | strip_qualified \
     || true)
 

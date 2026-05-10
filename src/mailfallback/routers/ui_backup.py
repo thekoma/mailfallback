@@ -118,7 +118,7 @@ async def admin_create_backup_destination(request: Request, db: Session = Depend
         resource_name=dest.name,
         ip_address=request.client.host if request.client else None,
     )
-    request.session["flash_success"] = f"Backup destination {dest.name} created"
+    request.session["flash_success"] = f"Repository {dest.name} created"
     return RedirectResponse("/admin/backup", status_code=303)
 
 
@@ -152,7 +152,7 @@ async def admin_delete_backup_destination(
         resource_name=dest_name,
         ip_address=request.client.host if request.client else None,
     )
-    request.session["flash_success"] = f"Backup destination {dest_name} deleted"
+    request.session["flash_success"] = f"Repository {dest_name} deleted"
     return RedirectResponse("/admin/backup", status_code=303)
 
 
@@ -282,7 +282,7 @@ async def account_backup_configure(
         resource_name=account.email_address or account.name,
         ip_address=request.client.host if request.client else None,
     )
-    request.session["flash_success"] = "Backup configuration saved"
+    request.session["flash_success"] = "Backup policy saved"
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
 
@@ -298,7 +298,7 @@ async def account_backup_now(account_id: str, request: Request, db: Session = De
 
     backup = db.query(AccountBackup).filter(AccountBackup.account_id == account_id).first()
     if not backup:
-        request.session["flash_error"] = "No backup configured for this account"
+        request.session["flash_error"] = "No off-site backup configured for this account"
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
     from mailfallback.services.backup_worker import submit_backup
@@ -314,7 +314,7 @@ async def account_backup_now(account_id: str, request: Request, db: Session = De
         resource_name=account.email_address or account.name,
         ip_address=request.client.host if request.client else None,
     )
-    request.session["flash_success"] = "Backup started"
+    request.session["flash_success"] = "Snapshot started"
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
 
@@ -367,7 +367,7 @@ async def account_backup_restore(
 
     backup = db.query(AccountBackup).filter(AccountBackup.account_id == account_id).first()
     if not backup:
-        request.session["flash_error"] = "No backup configured for this account"
+        request.session["flash_error"] = "No off-site backup configured for this account"
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
     from mailfallback.services.restic_service import restore_snapshot

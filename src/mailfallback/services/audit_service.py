@@ -37,6 +37,15 @@ ACTION_LABELS = {
     "dovecot.health_check": "Dovecot health check",
     "dovecot.fts_reindex": "FTS reindex all users",
     "dovecot.force_resync": "Force resync all users",
+    # Wave 2: legacy DB action strings ("backup_destination.*", "account.backup_*")
+    # render here as user-facing labels so the rename can defer touching the DB.
+    "backup_destination.create": "Repository created",
+    "backup_destination.delete": "Repository deleted",
+    "backup_destination.edit": "Repository edited",
+    "account.backup_configure": "Backup policy configured",
+    "account.backup_now": "Manual back-up triggered",
+    "account.backup_restore": "Recovered from snapshot",
+    "account.promote_recovered": "Recovered mailbox promoted to live",
 }
 
 
