@@ -231,6 +231,21 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
                 }
             )
 
+    from mailfallback.models import AccountBackup, BackupStatus
+
+    backup_summary = {
+        "total_policies": db.query(AccountBackup).count(),
+        "with_recent_success": db.query(AccountBackup)
+        .filter(AccountBackup.last_backup_at.isnot(None))
+        .count(),
+        "with_failures": db.query(AccountBackup)
+        .filter(AccountBackup.last_status == BackupStatus.failed)
+        .count(),
+        "never_succeeded": db.query(AccountBackup)
+        .filter(AccountBackup.last_backup_at.is_(None))
+        .count(),
+    }
+
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
@@ -239,6 +254,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             "stats": stats,
             "attention": attention,
             "recent_jobs": recent_jobs,
+            "backup_summary": backup_summary,
         },
     )
 
