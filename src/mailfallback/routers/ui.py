@@ -262,6 +262,10 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "snapshots_total": int(snapshots_total),
     }
 
+    from mailfallback.services.setup_state import get_setup_state
+
+    setup_state = get_setup_state(db, user)
+
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
@@ -271,6 +275,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             "chain_summary": chain_summary,
             "attention": attention,
             "recent_jobs": recent_jobs,
+            "setup_state": setup_state,
         },
     )
 
