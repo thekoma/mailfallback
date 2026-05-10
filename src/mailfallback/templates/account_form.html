@@ -93,7 +93,7 @@
 
         {% if selectable_stores %}
         <div>
-            <label for="store_id">Store</label>
+            <label for="store_id">Mail store</label>
             <select id="store_id" name="store_id">
                 {% for s in selectable_stores %}
                 <option value="{{ s.id }}" {% if s.id == store.id %}selected{% endif %}>{{ s.name }} ({{ s.path }})</option>

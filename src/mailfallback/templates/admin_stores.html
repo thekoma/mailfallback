@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Mail Stores — MFB{% endblock %}
+{% block title %}Mail stores — MFB{% endblock %}
 {% block content %}
-<h2><i data-lucide="hard-drive" class="icon-xl icon-inline"></i>Mail Stores</h2>
+<h2><i data-lucide="hard-drive" class="icon-xl icon-inline"></i>Mail stores</h2>
 
-<p class="text-muted">Stores are base directories where mailboxes and Dovecot home directories are saved. Maildir paths are derived automatically from the store path and account UUID.</p>
+<p class="text-muted">Mail stores are base directories where mailboxes and Dovecot home directories are saved. Maildir paths are derived automatically from the store path and account UUID.</p>
 
 
 <div class="table-wrap">
@@ -205,7 +205,7 @@
 
 <hr>
 
-<h3><i data-lucide="folder-plus" class="icon-lg icon-inline"></i>Add Store</h3>
+<h3><i data-lucide="folder-plus" class="icon-lg icon-inline"></i>Add mail store</h3>
 <form method="post" action="/admin/stores/new">
     <div class="grid-2-auto">
         <div>

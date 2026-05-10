@@ -7,7 +7,7 @@
     <tr><td><i data-lucide="at-sign" class="icon-md icon-inline"></i>Username</td><td>{{ user.username }}</td></tr>
     <tr><td><i data-lucide="shield" class="icon-md icon-inline"></i>Role</td><td>{{ user.role.value }}</td></tr>
     <tr><td><i data-lucide="mail" class="icon-md icon-inline"></i>Accounts</td><td>{{ user.accounts | length }}</td></tr>
-    <tr><td><i data-lucide="hard-drive" class="icon-md icon-inline"></i>Store</td><td>{{ store.name if store else '—' }}</td></tr>
+    <tr><td><i data-lucide="hard-drive" class="icon-md icon-inline"></i>Mail store</td><td>{{ store.name if store else '—' }}</td></tr>
     <tr>
         <td><i data-lucide="users" class="icon-md icon-inline"></i>Groups</td>
         <td>
@@ -22,10 +22,10 @@
 
 {% if selectable_stores %}
 <hr>
-<h3><i data-lucide="hard-drive" class="icon-lg icon-inline"></i>Default Store</h3>
-<p class="text-muted text-small">New accounts will be created on this store. Existing accounts are not affected.</p>
+<h3><i data-lucide="hard-drive" class="icon-lg icon-inline"></i>Default mail store</h3>
+<p class="text-muted text-small">New mailboxes will be created on this mail store. Existing mailboxes are not affected.</p>
 <form method="post" action="/profile/store" class="container-narrow">
-    <label for="store_id">Store for new accounts</label>
+    <label for="store_id">Mail store for new mailboxes</label>
     <select id="store_id" name="store_id">
         {% for s in selectable_stores %}
         <option value="{{ s.id }}" {% if s.id == user.store_id %}selected{% endif %}>{{ s.name }} ({{ s.path }})</option>
