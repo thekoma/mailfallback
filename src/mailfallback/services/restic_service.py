@@ -136,15 +136,17 @@ def run_backup(destination: BackupDestination, account_id: str, maildir_path: st
 
 
 def list_snapshots(destination: BackupDestination, account_id: str) -> list[dict]:
-    """List all snapshots in the restic repository."""
+    """List snapshots in the restic repository, newest first."""
     env = build_env(destination, account_id)
     result = _run_restic(["snapshots", "--json"], env, _is_insecure(destination))
     if result.returncode != 0:
         raise RuntimeError(f"Restic snapshots failed: {result.stderr}")
     try:
-        return json.loads(result.stdout)
+        snapshots = json.loads(result.stdout)
     except json.JSONDecodeError:
         return []
+    snapshots.sort(key=lambda s: s.get("time", ""), reverse=True)
+    return snapshots
 
 
 def restore_snapshot(
