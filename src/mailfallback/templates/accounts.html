@@ -23,7 +23,7 @@
 </div>
 
 {% if not accounts %}
-<p class="text-muted">No accounts configured yet. Click <strong>New Account</strong> to add your first email backup.</p>
+<p class="text-muted">No mailboxes yet. Click <strong>New Account</strong> to connect a mailbox and start your local backup.</p>
 {% else %}
 <div id="accounts-table-wrap"
      hx-get="/partials/accounts-table{% if show_all_users %}?show_all=1{% endif %}" hx-trigger="every 30s" hx-swap="innerHTML">

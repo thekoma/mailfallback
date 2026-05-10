@@ -3,6 +3,21 @@
 {% block content %}
 <h2><i data-lucide="home" class="icon-xl icon-inline"></i>Dashboard</h2>
 
+{% if chain_summary and chain_summary.mailboxes == 0 %}
+{# ── Empty-state teaching hero (Wave 4) ── #}
+<section class="card chain-hero chain-hero-empty mt-1" role="status" aria-live="polite">
+    <h3>Welcome to MailFallBack</h3>
+    <p>MFB keeps your mail safe in two places:</p>
+    <ol>
+        <li>A <strong>local backup</strong> on this server, always available.</li>
+        <li>Off-site <strong>snapshots</strong> in a <strong>Repository</strong> you control, for disaster recovery.</li>
+    </ol>
+    <a href="/accounts/new" class="icon-btn primary">
+        <i data-lucide="plus-circle" class="icon-md"></i> Connect a mailbox
+    </a>
+</section>
+{% endif %}
+
 <div class="stat-cards">
     <a href="/accounts" class="stat-card">
         <div class="stat-value">{{ stats.accounts }}</div>
@@ -32,29 +47,72 @@
     {% endif %}
 </div>
 
-{% if backup_summary and backup_summary.total_policies > 0 %}
-<section class="card mt-1" role="status" aria-live="polite">
-    <h3><i data-lucide="cloud-upload" class="icon-md icon-inline"></i> Off-site backup health</h3>
-    <div class="flex gap-05 flex-wrap items-center">
-        {% if backup_summary.with_recent_success > 0 %}
-        <span class="stats-pill"><span class="stats-dot stats-dot-ok"></span>
-            {{ backup_summary.with_recent_success }} backed up
-        </span>
-        {% endif %}
-        {% if backup_summary.with_failures > 0 %}
-        <span class="stats-pill"><span class="stats-dot stats-dot-error"></span>
-            {{ backup_summary.with_failures }} with failures
-        </span>
-        {% endif %}
-        {% if backup_summary.never_succeeded > 0 %}
-        <span class="stats-pill"><span class="stats-dot"></span>
-            {{ backup_summary.never_succeeded }} no successful back-up yet
-        </span>
-        {% endif %}
-        {% if user.role.value == "admin" %}
-        <a href="/admin/backup" class="text-small">Manage repositories →</a>
-        {% endif %}
+{% if chain_summary and chain_summary.mailboxes > 0 %}
+{# ── Chain hero (Wave 4): visualises the four-stage data-flow model ── #}
+<section class="card chain-hero mt-1" role="status" aria-live="polite">
+    <h3><i data-lucide="link" class="icon-md icon-inline"></i> Mail safety chain</h3>
+    <div class="chain-stages">
+        <div class="chain-stage">
+            <div class="chain-stage-label">
+                <i data-lucide="inbox" class="icon-sm icon-inline"></i> Source
+            </div>
+            <div class="chain-stage-value">
+                <span class="stats-dot stats-dot-ok"></span>
+                {{ chain_summary.mailboxes }} mailbox{{ 'es' if chain_summary.mailboxes != 1 else '' }} connected
+            </div>
+        </div>
+        <div class="chain-arrow" aria-hidden="true">→</div>
+        <div class="chain-stage">
+            <div class="chain-stage-label">
+                <i data-lucide="hard-drive" class="icon-sm icon-inline"></i> Local backup
+            </div>
+            <div class="chain-stage-value">
+                {% if chain_summary.mirrors_error > 0 %}
+                <span class="stats-dot stats-dot-error"></span>
+                {{ chain_summary.mirrors_error }} of {{ chain_summary.mirrors_total }} failing
+                {% else %}
+                <span class="stats-dot stats-dot-ok"></span>
+                {{ chain_summary.mirrors_healthy }} of {{ chain_summary.mirrors_total }} healthy
+                {% endif %}
+            </div>
+        </div>
+        <div class="chain-arrow" aria-hidden="true">→</div>
+        <div class="chain-stage">
+            <div class="chain-stage-label">
+                <i data-lucide="cloud-upload" class="icon-sm icon-inline"></i> Repository
+            </div>
+            <div class="chain-stage-value">
+                {% if chain_summary.repositories == 0 %}
+                <span class="stats-dot"></span>
+                None configured
+                {% elif chain_summary.policies_failed > 0 %}
+                <span class="stats-dot stats-dot-error"></span>
+                {{ chain_summary.repositories }} configured · {{ chain_summary.policies_failed }} failing
+                {% else %}
+                <span class="stats-dot stats-dot-ok"></span>
+                {{ chain_summary.repositories }} configured · {{ chain_summary.policies }} polic{{ 'ies' if chain_summary.policies != 1 else 'y' }}
+                {% endif %}
+            </div>
+        </div>
+        <div class="chain-arrow" aria-hidden="true">→</div>
+        <div class="chain-stage">
+            <div class="chain-stage-label">
+                <i data-lucide="camera" class="icon-sm icon-inline"></i> Snapshot
+            </div>
+            <div class="chain-stage-value">
+                {% if chain_summary.snapshots_total == 0 %}
+                <span class="stats-dot"></span>
+                None yet
+                {% else %}
+                <span class="stats-dot stats-dot-ok"></span>
+                {{ chain_summary.snapshots_total }} stored
+                {% endif %}
+            </div>
+        </div>
     </div>
+    {% if user.role.value == "admin" %}
+    <p class="text-small mt-05"><a href="/admin/backup">Manage repositories →</a></p>
+    {% endif %}
 </section>
 {% endif %}
 

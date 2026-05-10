@@ -19,7 +19,10 @@
             <th>Name</th>
             <th>Type</th>
             <th>Bucket / Path</th>
-            <th>Accounts</th>
+            <th>Mailboxes</th>
+            <th>Snapshots</th>
+            <th>Last back-up</th>
+            <th>Health</th>
             <th class="text-right">Actions</th>
         </tr>
     </thead>
@@ -42,6 +45,26 @@
                 {% endif %}
             </td>
             <td>{{ dest_account_counts.get(dest.id, 0) }}</td>
+            <td>{{ dest_stats[dest.id].snapshots }}</td>
+            <td>
+                {% if dest_stats[dest.id].last_success %}
+                {{ dest_stats[dest.id].last_success | time_ago }}
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+            </td>
+            <td>
+                {% set h = dest_stats[dest.id].health %}
+                {% if h == "ok" %}
+                <span class="stats-pill"><span class="stats-dot stats-dot-ok"></span> Healthy</span>
+                {% elif h == "stale" %}
+                <span class="stats-pill"><span class="stats-dot stats-dot-error"></span> Stale</span>
+                {% elif h == "no-backup" %}
+                <span class="stats-pill"><span class="stats-dot"></span> No back-up yet</span>
+                {% else %}
+                <span class="stats-pill"><span class="stats-dot"></span> Empty</span>
+                {% endif %}
+            </td>
             <td>
                 <div class="actions flex-end">
                     <button class="icon-btn" title="Edit" onclick="toggleRow('edit-{{ dest.id }}')">
@@ -53,10 +76,10 @@
                         </button>
                     </form>
                     <form method="post" action="/admin/backup/{{ dest.id }}/delete" class="inline-form"
-                        data-confirm="Delete backup destination {{ dest.name }}?"
+                        data-confirm="Delete Repository {{ dest.name }}?"
                         onsubmit="return confirm(this.dataset.confirm)">
                         <button type="submit" class="icon-btn danger"
-                            {% if dest_account_counts.get(dest.id, 0) > 0 %}disabled title="Cannot delete: accounts still reference this destination"{% else %}title="Delete destination"{% endif %}>
+                            {% if dest_account_counts.get(dest.id, 0) > 0 %}disabled title="Cannot delete: mailbox backup policies still reference this Repository"{% else %}title="Delete Repository"{% endif %}>
                             <i data-lucide="trash-2" class="icon-md"></i>
                         </button>
                     </form>
@@ -121,7 +144,11 @@
         </tr>
         {% endfor %}
         {% if not destinations %}
-        <tr><td colspan="5" class="text-muted">No repositories configured yet.</td></tr>
+        <tr><td colspan="8" class="text-muted">
+            No repositories configured. A Repository is an off-site, encrypted store for snapshots.
+            Use the form below to add your first one — then attach a backup policy to a mailbox
+            from its account-detail page.
+        </td></tr>
         {% endif %}
     </tbody>
 </table>
@@ -129,7 +156,7 @@
 
 <hr>
 
-<h3><i data-lucide="plus-circle" class="icon-lg icon-inline"></i>Add Destination</h3>
+<h3><i data-lucide="plus-circle" class="icon-lg icon-inline"></i>Add Repository</h3>
 <form method="post" action="/admin/backup/new" id="backup-dest-form">
     <div class="grid-2">
         <div>
