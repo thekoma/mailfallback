@@ -457,6 +457,23 @@ a.stat-card:hover { border-color: var(--pico-primary); transform: translateY(-2p
 .stat-card.stat-error .stat-value { color: var(--mfb-danger-color); }
 .stat-card.stat-ok .stat-value { color: var(--mfb-success-color); }
 
+/* === Generic card surface (used by Wave 1b off-site health row, Wave 3 chooser) === */
+.card {
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: 0.5rem;
+    padding: 1rem;
+}
+.chooser-card {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.2s, transform 0.2s;
+}
+.chooser-card:hover { border-color: var(--pico-primary); transform: translateY(-2px); }
+.chooser-card h3 { margin-top: 0; margin-bottom: 0.5rem; }
+.chooser-card p { margin: 0; }
+
 /* === Attention list === */
 .attention-item {
     display: flex;

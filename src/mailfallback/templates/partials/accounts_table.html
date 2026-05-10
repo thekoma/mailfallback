@@ -8,6 +8,7 @@
             <th>Stats</th>
             <th>Status</th>
             <th>Last Sync</th>
+            <th>Repository</th>
             <th class="text-right">Actions</th>
         </tr>
     </thead>
@@ -81,6 +82,29 @@
                 <span class="{{ account.last_sync_at | time_ago_class }}" title="{{ account.last_sync_at.strftime('%Y-%m-%d %H:%M:%S') if account.last_sync_at else '' }}">
                     {{ account.last_sync_at | time_ago }}
                 </span>
+            </td>
+            <td>
+                {% if account.backups %}
+                    {% set bc = account.backups[0] %}
+                    {% if bc.last_successful_run_at %}
+                    <span class="stats-pill" title="Last back-up to {{ bc.destination.name }}">
+                        <span class="stats-dot stats-dot-ok"></span>
+                        {{ bc.last_successful_run_at | time_ago }}
+                    </span>
+                    {% elif bc.last_status.value == "failed" %}
+                    <span class="stats-pill" title="Last attempt failed">
+                        <span class="stats-dot stats-dot-error"></span>
+                        Failed
+                    </span>
+                    {% else %}
+                    <span class="stats-pill" title="Off-site policy set, no successful back-up yet">
+                        <span class="stats-dot"></span>
+                        No back-up yet
+                    </span>
+                    {% endif %}
+                {% else %}
+                    <span class="text-muted text-small">—</span>
+                {% endif %}
             </td>
             <td>
                 <div class="actions flex-end">

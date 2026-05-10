@@ -116,6 +116,14 @@
 {% include "partials/account_history.html" %}
 </div>
 
+{# ── Off-site backup → Repository ── promoted from buried position so it's discoverable; opens by default when configured #}
+<details id="section-backup"{% if backup_config %} open{% endif %}>
+    <summary><i data-lucide="cloud-upload" class="icon-md icon-inline"></i><strong>Off-site backup → Repository</strong></summary>
+    <div class="mt-1">
+    {% include "partials/account_backup.html" %}
+    </div>
+</details>
+
 {# ── Ownership & Visibility ── #}
 <details id="section-ownership">
     <summary><i data-lucide="users" class="icon-md icon-inline"></i><strong>Ownership & Visibility</strong></summary>
@@ -312,14 +320,6 @@
             </form>
             {% endif %}
         </div>
-    </div>
-</details>
-
-{# ── Offsite Backup ── #}
-<details id="section-backup">
-    <summary><i data-lucide="cloud-upload" class="icon-md icon-inline"></i><strong>Offsite Backup</strong></summary>
-    <div class="mt-1">
-    {% include "partials/account_backup.html" %}
     </div>
 </details>
 
