@@ -39,6 +39,23 @@ def profile_page(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@router.post("/profile/dismiss-chain-explainer")
+async def dismiss_chain_explainer(request: Request, db: Session = Depends(get_db)):
+    """Mark the chain-hero explainer as seen for this user.
+
+    Called by the 'Got it' button on the dashboard's first-view explainer
+    callout. Idempotent — repeated calls just keep the flag set.
+    """
+    user = _get_session_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    prefs = dict(user.preferences or {})
+    prefs["chain_hero_seen"] = True
+    user.preferences = prefs
+    db.commit()
+    return RedirectResponse("/", status_code=303)
+
+
 @router.post("/profile/store")
 async def profile_change_store(request: Request, db: Session = Depends(get_db)):
     user = _get_session_user(request, db)
