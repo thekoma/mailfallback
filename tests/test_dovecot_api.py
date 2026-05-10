@@ -173,3 +173,34 @@ def test_userdb_wrong_api_key(client, db_session):
     """Request with wrong X-API-Key returns 401."""
     resp = client.get("/api/internal/dovecot/userdb/alice", headers={"X-API-Key": "wrong"})
     assert resp.status_code == 401
+
+
+def test_userdb_filters_suspended_accounts(client, db_session, default_store):
+    """Suspended accounts must NOT appear in the namespaces list."""
+    user = _create_user(db_session, default_store)
+    live = _create_account(
+        db_session,
+        default_store,
+        name="Live",
+        email="alice@live.com",
+        maildir_path="/data/mailboxes/uuid-live",
+    )
+    recovered = _create_account(
+        db_session,
+        default_store,
+        name="Recovered alice (2026-05-10)",
+        email="alice@live.com",
+        maildir_path="/data/mailboxes/uuid-recovered",
+    )
+    recovered.suspended = True
+    live.owners.append(user)
+    recovered.owners.append(user)
+    db_session.commit()
+
+    resp = client.get("/api/internal/dovecot/userdb/alice", headers=HEADERS)
+    assert resp.status_code == 200
+    namespaces = resp.json()["namespaces"]
+
+    # Only the live account is exposed; the suspended placeholder is hidden
+    assert len(namespaces) == 1
+    assert namespaces[0]["mail_path"] == "/data/mailboxes/uuid-live"

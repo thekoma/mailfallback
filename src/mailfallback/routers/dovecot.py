@@ -44,7 +44,7 @@ def userdb_lookup(username: str, db: Session = Depends(get_db)):
         .filter(group_members.c.user_id == user.id)
     )
     all_accounts = owned.union(via_groups).order_by(Account.created_at.asc()).all()
-    accounts = [a for a in all_accounts if a.enabled and a.store.enabled]
+    accounts = [a for a in all_accounts if a.enabled and not a.suspended and a.store.enabled]
 
     namespaces = []
     for i, account in enumerate(accounts):
