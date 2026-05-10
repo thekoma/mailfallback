@@ -24,7 +24,7 @@
     </div>
 </div>
 <div class="hero-body">
-    <p>Backed up {{ account.last_sync_at | time_ago }}
+    <p>Last sync {{ account.last_sync_at | time_ago }}
     <br>{{ account.total_messages | number }} messages · {{ account.maildir_size_bytes | filesizeformat }}
     <br>Schedule: <code>{{ account.sync_schedule | cron_human }}</code></p>
 </div>
