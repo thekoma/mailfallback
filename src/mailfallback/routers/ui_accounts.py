@@ -10,9 +10,9 @@ from sqlalchemy.orm import Session, joinedload
 from mailfallback.dependencies import get_db
 from mailfallback.models import (
     Account,
-    AccountBackup,
-    BackupDestination,
+    BackupPolicy,
     JobStatus,
+    Repository,
     StoreMigration,
     SyncJob,
 )
@@ -434,12 +434,12 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
         )
 
     backup_config = (
-        db.query(AccountBackup)
-        .options(joinedload(AccountBackup.destination))
-        .filter(AccountBackup.account_id == account_id)
+        db.query(BackupPolicy)
+        .options(joinedload(BackupPolicy.destination))
+        .filter(BackupPolicy.account_id == account_id)
         .first()
     )
-    backup_destinations = db.query(BackupDestination).all()
+    backup_destinations = db.query(Repository).all()
 
     return templates.TemplateResponse(
         request=request,

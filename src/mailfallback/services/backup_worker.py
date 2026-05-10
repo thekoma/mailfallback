@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from mailfallback.db import SessionLocal
-from mailfallback.models import Account, AccountBackup, BackupStatus
+from mailfallback.models import Account, BackupPolicy, BackupStatus
 from mailfallback.services import restic_service
 
 logger = logging.getLogger(__name__)
@@ -45,9 +45,9 @@ def get_backup_progress(backup_id: str) -> dict | None:
 
 def execute_backup(db: Session, account_backup_id: str) -> None:
     """Main backup function: init repo, run backup, apply retention, update DB."""
-    backup = db.query(AccountBackup).filter(AccountBackup.id == account_backup_id).first()
+    backup = db.query(BackupPolicy).filter(BackupPolicy.id == account_backup_id).first()
     if not backup:
-        logger.error("AccountBackup %s not found", account_backup_id)
+        logger.error("BackupPolicy %s not found", account_backup_id)
         return
 
     account = db.query(Account).filter(Account.id == backup.account_id).first()

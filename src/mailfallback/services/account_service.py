@@ -65,9 +65,9 @@ def remove_owner(db: Session, account_id: str, user_id: str) -> None:
 
 
 def get_accounts_for_user(db: Session, user: User) -> list[Account]:
-    # Eager-load Account.backups so callers (notably the accounts list page) can
+    # Eager-load Account.backup_policies so callers (notably the accounts list page) can
     # render the Repository pill without an N+1 storm.
-    backup_load = selectinload(Account.backups)
+    backup_load = selectinload(Account.backup_policies)
     if user.role == UserRole.admin:
         return db.query(Account).options(backup_load).all()
     owned = {a.id for a in user.accounts}

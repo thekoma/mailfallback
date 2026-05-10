@@ -6,10 +6,10 @@ import pytest
 
 from mailfallback.models import (
     Account,
-    AccountBackup,
-    BackupDestination,
+    BackupPolicy,
     BackupStatus,
     MailStore,
+    Repository,
     RetentionPreset,
 )
 from mailfallback.services.backup_worker import execute_backup
@@ -26,7 +26,7 @@ def store(db_session):
 
 @pytest.fixture
 def destination(db_session):
-    d = BackupDestination(
+    d = Repository(
         name="test-s3",
         backend_type="s3",
         s3_endpoint="enc-endpoint",
@@ -57,7 +57,7 @@ def account(db_session, store):
 
 @pytest.fixture
 def account_backup(db_session, account, destination):
-    ab = AccountBackup(
+    ab = BackupPolicy(
         account_id=account.id,
         destination_id=destination.id,
         schedule="0 2 * * *",

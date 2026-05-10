@@ -233,7 +233,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
     from sqlalchemy import func
 
-    from mailfallback.models import AccountBackup, BackupDestination, BackupStatus, SyncState
+    from mailfallback.models import BackupPolicy, BackupStatus, Repository, SyncState
 
     # Wave 4: chain summary feeds the dashboard hero card. Four stages:
     # Source (mailboxes connected) → Mirror (local sync health) →
@@ -241,23 +241,23 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     mirrors_healthy = sum(1 for a in accounts if a.sync_state == SyncState.idle)
     mirrors_error = sum(1 for a in accounts if a.sync_state == SyncState.error)
     snapshots_total = (
-        db.query(func.coalesce(func.sum(AccountBackup.last_snapshot_count), 0)).scalar() or 0
+        db.query(func.coalesce(func.sum(BackupPolicy.last_snapshot_count), 0)).scalar() or 0
     )
     chain_summary = {
         "mailboxes": len(accounts),
         "mirrors_healthy": mirrors_healthy,
         "mirrors_error": mirrors_error,
         "mirrors_total": len(accounts),
-        "repositories": db.query(BackupDestination).count(),
-        "policies": db.query(AccountBackup).count(),
-        "policies_with_recent_success": db.query(AccountBackup)
-        .filter(AccountBackup.last_successful_run_at.isnot(None))
+        "repositories": db.query(Repository).count(),
+        "policies": db.query(BackupPolicy).count(),
+        "policies_with_recent_success": db.query(BackupPolicy)
+        .filter(BackupPolicy.last_successful_run_at.isnot(None))
         .count(),
-        "policies_failed": db.query(AccountBackup)
-        .filter(AccountBackup.last_status == BackupStatus.failed)
+        "policies_failed": db.query(BackupPolicy)
+        .filter(BackupPolicy.last_status == BackupStatus.failed)
         .count(),
-        "policies_never_succeeded": db.query(AccountBackup)
-        .filter(AccountBackup.last_successful_run_at.is_(None))
+        "policies_never_succeeded": db.query(BackupPolicy)
+        .filter(BackupPolicy.last_successful_run_at.is_(None))
         .count(),
         "snapshots_total": int(snapshots_total),
     }
@@ -281,7 +281,7 @@ def system_status_partial(request: Request, db: Session = Depends(get_db)):
     if not user or user.role.value != "admin":
         return HTMLResponse("")
 
-    from mailfallback.models import AccountBackup, BackupStatus, JobStatus, RestoreJob, SyncJob
+    from mailfallback.models import BackupPolicy, BackupStatus, JobStatus, RestoreJob, SyncJob
     from mailfallback.services.background_tasks import get_latest_task
     from mailfallback.services.dovecot_manager import get_cached_health
 
@@ -299,7 +299,7 @@ def system_status_partial(request: Request, db: Session = Depends(get_db)):
     )
 
     active_backups = (
-        db.query(AccountBackup).filter(AccountBackup.last_status == BackupStatus.running).count()
+        db.query(BackupPolicy).filter(BackupPolicy.last_status == BackupStatus.running).count()
     )
 
     has_activity = (
@@ -337,7 +337,7 @@ def accounts_page(request: Request, show_all: str = "", db: Session = Depends(ge
     is_admin = user.role == UserRole.admin
     show_all_users = is_admin and show_all == "1"
     if show_all_users:
-        accounts = db.query(Account).options(selectinload(Account.backups)).all()
+        accounts = db.query(Account).options(selectinload(Account.backup_policies)).all()
     else:
         accounts = get_accounts_for_user(db, user)
     return templates.TemplateResponse(
@@ -357,7 +357,7 @@ def accounts_table_partial(request: Request, show_all: str = "", db: Session = D
     is_admin = user.role == UserRole.admin
     show_all_users = is_admin and show_all == "1"
     if show_all_users:
-        accounts = db.query(Account).options(selectinload(Account.backups)).all()
+        accounts = db.query(Account).options(selectinload(Account.backup_policies)).all()
     else:
         accounts = get_accounts_for_user(db, user)
     any_syncing = any(a.sync_state.value == "syncing" for a in accounts)

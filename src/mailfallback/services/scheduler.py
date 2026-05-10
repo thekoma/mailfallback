@@ -97,10 +97,10 @@ def _run_scheduled_backup(account_backup_id: str) -> None:
 
 
 def backup_scheduler_jobs(db: Session) -> None:
-    from mailfallback.models import AccountBackup
+    from mailfallback.models import BackupPolicy
 
     existing_job_ids = {j.id for j in scheduler.get_jobs()}
-    active_backups = db.query(AccountBackup).filter(AccountBackup.enabled.is_(True)).all()
+    active_backups = db.query(BackupPolicy).filter(BackupPolicy.enabled.is_(True)).all()
 
     for ab in active_backups:
         job_id = f"backup-{ab.id}"
