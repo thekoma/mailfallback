@@ -4,6 +4,8 @@
 
 The single source of truth for user-facing vocabulary in the MFB GUI, error messages, notification text, and docs. **Every PR that introduces or modifies user-facing copy must comply with this table.** Internal code (variable names, model names, log lines) is exempt; only what users read is governed.
 
+**Language:** English only. The product has not shipped a public release; there is no user base to translate for. If localisation ever happens (Italian first, possibly), it will be docs-first; the GUI may follow much later. The audit's earlier bilingual proposals are preserved in `docs/superpowers/analysis/2026-05-10-ux-lexicon-audit/` as historical context.
+
 ---
 
 ## The four-stage model
@@ -22,24 +24,22 @@ Every screen of MFB should let the user point at where they currently are in thi
 
 ## Binding term table
 
-| Concept | Italian (UI, future) | English (UI, current) | Internal/Code (legacy, not user-facing) |
-|---|---|---|---|
-| Source IMAP server (technical field) | **Sorgente** | **Source** | `Account.imap_host` |
-| The user's email account at Gmail/etc. | **Casella** | **Mailbox** | `Account` |
-| Local copy on this server | **Backup locale** | **Local backup** | mbsync output to Maildir |
-| Action: refresh local copy | **Sincronizza ora** | **Sync now** | `SyncJob` execution |
-| Schedule for local refresh | **Pianificazione backup locale** | **Local backup schedule** | `Account.sync_schedule` |
-| Filesystem path for local copies | **Mail store** (admin nav: **Mail stores**) | **Mail store** (admin nav: **Mail stores**) | `MailStore` |
-| Off-site repository | **Repository** (admin nav: **Repositories**) | **Repository** (admin nav: **Repositories**) | `BackupDestination` |
-| Action: push to repository | **Esegui backup ora** | **Back up now** | `submit_backup()` |
-| Per-account off-site config | **Profilo di backup** | **Backup policy** | `AccountBackup` |
-| Point-in-time | **Snapshot** | **Snapshot** | restic snapshot |
-| Retention | **Politica di conservazione** | **Retention policy** | `RetentionPreset` |
-| Restore (mailbox-side, IMAP→IMAP) | **Ripristino** | **Restore** | `RestoreJob` |
-| Recover (depot-side, snapshot→new mailbox) | **Recupera** | **Recover** | `restore_snapshot()` |
-| Recovered placeholder mailbox | **Casella recuperata: {nome} ({data})** | **Recovered mailbox: {name} ({date})** | New `Account` row, suspended |
-
-> The Italian column is an i18n target for a future epic. There is no i18n infrastructure today; Wave 2 of the rollout ships English only.
+| Concept | UI label | Internal/Code (legacy table or column name, not user-facing) |
+|---|---|---|
+| Source IMAP server (technical field) | **Source** | `Account.imap_host` |
+| The user's email account at Gmail/etc. | **Mailbox** | `Account` |
+| Local copy on this server | **Local backup** | mbsync output to Maildir |
+| Action: refresh local copy | **Sync now** | `SyncJob` execution |
+| Schedule for local refresh | **Local backup schedule** | `Account.sync_schedule` |
+| Filesystem path for local copies | **Mail store** (admin nav: **Mail stores**) | `MailStore` |
+| Off-site repository | **Repository** (admin nav: **Repositories**) | `BackupDestination` table; `Repository` Python class |
+| Action: push to repository | **Back up now** | `submit_backup()` |
+| Per-account off-site config | **Backup policy** | `account_backups` table; `BackupPolicy` Python class |
+| Point-in-time | **Snapshot** | restic snapshot |
+| Retention | **Retention policy** | `RetentionPreset` |
+| Restore (mailbox-side, IMAP→IMAP) | **Restore** | `RestoreJob` |
+| Recover (depot-side, snapshot→new mailbox) | **Recover** | `restore_snapshot()` |
+| Recovered placeholder mailbox | **Recovered mailbox: {name} ({date})** | New `Account` row, suspended |
 
 ---
 
@@ -76,13 +76,13 @@ Use of bare "Backup" as a noun is **banned**. Always qualify:
 - **Direct, declarative.** Users are admins; they don't need pleasantries.
   - ✅ "Mailbox luca@example.com — local backup failed 2 h ago"
   - ❌ "It seems there might be an issue with your mailbox..."
-- **One verb per concept**. The verb table is binding:
-  - Source → "connect" / "collega"
-  - Local backup → "sync" / "sincronizza"
-  - Repository → "back up" / "esegui backup"
-  - Snapshot → "capture" / "scatta" (rarely used as verb)
-  - Restore (mailbox-side, IMAP→IMAP) → "restore" / "ripristina"
-  - Recover (depot-side, snapshot→new mailbox) → "recover" / "recupera"
+- **One verb per concept.** The verb table is binding:
+  - Source → "connect"
+  - Local backup → "sync"
+  - Repository → "back up"
+  - Snapshot → "capture" (rarely used as verb)
+  - Restore (mailbox-side, IMAP→IMAP) → "restore"
+  - Recover (depot-side, snapshot→new mailbox) → "recover"
 - **Empty states teach.** Every empty state must answer: what is this, what's the next action.
 - **Errors propose action.** "X failed because Y. <Suggested next step>." pattern.
 - **Avoid uppercase emphasis** ("CRITICAL", "ATTENTION"). Use icon + word ("⚠ Attention needed").
@@ -138,7 +138,7 @@ An **advisory** pre-commit hook (`scripts/lexicon-check.sh`) and CI step warn (d
 
 False positives go in `scripts/.lexicon-allowlist` with a one-line reason.
 
-Legacy audit-action strings (e.g., `backup_destination.create`) render via `get_action_label()` in `src/mailfallback/services/audit_service.py`. New display strings are added there in Wave 2; the underlying action strings stay stable for backward compatibility of historical audit rows.
+Legacy audit-action strings (e.g., `backup_destination.create`) render via `get_action_label()` in `src/mailfallback/services/audit_service.py`. The underlying action strings stay stable for backward compatibility of historical audit rows.
 
 ---
 
@@ -146,7 +146,7 @@ Legacy audit-action strings (e.g., `backup_destination.create`) render via `get_
 
 - **Source**: the user's IMAP server (Gmail, Outlook, etc.). Read-only from MFB's point of view.
 - **Local backup**: the local Maildir kept by mbsync. Always-on, lives on the same host as MFB. *This is what makes MFB a "fallback" mailbox.*
-- **Repository**: the off-site restic storage location. S3 or local-disk. Encrypted independently. Configured per-installation; mailboxes pick which one to use via their backup policy. **Same word in IT and EN.**
+- **Repository**: the off-site restic storage location. S3 or local-disk. Encrypted independently. Configured per-installation; mailboxes pick which one to use via their backup policy.
 - **Snapshot**: a point-in-time capture inside a Repository. Created on schedule per a backup policy. Recovered (not "restored") via the Recover flow.
 - **Mail store**: a filesystem path where local backups physically live on the server. Admins manage these in the Mail stores page. *Kept verbatim from the legacy term — it's already in the data model and didn't cause confusion in the audit.*
 
