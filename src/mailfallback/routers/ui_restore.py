@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from mailfallback.dependencies import get_db
-from mailfallback.models import JobStatus, UserRole
+from mailfallback.models import AccountBackup, JobStatus, UserRole
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import decrypt_credentials
 from mailfallback.services.account_service import get_account, get_accounts_for_user
@@ -17,7 +17,29 @@ router = APIRouter(tags=["ui-restore"])
 
 
 @router.get("/restore", response_class=HTMLResponse)
-def restore_page(request: Request, show_all: str = "", db: Session = Depends(get_db)):
+def restore_chooser(request: Request, db: Session = Depends(get_db)):
+    """Wave 3: /restore is a chooser between two distinct flows.
+
+    - "Recover from a snapshot" → /recover (depot-side, restic snapshot → new mailbox)
+    - "Move mail between mailboxes" → /restore/move (IMAP-to-IMAP between MFB accounts)
+    """
+    user = _get_session_user(request, db)
+    if not user:
+        return RedirectResponse("/login")
+    return templates.TemplateResponse(
+        request=request,
+        name="restore_chooser.html",
+        context={"user": user},
+    )
+
+
+@router.get("/restore/move", response_class=HTMLResponse)
+def restore_move_page(request: Request, show_all: str = "", db: Session = Depends(get_db)):
+    """The IMAP-to-IMAP restore form (formerly served at /restore).
+
+    The page URL changed in Wave 3; the partial endpoints under
+    /restore/partials/* are unchanged for backward compatibility.
+    """
     user = _get_session_user(request, db)
     if not user:
         return RedirectResponse("/login")
@@ -40,6 +62,41 @@ def restore_page(request: Request, show_all: str = "", db: Session = Depends(get
             "running_jobs": running_jobs,
             "show_all_users": show_all_users,
         },
+    )
+
+
+@router.get("/recover", response_class=HTMLResponse)
+def recover_page(request: Request, db: Session = Depends(get_db)):
+    """List mailboxes that have at least one off-site snapshot to recover from.
+
+    The actual recovery POST already exists at /accounts/{id}/backup/restore/{snap_id};
+    this page is the discoverable entry point for it.
+    """
+    user = _get_session_user(request, db)
+    if not user:
+        return RedirectResponse("/login")
+    accounts = get_accounts_for_user(db, user)
+    account_ids = {a.id for a in accounts}
+    backups = (
+        db.query(AccountBackup)
+        .filter(AccountBackup.account_id.in_(account_ids))
+        .filter(AccountBackup.last_snapshot_count > 0)
+        .all()
+    )
+    accounts_by_id = {a.id: a for a in accounts}
+    recoverable = [
+        {"account": accounts_by_id[bc.account_id], "backup": bc}
+        for bc in backups
+        if bc.account_id in accounts_by_id
+    ]
+    recoverable.sort(
+        key=lambda e: e["backup"].last_snapshot_at or e["backup"].created_at,
+        reverse=True,
+    )
+    return templates.TemplateResponse(
+        request=request,
+        name="recover.html",
+        context={"user": user, "recoverable": recoverable},
     )
 
 
