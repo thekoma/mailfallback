@@ -236,13 +236,13 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     backup_summary = {
         "total_policies": db.query(AccountBackup).count(),
         "with_recent_success": db.query(AccountBackup)
-        .filter(AccountBackup.last_backup_at.isnot(None))
+        .filter(AccountBackup.last_successful_run_at.isnot(None))
         .count(),
         "with_failures": db.query(AccountBackup)
         .filter(AccountBackup.last_status == BackupStatus.failed)
         .count(),
         "never_succeeded": db.query(AccountBackup)
-        .filter(AccountBackup.last_backup_at.is_(None))
+        .filter(AccountBackup.last_successful_run_at.is_(None))
         .count(),
     }
 

@@ -1,5 +1,6 @@
 """Backup worker — executes restic backups in a thread pool."""
 
+import contextlib
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -56,8 +57,10 @@ def execute_backup(db: Session, account_backup_id: str) -> None:
         db.commit()
         return
 
+    now = datetime.now(UTC)
     backup.last_status = BackupStatus.running
     backup.last_error = None
+    backup.last_run_at = now
     db.commit()
 
     _backup_progress[account_backup_id] = {"phase": "starting"}
@@ -84,10 +87,22 @@ def execute_backup(db: Session, account_backup_id: str) -> None:
             backup.keep_monthly,
         )
 
-        # Success
+        # Success — also cache snapshot count + most-recent snapshot timestamp so the
+        # chain widget (Wave 4) can render without shelling restic on every page load.
+        success_at = datetime.now(UTC)
         backup.last_status = BackupStatus.completed
-        backup.last_backup_at = datetime.now(UTC)
+        backup.last_backup_at = success_at
+        backup.last_successful_run_at = success_at
         backup.last_error = None
+        try:
+            snapshots = restic_service.list_snapshots(backup.destination, account.id)
+            backup.last_snapshot_count = len(snapshots)
+            if snapshots:
+                ts = snapshots[0].get("time", "").replace("Z", "+00:00")
+                with contextlib.suppress(ValueError):
+                    backup.last_snapshot_at = datetime.fromisoformat(ts)
+        except Exception as snap_exc:
+            logger.warning("Snapshot count refresh failed for account %s: %s", account.id, snap_exc)
         logger.info("Backup completed for account %s", account.name)
 
     except Exception as e:
