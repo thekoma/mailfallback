@@ -1,0 +1,36 @@
+{% if snapshots %}
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Snapshot</th>
+            <th>Date</th>
+            <th>Hostname</th>
+            <th class="text-right">Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for snap in snapshots %}
+        <tr>
+            <td><code>{{ snap.short_id }}</code></td>
+            <td>{{ snap.time[:19] | replace('T', ' ') }}</td>
+            <td>{{ snap.hostname }}</td>
+            <td>
+                <div class="actions flex-end">
+                    <form method="post" action="/accounts/{{ account.id }}/backup/restore/{{ snap.short_id }}"
+                        data-confirm="Restore snapshot {{ snap.short_id }}? This will create a new suspended account with the restored data."
+                        onsubmit="return confirm(this.dataset.confirm)">
+                        <button type="submit" class="icon-btn" title="Restore this snapshot">
+                            <i data-lucide="archive-restore" class="icon-md"></i>
+                        </button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="text-muted text-small">No snapshots found.</p>
+{% endif %}
