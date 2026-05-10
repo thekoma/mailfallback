@@ -26,7 +26,7 @@
     <span class="status-badge {% if active_backups > 0 %}status-active{% else %}status-neutral{% endif %}"
           onclick="toggleStatusDetail('backup')">
         <i data-lucide="cloud-upload" class="icon-sm {% if active_backups > 0 %}spin{% endif %}"></i>
-        {{ active_backups }} backup{{ 's' if active_backups != 1 else '' }}
+        {{ active_backups }} off-site backup{{ 's' if active_backups != 1 else '' }}
     </span>
 </div>
 
@@ -116,9 +116,9 @@
 
 <div id="status-detail-backup" class="status-detail" style="display:none;">
     {% if active_backups == 0 %}
-    <span class="text-small text-muted">No active backup jobs</span>
+    <span class="text-small text-muted">No active off-site backup jobs</span>
     {% else %}
-    <span class="text-small">{{ active_backups }} backup job{{ 's' if active_backups != 1 else '' }} running</span>
+    <span class="text-small">{{ active_backups }} off-site backup job{{ 's' if active_backups != 1 else '' }} running</span>
     {% endif %}
 </div>
 
