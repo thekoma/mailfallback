@@ -34,13 +34,13 @@
 <div class="hero-header">
     <div class="hero-title">
         <i data-lucide="circle" class="icon-lg"></i>
-        <strong>Not yet backed up</strong>
+        <strong>Not yet synced</strong>
     </div>
     <div class="hero-actions">
-        <button class="icon-btn primary" title="Start first backup"
+        <button class="icon-btn primary" title="Start first sync"
             hx-post="/api/sync/{{ account.id }}" hx-swap="none"
             hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
-            <i data-lucide="refresh-cw" class="icon-md"></i> Start first backup
+            <i data-lucide="refresh-cw" class="icon-md"></i> Start first sync
         </button>
     </div>
 </div>
@@ -53,7 +53,7 @@
 <div class="hero-header">
     <div class="hero-title">
         <span class="pulse-dot"></span>
-        <strong>{% if hero_state == "first-sync" %}First backup in progress…{% else %}Backing up…{% endif %}</strong>
+        <strong>{% if hero_state == "first-sync" %}First sync in progress…{% else %}Syncing…{% endif %}</strong>
     </div>
     <div class="hero-actions">
         <button class="icon-btn danger" title="Stop"
@@ -65,7 +65,7 @@
 </div>
 <div class="hero-body">
     {% if hero_state == "first-sync" %}
-    <p class="text-small text-muted">This may take a while — first backups download every message in your account.</p>
+    <p class="text-small text-muted">This may take a while — the first sync downloads every message in your account.</p>
     {% endif %}
 
     {% if snap and snap.current_folder %}
@@ -217,9 +217,9 @@
         Reconnect with {{ account.provider | capitalize }}
     </a>
     <p class="text-small text-muted mt-025">
-        Your {{ account.provider | capitalize }} sign-in expired. Backups will resume automatically as soon as you reconnect.
+        Your {{ account.provider | capitalize }} sign-in expired. Sync will resume automatically as soon as you reconnect.
         {% if account.last_sync_at %}
-        <br>Last successful backup: {{ account.last_sync_at | time_ago }}
+        <br>Last successful sync: {{ account.last_sync_at | time_ago }}
         {% if account.total_messages %} · {{ account.total_messages | number }} messages{% endif %}
         {% endif %}
     </p>
@@ -236,7 +236,7 @@
         <button class="icon-btn success"
             hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
             hx-on::after-request="location.reload()">
-            <i data-lucide="play-circle" class="icon-md"></i> Resume backups
+            <i data-lucide="play-circle" class="icon-md"></i> Resume sync
         </button>
         <button class="icon-btn" title="Manual sync"
             hx-post="/api/sync/{{ account.id }}" hx-swap="none"
@@ -246,9 +246,9 @@
     </div>
 </div>
 <div class="hero-body">
-    <p>Backups are paused. Existing mail stays readable.
+    <p>Sync is paused. Existing mail stays readable.
     {% if account.last_sync_at %}
-    <br>Last backed up {{ account.last_sync_at | time_ago }} · {{ account.total_messages | number }} messages
+    <br>Last sync {{ account.last_sync_at | time_ago }} · {{ account.total_messages | number }} messages
     {% endif %}
     </p>
 </div>
@@ -262,7 +262,7 @@
     </div>
 </div>
 <div class="hero-body">
-    <p>Moving to a new location. Backups resume when done.</p>
+    <p>Moving to a new location. Sync resumes when done.</p>
     {% if migration and migration.total_bytes > 0 %}
     {% set pct = (migration.copied_bytes * 100 / migration.total_bytes) | int %}
     <div class="progress-bar">

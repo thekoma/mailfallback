@@ -2,3 +2,6 @@
 # Lines matching `path:line` prefix are excluded from lexicon-check warnings.
 # Format: path/to/file.html:123: <reason>
 # Comments start with #.
+
+src/mailfallback/templates/restore.html:146: placeholder is a legitimate example folder name (e.g. Backup/2024); not MFB lexicon
+src/mailfallback/templates/partials/system_status.html:27: 'backup' is a JS function argument selecting the status-detail panel id, not user-visible text
