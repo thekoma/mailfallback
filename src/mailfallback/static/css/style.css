@@ -485,7 +485,15 @@ a.stat-card:hover { border-color: var(--pico-primary); transform: translateY(-2p
 .chain-stage {
     flex: 1 1 140px;
     min-width: 140px;
+    color: inherit;
+    text-decoration: none;
+    display: block;
+    padding: 0.25rem 0.4rem;
+    border-radius: 0.25rem;
+    transition: background 0.15s, transform 0.15s;
 }
+a.chain-stage:hover { background: var(--pico-card-sectioning-background-color); transform: translateY(-1px); }
+.chain-stage-disabled { cursor: not-allowed; opacity: 0.85; }
 .chain-stage-label {
     font-size: 0.85rem;
     color: var(--pico-muted-color);
