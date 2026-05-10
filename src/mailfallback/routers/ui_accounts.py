@@ -441,6 +441,10 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
     )
     backup_destinations = db.query(Repository).all()
 
+    from mailfallback.services.recovery_service import list_recoveries_for_account
+
+    recoveries = list_recoveries_for_account(db, account_id)
+
     return templates.TemplateResponse(
         request=request,
         name="account_detail.html",
@@ -460,6 +464,7 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
             "migration": migration,
             "backup_config": backup_config,
             "backup_destinations": backup_destinations,
+            "recoveries": recoveries,
         },
     )
 
@@ -599,35 +604,6 @@ async def account_toggle_suspend(
             resource_name=account.email_address or account.name,
             ip_address=request.client.host if request.client else None,
         )
-    return RedirectResponse(f"/accounts/{account_id}", status_code=303)
-
-
-@router.post("/accounts/{account_id}/promote-recovered")
-async def account_promote_recovered(
-    account_id: str,
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    user = _get_session_user(request, db)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-    account = get_account(db, account_id, user)
-    if not account:
-        return RedirectResponse("/", status_code=303)
-    if not account.name.startswith("Recovered "):
-        request.session["flash_error"] = "Only recovered mailboxes can be promoted to live."
-        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
-    update_account(db, account_id, user, suspended=False)
-    log_action(
-        db,
-        user=user,
-        action="account.promote_recovered",
-        resource_type="account",
-        resource_id=account_id,
-        resource_name=account.email_address or account.name,
-        ip_address=request.client.host if request.client else None,
-    )
-    request.session["flash_success"] = f"Promoted '{account.name}' to live. Sync may now run."
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
 

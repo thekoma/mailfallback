@@ -150,6 +150,16 @@
     </div>
 </details>
 
+{# ── Recoveries (recovered snapshots — read-only artefacts under this account) ── #}
+{% if recoveries %}
+<details id="section-recoveries" open>
+    <summary><i data-lucide="archive-restore" class="icon-md icon-inline"></i><strong>Recoveries</strong> ({{ recoveries | length }})</summary>
+    <div class="mt-1">
+    {% include "partials/account_recoveries.html" %}
+    </div>
+</details>
+{% endif %}
+
 {# ── Ownership & Visibility ── #}
 <details id="section-ownership">
     <summary><i data-lucide="users" class="icon-md icon-inline"></i><strong>Ownership & Visibility</strong></summary>
@@ -334,16 +344,6 @@
                 hx-on::after-request="location.reload()">
                 <i data-lucide="pause-circle" class="icon-md"></i> Suspend schedule
             </button>
-            {% endif %}
-            {% if account.name.startswith("Recovered ") and account.suspended %}
-            <form method="post" action="/accounts/{{ account.id }}/promote-recovered" style="display:inline">
-                <button type="submit" class="icon-btn primary"
-                        title="Promote this recovered mailbox to a live one"
-                        data-confirm="Promote {{ account.name }} to a live mailbox? Sync will start running. Make sure this is the recovered data you want to keep."
-                        onsubmit="return confirm(this.dataset.confirm)">
-                    <i data-lucide="check-circle" class="icon-md"></i> Promote to live
-                </button>
-            </form>
             {% endif %}
         </div>
     </div>
