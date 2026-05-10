@@ -78,13 +78,44 @@ class TestExecuteBackup:
             "files_new": 5,
         }
         mock_restic.apply_retention.return_value = {"pruned": True}
+        mock_restic.list_snapshots.return_value = [
+            {"short_id": "abc123", "time": "2026-05-10T20:00:00Z", "hostname": "mfb"},
+            {"short_id": "def456", "time": "2026-05-09T20:00:00Z", "hostname": "mfb"},
+        ]
 
         execute_backup(db_session, account_backup.id)
 
         db_session.refresh(account_backup)
         assert account_backup.last_status == BackupStatus.completed
         assert account_backup.last_backup_at is not None
+        assert account_backup.last_run_at is not None
+        assert account_backup.last_successful_run_at is not None
+        assert account_backup.last_snapshot_count == 2
+        assert account_backup.last_snapshot_at is not None
         assert account_backup.last_error is None
+
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_failed_run_clears_success_timestamp(self, mock_restic, db_session, account_backup):
+        """A failed run records last_run_at but leaves last_successful_run_at untouched."""
+        # Pre-populate a previous success.
+        from datetime import UTC, datetime, timedelta
+
+        prior = datetime.now(UTC) - timedelta(hours=2)
+        account_backup.last_successful_run_at = prior
+        db_session.commit()
+
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.side_effect = RuntimeError("Restic backup failed: disk full")
+
+        execute_backup(db_session, account_backup.id)
+
+        db_session.refresh(account_backup)
+        assert account_backup.last_status == BackupStatus.failed
+        assert account_backup.last_run_at is not None
+        # Prior success timestamp untouched (SQLite drops tzinfo, so compare naive).
+        assert account_backup.last_successful_run_at.replace(tzinfo=None) == prior.replace(
+            tzinfo=None
+        )
 
     @patch("mailfallback.services.backup_worker.restic_service")
     def test_failed_init(self, mock_restic, db_session, account_backup):
