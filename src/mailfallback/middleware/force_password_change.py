@@ -80,9 +80,20 @@ class ForcePasswordChangeMiddleware(BaseHTTPMiddleware):
             user = db.query(User).filter(User.id == user_id).first()
             if not user or user.role != UserRole.admin:
                 return await call_next(request)
+            # OIDC-linked admins have no local password to manage — they
+            # authenticate through the identity provider. The bootstrap
+            # default may still be present in their password_hash as a
+            # leftover from a pre-OIDC install, but it's irrelevant
+            # (they can't log in with it). Skip the check.
+            if user.oidc_subject:
+                return await call_next(request)
+            # No local password set at all (rare: a manually-created
+            # admin via API without password). Nothing to change.
+            if not user.password_hash:
+                return await call_next(request)
             try:
                 still_default = verify_password(DEFAULT_ADMIN_PASSWORD, user.password_hash)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, AttributeError):
                 still_default = False
             if still_default:
                 return RedirectResponse("/profile?force_password_change=1", status_code=303)
