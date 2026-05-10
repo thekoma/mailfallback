@@ -45,6 +45,7 @@ ACTION_LABELS = {
     "account.backup_configure": "Backup policy configured",
     "account.backup_now": "Manual back-up triggered",
     "account.backup_restore": "Recovered from snapshot",
+    "account.recovery_delete": "Deleted recovery",
     "account.promote_recovered": "Recovered mailbox promoted to live",
 }
 
