@@ -92,52 +92,52 @@ Today's `status-strip` (`system_status.html`) already shows Dovecot, FTS, sync, 
 | 3 | Restore flash + suspended messaging | `ui_backup.py:411`, `ui_backup.py:388` (auto-name), `partials/restore_history.html` | ~15 LOC | `test_restore_ui.py`: 2-3 assertion updates |
 | 4 | DR doc | new `docs/disaster-recovery.md` + link from `admin_backup.html` | ~150 LOC doc + 1 link | 0 |
 
-**Hidden hardness:** Fix #1 likely needs an Alembic migration (no `last_successful_run_at` distinct from `last_run_at`). That's a 30-minute migration but it's a database change inside the "honesty" wave. Fix #3's auto-name change in `ui_backup.py:388` is one line but **Italian users will get an English "Recovered X" until i18n exists** — flag this in release notes.
+**Hidden hardness:** Fix #1 likely needs Alembic (no `last_successful_run_at`). 30-minute migration but a DB change in the "honesty" wave. Fix #3's auto-name in `ui_backup.py:388` is one line, but Italian users get English until i18n exists — flag in release notes.
 
 ## DB rename deferral — is it really safe to defer?
 
-Mostly yes, with three identifiable leak points:
+Mostly yes; three leak points:
 
-1. **Audit log action strings** (`"backup_destination.create"`, `"account.backup_configure"` etc. in `ui_backup.py:115-405`) render directly in `admin_audit.html`. These contain "backup_destination" and will **read as legacy** even after the UI rename. Mitigation: a tiny display map in the audit template (`{{ "backup_destination": "Repository" | get(action.resource_type, action.resource_type) }}`). 5 lines.
-2. **Error messages with model names** — I checked: `restic_service.py` uses the type name only in code paths; user-facing errors say "destination" not "BackupDestination". Safe.
-3. **Form field names in HTML** (`name="destination_id"` in `partials/account_backup.html`) — these are form keys, not labels. Safe to leave; no user sees them.
+1. **Audit action strings** (`"backup_destination.create"` etc., `ui_backup.py:115-405`) render in `admin_audit.html` and will read as legacy. Add a 5-line display map in the audit template.
+2. **Error messages:** `restic_service.py` uses the type name only in code paths; user-facing errors say "destination". Safe.
+3. **Form field `name="destination_id"`:** form key, not a label. Safe.
 
-So deferral is safe **if** the audit-display map is added. Add it to Wave 2.
+Deferral is safe **if** the audit-display map ships in Wave 2.
 
 ## Test impact
 
-Today: 390 tests. Estimates:
+Today: 390 tests.
 
-- **Lexicon rename:** ~30 test assertions need updates. The grep `grep -lE '"Backup |"Sync |Backed up|Sync now|Mail Store|Stores|backup destination' tests/` finds 4 files (`test_mbsync_config.py`, `test_sync_worker.py`, `test_sync_progress.py`, `test_issue_fixes.py`). UI tests in `test_ui.py` and `test_audit_ui.py` will have flash-message assertions — call it ~25-30 total.
-- **Chain widget:** ~5 new tests. Endpoint extension test, dismissal preference persistence, snapshot-cache freshness, default-on-for-new-users logic, anonymous-user fallback (no widget on login page).
-- **Security fixes:** ~5-7 new tests. Last-successful-backup helper, TLS warning rendering, restore flash text, DR doc link presence. Not heavy.
+- **Lexicon rename:** ~25-30 assertion updates. `grep -lE '"Backup |"Sync |Backed up|Sync now|Mail Store|backup destination' tests/` finds 4 files; `test_ui.py` and `test_audit_ui.py` add flash-message assertions.
+- **Chain widget:** ~5 new tests — endpoint extension, dismissal persistence, snapshot-cache freshness, default-on logic, login-page suppression.
+- **Security fixes:** ~5-7 new tests — last-successful helper, TLS warning render, restore flash text, DR doc link.
 
-Net: **+15 tests, ~30 updates.** Should keep pass time under 10s parallel. No fixture surgery needed (in-memory SQLite handles new columns).
+Net: **+15 tests, ~30 updates.** Parallel runtime stays under 10s. No fixture surgery (in-memory SQLite handles new columns).
 
 ## Risks the recommendation underestimates
 
-1. **Snapshot count caching is mandatory, not optional.** The chain widget's "N snapshot" count cannot do live restic queries every 5s. Without the `AccountBackup.last_snapshot_count` column, the widget either lies or kills disk I/O. The recommendation does not call this out.
-2. **The `system_status.html` strip overlap.** Putting the chain widget right under it creates visual "double status bar" syndrome. Either the chain widget *replaces* the strip (bigger refactor) or it lives inside the same component. The recommendation assumes pure-add.
-3. **Audit log strings render in the UI.** Recommendation calls audit a DB-only concern; it's not.
-4. **`account.suspended` flag** is the actual mechanism behind "recovered placeholder mailbox" — but the audit doesn't confirm Dovecot blocks suspended accounts. Recommend verifying that `recover` produces the correct combination of `suspended=true` + a "recovered" name pattern, and that the suspended flag is honored in Lua userdb. If not, the security-adjacent fix #3 is harder than copy-rewriting.
-5. **No i18n infrastructure exists.** The bilingual lexicon table cannot ship — only the English column does. Italian rollout is a separate epic.
-6. **Inline form for "Add Repository" is also "Edit Repository".** The recent commit `4934ad3` (edit backup destination — inline expandable form) is mid-flight. Wave 1 lexicon work will collide with this. Coordinate or wait until it merges.
+1. **Snapshot caching is mandatory.** The chain widget cannot live-query restic every 5s; without `last_snapshot_count` it lies or kills disk.
+2. **`system_status.html` overlap.** Stacking another bar creates visual "double status bar" syndrome. Either replace the strip or fold the chain into it. Recommendation assumes pure-add.
+3. **Audit action strings are user-visible**, not DB-only.
+4. **`account.suspended` semantics not verified.** Fix #3 ("recovered mailbox is suspended") assumes the Lua userdb honors the suspended flag. Verify before copy-only changes.
+5. **No i18n exists.** Bilingual table can't ship — English only. Italian is a separate epic.
+6. **Mid-flight conflict.** Commit `4934ad3` (edit backup destination, inline form) is open work touching the same partial Wave 1 will edit. Coordinate.
 
 ## Risks the recommendation overestimates
 
-1. **"Italian/English term divergence makes search docs harder"** — there are no Italian docs today. Non-issue until i18n exists.
-2. **"Off-site promotion confuses existing users"** — on a self-hosted homelab tool with maybe 1-3 admins per install, the "what changed" toast is overkill. A line in the changelog suffices.
-3. **"The team picks Option C halfway through"** — there is no team. Andrea is one developer. Scope discipline is whatever Andrea decides on Monday morning.
+1. **"Italian/English divergence makes docs harder"** — no Italian docs exist. Non-issue.
+2. **"What changed" toast** is overkill for 1-3 admins per install. A changelog line is enough.
+3. **"Team picks Option C halfway"** — there is no team. Andrea decides Monday.
 
 ## My counter-proposal on sequencing
 
-**Keep the order, but split Wave 1 and Wave 2.** Specifically:
+Keep the order, split Wave 1 and Wave 2:
 
-- **Wave 1a (Day 1-2): LEXICON.md + CI lint + audit display map.** Land the foundation before any UI churn.
-- **Wave 1b (Day 3-5): the four security fixes.** Each is independent.
-- **Wave 2 (Week 2): English-only lexicon rename.** Drop the IT column from the binding scope; keep it in `LEXICON.md` as "future i18n target".
-- **Wave 2.5 (Week 2 end, ~1 day): Alembic migration for `AccountBackup.last_snapshot_count`, `last_snapshot_at`, `last_successful_run_at`.** Three columns at once — one migration, one round of test fixture updates.
-- **Wave 3 (Week 3): IA reorder + two-pill accounts list + new `/recover` route** (split out from `/restore`).
-- **Wave 4 (Week 4): chain widget — but extend `system_status.html`, not parallel to it.** Empty-state redesigns are quick wins to fill the week.
+- **Wave 1a (Day 1-2):** `LEXICON.md` + CI lint + audit display map. Foundation first.
+- **Wave 1b (Day 3-5):** the four security fixes, parallelizable.
+- **Wave 2 (Week 2):** English-only rename. IT column stays in `LEXICON.md` as i18n target.
+- **Wave 2.5 (1 day):** one Alembic migration for `last_snapshot_count`, `last_snapshot_at`, `last_successful_run_at` — batched.
+- **Wave 3 (Week 3):** IA reorder + two-pill accounts list + new `/recover` route.
+- **Wave 4 (Week 4):** chain widget — extend `system_status.html`, don't parallel it. Empty-state redesigns fill the gaps.
 
-The split of Wave 1 protects the foundation from being delayed by the security fixes. The Alembic columns batched at end of Wave 2 give the chain widget real data to render in Wave 4 without a mid-wave migration scramble.
+The 1a/1b split protects the foundation from security-fix slippage. Batching the Alembic at Wave 2.5 gives Wave 4 real data without mid-wave schema scramble.
