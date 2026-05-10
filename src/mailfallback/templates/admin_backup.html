@@ -5,6 +5,13 @@
 
 <p class="text-muted">Manage offsite backup destinations for account maildir data. Each destination is a restic repository backed by S3 or a local path.</p>
 
+<p class="text-small text-muted">
+    <i data-lucide="info" class="icon-sm icon-inline"></i>
+    Snapshots are useless without your <code>MAILFALLBACK_SECRET_KEY</code> and a Postgres dump. See
+    <a href="https://thekoma.github.io/mailfallback/admin-guide/disaster-recovery/" target="_blank" rel="noopener">disaster recovery</a>
+    for what to back up alongside your repositories.
+</p>
+
 <div class="table-wrap">
 <table>
     <thead>
