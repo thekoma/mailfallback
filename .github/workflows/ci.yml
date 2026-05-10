@@ -33,6 +33,9 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check src/ tests/
 
+      - name: Lexicon check (advisory)
+        run: bash scripts/lexicon-check.sh
+
   secrets:
     runs-on: ubuntu-latest
     steps:
