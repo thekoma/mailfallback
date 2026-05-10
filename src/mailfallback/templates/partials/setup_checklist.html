@@ -1,0 +1,59 @@
+{# Setup checklist — first-run helper card on the dashboard.
+   Renders only when setup_state.is_admin and not setup_state.complete
+   (or one of the recommended items is still pending). Auto-hides once
+   all items are done. No explicit dismiss; state is derived from data. #}
+<section class="card setup-checklist mt-1" role="status" aria-live="polite">
+    <h3><i data-lucide="rocket" class="icon-md icon-inline"></i> Get started</h3>
+    <p class="text-muted text-small">
+        Finish setting up MailFallBack. Required steps come first; off-site backup is recommended for disaster recovery.
+    </p>
+
+    <ul class="setup-list">
+        <li class="setup-item {% if not setup_state.default_password %}done{% else %}pending required{% endif %}">
+            {% if not setup_state.default_password %}
+            <i data-lucide="check-circle" class="icon-md setup-icon-done" aria-label="Done"></i>
+            <span>Default admin password changed</span>
+            {% else %}
+            <i data-lucide="alert-triangle" class="icon-md setup-icon-required" aria-label="Required"></i>
+            <span><strong>Change the default admin password</strong> — it's the same on every fresh install.</span>
+            <a href="/profile" class="icon-btn primary setup-cta">Change password</a>
+            {% endif %}
+        </li>
+
+        <li class="setup-item {% if setup_state.has_mailbox %}done{% else %}pending required{% endif %}">
+            {% if setup_state.has_mailbox %}
+            <i data-lucide="check-circle" class="icon-md setup-icon-done" aria-label="Done"></i>
+            <span>At least one mailbox connected</span>
+            {% else %}
+            <i data-lucide="alert-triangle" class="icon-md setup-icon-required" aria-label="Required"></i>
+            <span><strong>Connect a mailbox</strong> — your local backup starts as soon as you do.</span>
+            <a href="/accounts/new" class="icon-btn primary setup-cta">Connect a mailbox</a>
+            {% endif %}
+        </li>
+
+        <li class="setup-item {% if setup_state.has_repository %}done{% else %}pending recommended{% endif %}">
+            {% if setup_state.has_repository %}
+            <i data-lucide="check-circle" class="icon-md setup-icon-done" aria-label="Done"></i>
+            <span>At least one Repository configured</span>
+            {% else %}
+            <i data-lucide="circle" class="icon-md setup-icon-recommended" aria-label="Recommended"></i>
+            <span>Add a <strong>Repository</strong> — off-site, encrypted store for snapshots. Recommended.</span>
+            <a href="/admin/backup" class="icon-btn setup-cta">Add a Repository</a>
+            {% endif %}
+        </li>
+
+        <li class="setup-item {% if setup_state.has_backup_policy %}done{% else %}pending recommended{% endif %}">
+            {% if setup_state.has_backup_policy %}
+            <i data-lucide="check-circle" class="icon-md setup-icon-done" aria-label="Done"></i>
+            <span>At least one mailbox has a backup policy</span>
+            {% elif setup_state.has_mailbox and setup_state.has_repository %}
+            <i data-lucide="circle" class="icon-md setup-icon-recommended" aria-label="Recommended"></i>
+            <span>Attach a <strong>backup policy</strong> to a mailbox — sends scheduled snapshots to a Repository.</span>
+            <a href="/accounts" class="icon-btn setup-cta">Open mailboxes</a>
+            {% else %}
+            <i data-lucide="circle" class="icon-md setup-icon-recommended" aria-label="Recommended"></i>
+            <span class="text-muted">Backup policy — available once a mailbox and a Repository exist.</span>
+            {% endif %}
+        </li>
+    </ul>
+</section>
