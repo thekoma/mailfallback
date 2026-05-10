@@ -23,6 +23,7 @@ def profile_page(request: Request, db: Session = Depends(get_db)):
     store = get_user_store(db, user)
     selectable_stores = get_selectable_stores(db, user)
     user_groups = get_user_groups(db, user)
+    force_password_change = request.query_params.get("force_password_change") == "1"
     return templates.TemplateResponse(
         request=request,
         name="profile.html",
@@ -33,6 +34,7 @@ def profile_page(request: Request, db: Session = Depends(get_db)):
             "user_groups": user_groups,
             "error": None,
             "success": None,
+            "force_password_change": force_password_change,
         },
     )
 
