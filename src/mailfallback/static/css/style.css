@@ -834,6 +834,71 @@ tr.recovery-row > td:first-child { padding-left: 1.75rem; }
     .admin-row { grid-template-columns: repeat(2, 1fr); }
 }
 
+/* === /restore Calendar of Safety === */
+.restore-banner {
+    padding: 1rem 1.25rem;
+    border-radius: 0.5rem;
+    margin: 1rem 0 1.5rem;
+    border: 1px solid var(--pico-card-border-color);
+}
+.restore-banner.all_clear { border-color: rgba(34, 197, 94, 0.4); background: rgba(34, 197, 94, 0.06); }
+.restore-banner.attention { border-color: rgba(224, 164, 88, 0.4); background: rgba(224, 164, 88, 0.06); }
+.restore-banner.critical { border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.06); }
+.restore-banner.unprotected { background: rgba(255, 255, 255, 0.02); }
+.restore-banner h3 { margin: 0 0 0.4rem 0; font-size: 1rem; }
+
+.restore-section { margin-bottom: 2rem; }
+.restore-section > h3 {
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pico-muted-color);
+    margin-bottom: 0.5rem;
+}
+
+.calendar-row {
+    display: grid;
+    grid-template-columns: 220px 1fr auto;
+    gap: 1rem;
+    align-items: center;
+    padding: 0.75rem 0;
+    border-top: 1px solid var(--pico-card-border-color);
+}
+.calendar-row .cal-mailbox strong { display: block; }
+.calendar-row .cal-mailbox .cal-meta {
+    display: block;
+    font-size: 0.78rem;
+    color: var(--pico-muted-color);
+}
+.calendar-row .cal-strip { display: flex; gap: 3px; align-items: center; flex-wrap: nowrap; }
+.calendar-row .cal-count { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--pico-muted-color); }
+
+.snap-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+    transition: transform 120ms;
+    flex-shrink: 0;
+}
+.snap-dot-filled { background: var(--mfb-stats-dot-ok, #22c55e); cursor: pointer; }
+.snap-dot-filled:hover { transform: scale(1.4); }
+.snap-dot-empty { background: transparent; border: 1px solid var(--pico-card-border-color); }
+.snap-dot-today { box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.3); animation: snap-pulse 2s infinite; }
+@keyframes snap-pulse {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.3); }
+    50%      { box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.15); }
+}
+
+.cal-empty { color: var(--pico-muted-color); font-style: italic; }
+.cal-degraded { color: var(--mfb-stats-dot-error, #ef4444); font-size: 0.85rem; }
+
+@media (max-width: 768px) {
+    .calendar-row { grid-template-columns: 1fr; gap: 0.5rem; }
+    .calendar-row .cal-strip { overflow-x: auto; }
+}
+
 .stats-dot {
     display: inline-block;
     width: 8px;

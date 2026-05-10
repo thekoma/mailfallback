@@ -1,35 +1,190 @@
+import logging
+from datetime import UTC, datetime, timedelta
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from mailfallback.dependencies import get_db
-from mailfallback.models import BackupPolicy, JobStatus, UserRole
+from mailfallback.models import BackupPolicy, BackupStatus, JobStatus, UserRole
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import decrypt_credentials
 from mailfallback.services.account_service import get_account, get_accounts_for_user
+from mailfallback.services.recovery_service import list_recoveries_for_user_accounts
 from mailfallback.services.restore_service import (
     get_restore_job,
     list_all_restore_jobs,
     list_restore_jobs_for_user,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["ui-restore"])
+
+CALENDAR_DAYS = 30
+
+
+def _compute_health(policies: list[BackupPolicy]) -> str:
+    """Derive the overall health verdict for the /restore banner.
+
+    `unprotected` — no policies at all
+    `critical`    — at least one protected mailbox has no successful run in 7+ days
+    `attention`   — at least one recent failure but everyone has a recent success
+    `all_clear`   — every protected mailbox succeeded in the last 24h
+    """
+    if not policies:
+        return "unprotected"
+    now = datetime.now(UTC)
+    for p in policies:
+        last_ok = p.last_successful_run_at
+        if last_ok is None or (now - last_ok) > timedelta(days=7):
+            return "critical"
+    has_recent_failure = any(p.last_status == BackupStatus.failed for p in policies)
+    if has_recent_failure:
+        return "attention"
+    for p in policies:
+        last_ok = p.last_successful_run_at
+        if last_ok is None or (now - last_ok) > timedelta(hours=24):
+            return "attention"
+    return "all_clear"
 
 
 @router.get("/restore", response_class=HTMLResponse)
-def restore_chooser(request: Request, db: Session = Depends(get_db)):
-    """Wave 3: /restore is a chooser between two distinct flows.
+def restore_page(request: Request, db: Session = Depends(get_db)):
+    """The /restore Calendar of Safety: per-mailbox snapshot dot-strip,
+    health banner, existing recoveries, and a footer link to the IMAP-move tool.
 
-    - "Recover from a snapshot" → /recover (depot-side, restic snapshot → new mailbox)
-    - "Move mail between mailboxes" → /restore/move (IMAP-to-IMAP between MFB accounts)
+    Replaces the prior 2-card chooser at this URL.
     """
     user = _get_session_user(request, db)
     if not user:
         return RedirectResponse("/login")
+
+    accounts = get_accounts_for_user(db, user)
+    account_ids = [a.id for a in accounts]
+    policies = (
+        db.query(BackupPolicy).filter(BackupPolicy.account_id.in_(account_ids)).all()
+        if account_ids
+        else []
+    )
+    by_account = {p.account_id: p for p in policies}
+
+    # Build the protected/unprotected lists used by the template.
+    protected = [(a, by_account[a.id]) for a in accounts if a.id in by_account]
+    unprotected = [a for a in accounts if a.id not in by_account]
+
+    health = _compute_health(policies)
+    total_snapshots = sum((p.last_snapshot_count or 0) for p in policies)
+    most_recent = max(
+        (p.last_snapshot_at for p in policies if p.last_snapshot_at),
+        default=None,
+    )
+
+    # "Since you last visited this page" diff — session-only, no DB column needed.
+    last_visit_iso = request.session.get("last_restore_visit")
+    last_visit = datetime.fromisoformat(last_visit_iso) if last_visit_iso else None
+    if last_visit is not None:
+        new_snapshot_mailboxes = sum(
+            1 for p in policies if p.last_snapshot_at and p.last_snapshot_at > last_visit
+        )
+    else:
+        new_snapshot_mailboxes = 0
+    request.session["last_restore_visit"] = datetime.now(UTC).isoformat()
+
+    recoveries = list_recoveries_for_user_accounts(db, account_ids)
+
     return templates.TemplateResponse(
         request=request,
-        name="restore_chooser.html",
-        context={"user": user},
+        name="restore.html",
+        context={
+            "user": user,
+            "protected": protected,
+            "unprotected": unprotected,
+            "health": health,
+            "total_snapshots": total_snapshots,
+            "most_recent_snapshot": most_recent,
+            "new_snapshot_mailboxes": new_snapshot_mailboxes,
+            "recoveries": recoveries,
+            "calendar_days": CALENDAR_DAYS,
+        },
+    )
+
+
+@router.get("/restore/partials/calendar/{account_id}", response_class=HTMLResponse)
+def restore_calendar_row(account_id: str, request: Request, db: Session = Depends(get_db)):
+    """HTMX-loaded fragment: the 30-day dot strip for a single mailbox.
+
+    Lazy-loaded after the page renders so /restore TTI doesn't block on restic.
+    Degraded rendering (one-line "couldn't reach repository") on any restic error.
+    """
+    user = _get_session_user(request, db)
+    if not user:
+        return HTMLResponse("")
+    account = get_account(db, account_id, user)
+    if not account:
+        return HTMLResponse("")
+    backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
+    if not backup:
+        return HTMLResponse("")
+
+    # Bucket snapshots by local date for the last CALENDAR_DAYS window.
+    today = datetime.now(UTC).date()
+    window_start = today - timedelta(days=CALENDAR_DAYS - 1)
+    snapshots_by_day: dict[str, list[dict]] = {}
+    degraded = False
+    try:
+        from mailfallback.services.restic_service import list_snapshots
+
+        snaps = list_snapshots(backup.destination, account.id)
+        for s in snaps:
+            ts_str = (s.get("time") or "").replace("Z", "+00:00")
+            if not ts_str:
+                continue
+            try:
+                ts = datetime.fromisoformat(ts_str)
+            except ValueError:
+                continue
+            day = ts.date()
+            if day < window_start or day > today:
+                continue
+            key = day.isoformat()
+            snapshots_by_day.setdefault(key, []).append(
+                {
+                    "ts": ts,
+                    "short_id": s.get("short_id", ""),
+                    "id": s.get("id", ""),
+                }
+            )
+    except Exception as e:
+        logger.warning("restic list_snapshots failed for %s: %s", account_id, e)
+        degraded = True
+
+    # Build the per-day rendering data: oldest left, newest right.
+    days = []
+    for i in range(CALENDAR_DAYS):
+        day = window_start + timedelta(days=i)
+        key = day.isoformat()
+        bucket = snapshots_by_day.get(key, [])
+        days.append(
+            {
+                "date": day,
+                "iso": key,
+                "is_today": day == today,
+                "snapshots": bucket,
+                "filled": bool(bucket),
+            }
+        )
+
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/restore_calendar_row.html",
+        context={
+            "account": account,
+            "policy": backup,
+            "days": days,
+            "degraded": degraded,
+            "filled_count": sum(1 for d in days if d["filled"]),
+        },
     )
 
 
@@ -54,7 +209,7 @@ def restore_move_page(request: Request, show_all: str = "", db: Session = Depend
     jobs = [j for j in all_jobs if j.status not in (JobStatus.pending, JobStatus.running)]
     return templates.TemplateResponse(
         request=request,
-        name="restore.html",
+        name="restore_move.html",
         context={
             "user": user,
             "accounts": accounts,
@@ -65,39 +220,27 @@ def restore_move_page(request: Request, show_all: str = "", db: Session = Depend
     )
 
 
-@router.get("/recover", response_class=HTMLResponse)
-def recover_page(request: Request, db: Session = Depends(get_db)):
-    """List mailboxes that have at least one off-site snapshot to recover from.
-
-    The actual recovery POST already exists at /accounts/{id}/backup/restore/{snap_id};
-    this page is the discoverable entry point for it.
+@router.get("/restore/jump")
+def restore_jump(account_id: str, request: Request, db: Session = Depends(get_db)):
+    """Form target for the /restore "Pick a snapshot" button — bounces the
+    user to the chosen mailbox's off-site admin section, where the snapshot
+    picker is live.
     """
     user = _get_session_user(request, db)
     if not user:
         return RedirectResponse("/login")
-    accounts = get_accounts_for_user(db, user)
-    account_ids = {a.id for a in accounts}
-    backups = (
-        db.query(BackupPolicy)
-        .filter(BackupPolicy.account_id.in_(account_ids))
-        .filter(BackupPolicy.last_snapshot_count > 0)
-        .all()
-    )
-    accounts_by_id = {a.id: a for a in accounts}
-    recoverable = [
-        {"account": accounts_by_id[bc.account_id], "backup": bc}
-        for bc in backups
-        if bc.account_id in accounts_by_id
-    ]
-    recoverable.sort(
-        key=lambda e: e["backup"].last_snapshot_at or e["backup"].created_at,
-        reverse=True,
-    )
-    return templates.TemplateResponse(
-        request=request,
-        name="recover.html",
-        context={"user": user, "recoverable": recoverable},
-    )
+    if not get_account(db, account_id, user):
+        return RedirectResponse("/restore")
+    return RedirectResponse(f"/accounts/{account_id}#admin-offsite")
+
+
+@router.get("/recover")
+def recover_redirect():
+    """Legacy URL — the standalone snapshot list folded into /restore (Calendar
+    of Safety). Permanent redirect so old bookmarks and any inbound links from
+    elsewhere in the app keep working.
+    """
+    return RedirectResponse("/restore", status_code=301)
 
 
 @router.get("/restore/partials/running", response_class=HTMLResponse)

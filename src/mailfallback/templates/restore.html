@@ -1,173 +1,176 @@
 {% extends "base.html" %}
 {% block title %}Restore — MailFallBack{% endblock %}
+{% block body_class %}page-wide{% endblock %}
 {% block content %}
-<h2><i data-lucide="archive-restore" class="icon-inline"></i> Mail Restore</h2>
 
-<form id="restore-form" onsubmit="return false;">
-    <div class="grid">
-        <label>
-            Source account
-            <select name="source_account_id" id="source-account"
-                    hx-get="/restore/partials/folders"
-                    hx-target="#folder-panel"
-                    hx-include="[name='source_account_id']"
-                    hx-trigger="change">
-                <option value="">Select source…</option>
-                {% for acct in accounts %}
-                <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address }})</option>
-                {% endfor %}
-            </select>
-        </label>
-        <label>
-            Destination account
-            <select name="target_account_id" id="target-account"
-                    hx-get="/restore/partials/separator-warning"
-                    hx-target="#separator-warning"
-                    hx-include="[name='target_account_id']"
-                    hx-trigger="change">
-                <option value="">Select destination…</option>
-                {% for acct in accounts %}
-                <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address }})</option>
-                {% endfor %}
-            </select>
-        </label>
+<div class="flex-between">
+    <div>
+        <h2><i data-lucide="archive-restore" class="icon-xl icon-inline"></i>Restore</h2>
+        <p class="text-muted text-small mt-0">Your safety net, and how to use it.</p>
     </div>
-
-    <fieldset>
-        <legend>Restore mode</legend>
-        <label><input type="radio" name="restore_mode" value="full" checked> Full restore</label>
-        <label><input type="radio" name="restore_mode" value="folder"> Select folders</label>
-        <label><input type="radio" name="restore_mode" value="selection"> Search & pick</label>
-    </fieldset>
-
-    <div id="folder-panel" class="hidden"></div>
-
-    <div id="search-panel" class="hidden">
-        <div class="grid">
-            <label>
-                Search in folder
-                <select id="search-folder" name="search_folder">
-                    <option value="">Select a source account first</option>
-                </select>
-            </label>
-            <label>
-                Search query
-                <input type="text" id="search-query" name="search_query" placeholder="Type to search…" onkeydown="if(event.key==='Enter'){event.preventDefault();executeSearch();}">
-            </label>
-        </div>
-
-        <details id="advanced-search">
-            <summary>Advanced filters</summary>
-            <div class="search-filters">
-                <fieldset class="search-fields">
-                    <legend>Search in</legend>
-                    <label><input type="checkbox" role="switch" id="sf-subject" checked> Subject</label>
-                    <div class="search-field-group">
-                        <label><input type="checkbox" role="switch" id="sf-sender" checked> Sender <span class="chevron" onclick="toggleSubFields('sender-sub')">&#9662;</span></label>
-                        <div id="sender-sub" class="sub-fields hidden">
-                            <label><input type="checkbox" id="sf-from" checked> From</label>
-                            <label><input type="checkbox" id="sf-reply-to"> Reply-To</label>
-                            <label><input type="checkbox" id="sf-followup-to"> Followup-To</label>
-                        </div>
-                    </div>
-                    <div class="search-field-group">
-                        <label><input type="checkbox" role="switch" id="sf-recipient"> Recipient <span class="chevron" onclick="toggleSubFields('recipient-sub')">&#9662;</span></label>
-                        <div id="recipient-sub" class="sub-fields hidden">
-                            <label><input type="checkbox" id="sf-to"> To</label>
-                            <label><input type="checkbox" id="sf-cc"> Cc</label>
-                            <label><input type="checkbox" id="sf-bcc"> Bcc</label>
-                        </div>
-                    </div>
-                    <label><input type="checkbox" role="switch" id="sf-body"> Body</label>
-                    <label><input type="checkbox" role="switch" id="sf-entire" onchange="toggleEntireMessage(this)"> Entire message</label>
-                </fieldset>
-
-                <div class="grid">
-                    <label>
-                        Type
-                        <select id="search-type">
-                            <option value="all">All</option>
-                            <option value="unseen">Unread</option>
-                            <option value="flagged">Flagged</option>
-                            <option value="unanswered">Unanswered</option>
-                            <option value="deleted">Deleted</option>
-                            <option value="undeleted">Not deleted</option>
-                            <option value="attachment">With attachment</option>
-                        </select>
-                    </label>
-                    <label>
-                        Scope
-                        <select id="search-scope" onchange="updateSearchScope()">
-                            <option value="current">Current folder</option>
-                            <option value="all">All folders</option>
-                        </select>
-                    </label>
-                </div>
-                <div class="grid">
-                    <label>
-                        Since
-                        <input type="date" id="search-since">
-                    </label>
-                    <label>
-                        Before
-                        <input type="date" id="search-before">
-                    </label>
-                </div>
-            </div>
-        </details>
-
-        <button type="button" id="search-btn" onclick="executeSearch()">
-            <i data-lucide="search" class="icon-sm icon-inline" id="search-icon"></i>
-            <i data-lucide="loader" class="icon-sm icon-inline spin hidden" id="search-spinner"></i>
-            <span id="search-btn-text">Search</span>
-        </button>
-        <div id="message-panel"></div>
-    </div>
-
-    <fieldset>
-        <legend>Options</legend>
-        <div class="grid">
-            <label>
-                Folder mapping
-                <select name="folder_mapping" id="folder-mapping-select" onchange="toggleCustomPrefix()">
-                    <option value="original">Original folder</option>
-                    <option value="Restored">Restored/ prefix</option>
-                    <option value="custom">Custom prefix…</option>
-                </select>
-            </label>
-            <label>
-                <input type="checkbox" name="skip_duplicates" checked>
-                Skip duplicate messages
-            </label>
-        </div>
-        <div id="custom-prefix-row" class="hidden">
-            <label>
-                Custom prefix
-                <input type="text" id="custom-prefix" placeholder="e.g. Backup/2024">
-            </label>
-        </div>
-        <div id="separator-warning" class="hidden"></div>
-    </fieldset>
-
-    <button type="button" id="start-restore-btn" onclick="executeRestore()">
-        <i data-lucide="play" class="icon-sm icon-inline"></i> Start Restore
-    </button>
-</form>
-
-<div id="restore-progress"></div>
-
-{% include "partials/restore_running.html" %}
-
-<div style="display:flex;justify-content:space-between;align-items:center">
-    <h3>Restore History</h3>
-    {% if user.role.value == "admin" %}
-    <label class="text-small">
-        <input type="checkbox" role="switch" {% if show_all_users %}checked{% endif %}
-               onchange="window.location.href='/restore' + (this.checked ? '?show_all=1' : '')">
-        Show all users
-    </label>
+    {% if most_recent_snapshot %}
+    <span class="text-muted text-small">Last check {{ most_recent_snapshot | time_ago }}</span>
     {% endif %}
 </div>
-{% include "partials/restore_history.html" %}
+
+{# ── Health banner ── #}
+<div class="restore-banner {{ health }}">
+    {% if health == "all_clear" %}
+    <h3>● All clear.</h3>
+    <p class="mt-0 mb-0">
+        Nothing has been lost since you last visited.
+        {{ protected | length }} {{ "mailbox" if protected | length == 1 else "mailboxes" }} protected ·
+        {{ total_snapshots }} snapshot{{ "" if total_snapshots == 1 else "s" }} ·
+        most recent {{ most_recent_snapshot | time_ago }}.
+        {% if new_snapshot_mailboxes %}
+        <br><span class="text-small">
+            {{ new_snapshot_mailboxes }} mailbox{{ "" if new_snapshot_mailboxes == 1 else "es" }}
+            received a new snapshot since you were last here.
+        </span>
+        {% endif %}
+    </p>
+    {% elif health == "attention" %}
+    <h3>● Check your backups.</h3>
+    <p class="mt-0 mb-0">
+        At least one mailbox missed its last scheduled run, or had a recent failure.
+        Open the affected mailbox to investigate.
+    </p>
+    {% elif health == "critical" %}
+    <h3>● Needs attention.</h3>
+    <p class="mt-0 mb-0">
+        At least one protected mailbox has had no successful off-site copy in the last 7 days.
+        Your data may be drifting from your safety net — investigate now.
+    </p>
+    {% else %}
+    <h3>○ No safety net yet.</h3>
+    <p class="mt-0 mb-0">
+        None of your mailboxes have an off-site copy configured.
+        <a href="/admin/backup">Configure a Repository →</a>
+    </p>
+    {% endif %}
+</div>
+
+{# ── What we're holding for you ── #}
+<section class="restore-section">
+    <h3>What we're holding for you</h3>
+
+    {% if not protected and not unprotected %}
+    <p class="text-muted">No mailboxes yet — <a href="/accounts/new">add one</a> to get started.</p>
+    {% endif %}
+
+    {% for account, policy in protected %}
+    <div class="calendar-row"
+         id="cal-row-{{ account.id }}"
+         hx-get="/restore/partials/calendar/{{ account.id }}"
+         hx-trigger="load"
+         hx-swap="outerHTML">
+        <div class="cal-mailbox">
+            <strong>{{ account.name }}</strong>
+            {% if account.email_address %}
+            <span class="cal-meta">{{ account.email_address }}</span>
+            {% endif %}
+            <span class="cal-meta">to: {{ policy.destination.name }}</span>
+        </div>
+        <div class="cal-strip text-muted text-small">Loading snapshots…</div>
+        <div class="cal-count text-muted">{{ policy.last_snapshot_count or 0 }}</div>
+    </div>
+    {% endfor %}
+
+    {% for account in unprotected %}
+    <div class="calendar-row">
+        <div class="cal-mailbox">
+            <strong>{{ account.name }}</strong>
+            {% if account.email_address %}
+            <span class="cal-meta">{{ account.email_address }}</span>
+            {% endif %}
+        </div>
+        <div class="cal-empty">— flying without a net —</div>
+        <div>
+            <a href="/accounts/{{ account.id }}#admin-offsite" class="icon-btn-inline">
+                <i data-lucide="cloud-upload" class="icon-sm"></i> Configure off-site backup →
+            </a>
+        </div>
+    </div>
+    {% endfor %}
+</section>
+
+{# ── Bring something back ── #}
+{% if protected %}
+<section class="restore-section">
+    <h3>Bring something back</h3>
+    <p class="text-muted text-small">
+        Restore is non-destructive — we mount the snapshot read-only as a separate folder
+        in your webmail. Your live mail isn't touched.
+    </p>
+    <form action="/restore/jump" method="get" class="flex gap-05 items-end">
+        <div>
+            <label class="text-small">Mailbox</label>
+            <select name="account_id" style="margin-bottom:0">
+                {% for account, _ in protected %}
+                <option value="{{ account.id }}">{{ account.name }} ({{ account.email_address }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button type="submit" class="primary">
+            <i data-lucide="list" class="icon-sm icon-inline"></i> Pick a snapshot →
+        </button>
+    </form>
+</section>
+{% endif %}
+
+{# ── What you've already brought back ── #}
+{% if recoveries %}
+<section class="restore-section">
+    <h3>What you've already brought back</h3>
+    <p class="text-muted text-small">
+        Recoveries don't sync. They sit here until you remove them, browseable in your webmail
+        as a separate folder.
+    </p>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Mailbox</th>
+                    <th>Snapshot</th>
+                    <th>Restored</th>
+                    <th>Size</th>
+                    <th class="text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in recoveries %}
+                <tr>
+                    <td><a href="/accounts/{{ r.account_id }}">{{ r.account.name }}</a></td>
+                    <td><code>{{ r.snapshot_id[:8] }}</code>
+                        {% if r.snapshot_time %}
+                        <br><span class="text-muted text-small">{{ r.snapshot_time.strftime('%Y-%m-%d %H:%M') }}</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ r.restored_at | time_ago }}</td>
+                    <td>{% if r.size_bytes %}{{ r.size_bytes | filesizeformat }}{% else %}—{% endif %}</td>
+                    <td class="text-right">
+                        <a href="/accounts" class="icon-btn-inline" title="Browse via webmail">
+                            <i data-lucide="external-link" class="icon-sm"></i> Open in webmail
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endif %}
+
+{# ── Move mail between mailboxes (footer) ── #}
+<section class="restore-section">
+    <h3>Move mail between mailboxes</h3>
+    <p class="text-muted text-small">
+        Different tool, different mood. Use this to copy messages between two connected mailboxes
+        when you're switching providers or consolidating.
+    </p>
+    <a href="/restore/move" class="icon-btn">
+        <i data-lucide="arrow-left-right" class="icon-sm"></i> Open the move tool →
+    </a>
+</section>
+
 {% endblock %}
-{% block scripts %}<script src="/static/js/restore.js"></script>{% endblock %}
