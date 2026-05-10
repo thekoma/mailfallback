@@ -1,6 +1,11 @@
 # LEXICON.md (DRAFT for repo root)
 
 > This file is the proposed skeleton that the recommendation in `08-recommendation.md` calls for in Wave 1. It would live at `/LEXICON.md` in the repo root after Andrea approves it. Until then, this draft sits in the audit folder.
+>
+> **v1.1 update (post-Andrea decisions):**
+> - "Repository" is the chosen term in **both languages** (graft killed).
+> - "Mail store" is **kept verbatim** (no rename to Volume/Storage/Archivio).
+> - IT verb for stage 2 is **"Sincronizza"**, not "Aggiorna".
 
 ---
 
@@ -33,10 +38,10 @@ Every screen of MFB should let the user point at where they currently are in thi
 | Local copy on this server | **Backup locale** | **Local backup** | mbsync output to Maildir |
 | Action: refresh local copy | **Aggiorna ora** | **Refresh now** | `SyncJob` execution |
 | Schedule for local refresh | **Pianificazione backup locale** | **Local backup schedule** | `Account.sync_schedule` |
-| Filesystem path for local copies | **Volume** (admin nav: **Volumi**) | **Storage volume** (admin nav: **Volumes**) | `MailStore` |
-| Off-site repository | **Deposito** (admin nav: **Depositi**) | **Repository** (admin nav: **Repositories**) | `BackupDestination` |
-| Action: push to repository | **Deposita ora** | **Back up now** | `submit_backup()` |
-| Per-account off-site config | **Profilo di deposito** | **Backup policy** | `AccountBackup` |
+| Filesystem path for local copies | **Mail store** (admin nav: **Mail stores**) | **Mail store** (admin nav: **Mail stores**) | `MailStore` |
+| Off-site repository | **Repository** (admin nav: **Repositories**) | **Repository** (admin nav: **Repositories**) | `BackupDestination` |
+| Action: push to repository | **Esegui backup ora** | **Back up now** | `submit_backup()` |
+| Per-account off-site config | **Profilo di backup** | **Backup policy** | `AccountBackup` |
 | Point-in-time | **Snapshot** | **Snapshot** | restic snapshot |
 | Retention | **Politica di conservazione** | **Retention policy** | `RetentionPreset` |
 | Restore (mailbox-side, IMAP→IMAP) | **Ripristino** | **Restore** | `RestoreJob` |
@@ -51,15 +56,15 @@ Use of bare "Backup" as a noun is **banned**. Always qualify:
 
 | ❌ Banned | ✅ Use instead |
 |---|---|
-| "Backup configured" | "Backup locale configurato" / "Profilo di deposito impostato" |
-| "Backup failed" | "Backup locale fallito" / "Snapshot fallito" / "Aggiornamento fallito" |
-| "Backup destination" | "Deposito" / "Repository" |
-| "Backup now" | "Aggiorna ora" (local) / "Deposita ora" (off-site) |
-| "Sync" / "Syncing" / "Synced" | "Aggiorna" / "In aggiornamento" / "Aggiornato" / "Backup locale" |
-| "Last sync: 5m ago" | "Ultimo aggiornamento: 5 min fa" |
-| "First sync" | "Primo backup locale" |
+| "Backup configured" | "Backup locale configurato" / "Profilo di backup impostato" |
+| "Backup failed" | "Backup locale fallito" / "Snapshot fallito" / "Sincronizzazione fallita" |
+| "Backup destination" | "Repository" |
+| "Backup now" | "Sincronizza ora" (local) / "Esegui backup ora" (off-site → Repository) |
+| "Sync" / "Syncing" / "Synced" | "Sincronizza" / "Sincronizzazione in corso" / "Sincronizzato" |
+| "Last sync: 5m ago" | "Ultima sincronizzazione: 5 min fa" |
+| "First sync" | "Prima sincronizzazione" / "Primo backup locale" |
 | "Snapshot restored as 'Backup X'" | "Recuperato in 'X recuperata'. Casella sospesa." |
-| "Mail store" / "Stores" | "Volume" / "Volumi" |
+| "Stores" (admin nav plural alone) | "Mail stores" (sempre col qualificatore) |
 
 ---
 
@@ -80,11 +85,11 @@ Use of bare "Backup" as a noun is **banned**. Always qualify:
   - ❌ "It seems there might be an issue with your mailbox..."
 - **One verb per concept**. The verb table is binding:
   - Source → "connect" / "collega"
-  - Local backup → "refresh" / "aggiorna"
-  - Repository → "back up" / "deposita"
+  - Local backup → "sync" / "sincronizza"
+  - Repository → "back up" / "esegui backup"
   - Snapshot → "capture" / "scatta" (rarely used as verb)
-  - Restore (mailbox) → "restore" / "ripristina"
-  - Recover (depot) → "recover" / "recupera"
+  - Restore (mailbox-side, IMAP→IMAP) → "restore" / "ripristina"
+  - Recover (depot-side, snapshot→new mailbox) → "recover" / "recupera"
 - **Empty states teach.** Every empty state must answer: what is this, what's the next action.
 - **Errors propose action.** "X failed because Y. <Suggested next step>." pattern.
 - **Avoid uppercase emphasis** ("CRITICAL", "ATTENTION"). Use icon + word ("⚠ Attention needed").
@@ -149,9 +154,9 @@ The check is also run in CI on every PR to `main`.
 
 - **Sorgente / Source**: the user's IMAP server (Gmail, Outlook, etc.). Read-only from MFB's point of view.
 - **Backup locale / Local backup**: the local Maildir kept by mbsync. Always-on, lives on the same host as MFB. *This is what makes MFB a "fallback" mailbox.*
-- **Deposito / Repository**: the off-site restic storage location. S3 or local-disk. Encrypted independently. Configured per-installation; mailboxes pick which one to use via their backup policy.
+- **Repository**: the off-site restic storage location. S3 or local-disk. Encrypted independently. Configured per-installation; mailboxes pick which one to use via their backup policy. **Same word in IT and EN.**
 - **Snapshot**: a point-in-time capture inside a Repository. Created on schedule per a backup policy. Recovered (not "restored") via the Recover flow.
-- **Volume / Storage volume**: a filesystem path where local backups physically live on the server. Admins manage these in the Volumes page.
+- **Mail store**: a filesystem path where local backups physically live on the server. Admins manage these in the Mail stores page. *Kept verbatim from the legacy term — it's already in the data model and didn't cause confusion in the audit.*
 
 ---
 

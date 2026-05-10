@@ -1,5 +1,7 @@
 # Recommendation — synthesised proposal
 
+> **READ THIS FIRST: this document is v1.0. The post-red-team v1.1 amendments are at the bottom (`## AMENDMENTS — v1.1`). The v1.1 section overrides any conflicting v1.0 statement. The body below is preserved for traceability.**
+
 This is the audit's terminal document. It picks one strategic scope, one lexicon proposal, and one rollout shape, and explains the reasoning. A future `make-plan` should be able to consume this without reopening the design.
 
 ---
@@ -199,3 +201,77 @@ The next step is `make-plan` against this recommendation. The plan should:
 - Estimate test coverage delta (notification text changes need test updates).
 
 A separate proposal — once P3 demand is real — can extend this with the Option C waves (DB rename, wizard, compliance report, "promote recovered mailbox" button).
+
+---
+
+## AMENDMENTS — v1.1 (post red-team + Andrea decisions)
+
+The two red-team passes (`09-iteration-principal-designer.md`, `09-iteration-engineer.md`) and the synthesis (`09-iteration-synthesis.md`) raised verdicts the v1.0 body above did not yet reflect. Andrea then made two binding lexicon decisions. **All of the following overrides any conflicting statement in the v1.0 body.**
+
+### Locked lexicon (binding)
+
+| Concept | Locked term (IT and EN) | Notes |
+|---|---|---|
+| Stage 3 — off-site repo | **Repository** | Same word in both languages. The bilingual graft (Deposito/Repository) is killed. |
+| Filesystem path for Maildir storage | **Mail store** (kept verbatim) | "Volume" rejected because of Docker/K8s collision. |
+| Stage 2 — local copy | **Backup locale** (IT) / **Local backup** (EN) | unchanged from v1.0. |
+| Stage 2 — verb | **Sincronizza** (IT) / **Sync** (EN) | "Aggiorna" replaced with "Sincronizza" — same word users type when configuring mbsync. |
+| Stage 3 — verb | **Esegui backup** (IT) / **Back up** (EN) | unchanged. |
+| Other terms | unchanged from v1.0 binding table. | Snapshot, Casella/Mailbox, Recupera/Recover, Ripristino/Restore, Profilo di backup/Backup policy. |
+
+The full updated table is in `lexicon/LEXICON-draft.md` (also v1.1).
+
+### Locked scope changes
+
+1. **Timeline: 4.5–5 weeks**, not 4. (Engineer: chain widget is 5–7 days, not 5.)
+2. **Wave 1 split into 1a + 1b:**
+   - **Wave 1a** (Day 1–2): land `LEXICON.md`, the advisory CI lint check, and the audit-action display mapper.
+   - **Wave 1b** (Day 3–5): the four security-adjacent fixes — see new list below.
+3. **Wave 1.5** (~1 day): verify Dovecot Lua userdb honors `account.suspended` flag before "Promote to live" is built. DR doc lifted out of "security fixes" to here.
+4. **Wave 2.5** (~1 day): single batched Alembic migration adding three columns to `AccountBackup`: `last_successful_run_at`, `last_snapshot_count`, `last_snapshot_at`. Without these, the chain widget cannot ship without melting disk on every poll.
+5. **Wave 2 ships English only.** No i18n infrastructure exists; the Italian column in LEXICON.md is an i18n target, not a binding contract for Wave 2.
+
+### Re-listed "before anything else" fixes (the four)
+
+The original v1.0 list had a SECRET_KEY docs page that wasn't really a UI fix. Replaced. New list:
+
+1. **"Backup configured" badge → "Off-site policy set" / "Last back-up X ago"**, with honest "no successful back-up yet" state. Requires `last_successful_run_at` column (Wave 2.5 migration; Wave 1b uses temporary `last_run_at` until then).
+2. **`insecure_tls` toggle relabel + warning banner** — name it "Skip TLS certificate verification", show a yellow banner when enabled.
+3. **Recovered-mailbox limbo: ship the "Promote to live" button**, not just a flash-message rewrite. Closes the recovery loop the v1.0 body explicitly deferred.
+4. **Dashboard off-site health row** — surface "last successful back-up: X ago" at dashboard level, not buried in account detail.
+
+The SECRET_KEY + Postgres DR doc moves to **Wave 1.5** (separate from the four fixes).
+
+### Locked IA changes
+
+5. **Chain widget — demoted.** Keep dashboard-hero variant only. Drop the sticky "every page" variant. On per-account pages, add a **single status header line** ("Mirror ✓ · Repository ⚠"), not a widget.
+6. **Chain widget extends `partials/system_status.html`**, doesn't sit alongside it. One endpoint, one poll cycle.
+7. **Mobile floor 360px** for every new component. Accessibility: every status surface needs icon + text + `aria-live`.
+8. **Empty Repositories state** explicitly designed (the hardest empty state in the product).
+9. **Migration UX:** 30-day tooltip-on-hover mapping legacy → new label, plus a one-screen "what changed" page on first login post-rename. (Toast was insufficient.)
+
+### Locked enforcement changes
+
+10. **Lint check is advisory, not blocking** (warn in CI, opt-in to block once false-positive rate is known). Scoped to `templates/` + router flash messages only.
+11. **Audit-action display mapper:** `audit_logs.action="backup_destination.create"` etc. render in admin UI. A 5-line dict mapping legacy strings → display names ships in Wave 2 to keep DB rename deferral safe.
+
+### Locked deferrals
+
+- DB rename (`BackupDestination` → `Repository`) stays deferred. Andrea can schedule as a Wave 5 follow-on whenever; not gated on P3.
+- Per-org compliance report stays deferred (Option C, gated on real P3 demand).
+- "Promote to live" mechanism: the *button* ships in Wave 1b; the *underlying behaviour* needs the Wave 1.5 Dovecot verification.
+
+### Operational coordination
+
+- Recent commit `4934ad3` (edit backup destination, inline expandable form) touches `partials/account_backup.html`, the same file Wave 1b modifies. Either let it land first or coordinate via PR.
+
+### Score (v1.1)
+
+| Dimension | Score | Reason |
+|---|---|---|
+| Clarity | 9/10 | Bilingual graft removed, "four fixes" honest, decisions locked. |
+| Durability | 8/10 | Mobile + a11y + audit display map close foreseeable bug classes. |
+| Ambition | 5/10 | Defensive — correct for a 5-week wave; ambition belongs in Option C. |
+| Implementability | 9/10 | 1a/1b/2.5 split + acknowledged 5-week timeline + chain demotion = realistic. |
+
+**This is the v1.1 binding contract for `make-plan`.**
