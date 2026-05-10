@@ -76,7 +76,7 @@
     </div>
     {% endif %}
     <div class="chain-stages">
-        <div class="chain-stage">
+        <a class="chain-stage" href="/accounts" title="Manage mailboxes">
             <div class="chain-stage-label">
                 <i data-lucide="inbox" class="icon-sm icon-inline"></i> Source
             </div>
@@ -84,9 +84,9 @@
                 <span class="stats-dot stats-dot-ok"></span>
                 {{ chain_summary.mailboxes }} mailbox{{ 'es' if chain_summary.mailboxes != 1 else '' }} connected
             </div>
-        </div>
+        </a>
         <div class="chain-arrow" aria-hidden="true">→</div>
-        <div class="chain-stage">
+        <a class="chain-stage" href="/accounts" title="Local backup health is shown per mailbox">
             <div class="chain-stage-label">
                 <i data-lucide="hard-drive" class="icon-sm icon-inline"></i> Local backup
             </div>
@@ -99,9 +99,13 @@
                 {{ chain_summary.mirrors_healthy }} of {{ chain_summary.mirrors_total }} healthy
                 {% endif %}
             </div>
-        </div>
+        </a>
         <div class="chain-arrow" aria-hidden="true">→</div>
-        <div class="chain-stage">
+        {% if user.role.value == "admin" %}
+        <a class="chain-stage" href="/admin/backup" title="Manage repositories">
+        {% else %}
+        <div class="chain-stage chain-stage-disabled" title="Repositories are managed by an admin">
+        {% endif %}
             <div class="chain-stage-label">
                 <i data-lucide="cloud-upload" class="icon-sm icon-inline"></i> Repository
             </div>
@@ -117,9 +121,9 @@
                 {{ chain_summary.repositories }} configured · {{ chain_summary.policies }} polic{{ 'ies' if chain_summary.policies != 1 else 'y' }}
                 {% endif %}
             </div>
-        </div>
+        {% if user.role.value == "admin" %}</a>{% else %}</div>{% endif %}
         <div class="chain-arrow" aria-hidden="true">→</div>
-        <div class="chain-stage">
+        <a class="chain-stage" href="/recover" title="Recover from a snapshot">
             <div class="chain-stage-label">
                 <i data-lucide="camera" class="icon-sm icon-inline"></i> Snapshot
             </div>
@@ -132,11 +136,8 @@
                 {{ chain_summary.snapshots_total }} stored
                 {% endif %}
             </div>
-        </div>
+        </a>
     </div>
-    {% if user.role.value == "admin" %}
-    <p class="text-small mt-05"><a href="/admin/backup">Manage repositories →</a></p>
-    {% endif %}
 </section>
 {% endif %}
 
