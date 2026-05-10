@@ -1,7 +1,7 @@
 # src/mailfallback/services/account_service.py
 import uuid
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from mailfallback.config import settings
 from mailfallback.models import Account, MailStore, User, UserRole, account_groups, group_members
@@ -65,8 +65,11 @@ def remove_owner(db: Session, account_id: str, user_id: str) -> None:
 
 
 def get_accounts_for_user(db: Session, user: User) -> list[Account]:
+    # Eager-load Account.backups so callers (notably the accounts list page) can
+    # render the Repository pill without an N+1 storm.
+    backup_load = selectinload(Account.backups)
     if user.role == UserRole.admin:
-        return db.query(Account).all()
+        return db.query(Account).options(backup_load).all()
     owned = {a.id for a in user.accounts}
     via_groups = (
         db.query(Account.id)
@@ -79,7 +82,7 @@ def get_accounts_for_user(db: Session, user: User) -> list[Account]:
     all_ids = owned | group_ids
     if not all_ids:
         return []
-    return db.query(Account).filter(Account.id.in_(all_ids)).all()
+    return db.query(Account).options(backup_load).filter(Account.id.in_(all_ids)).all()
 
 
 def get_account(db: Session, account_id: str, user: User) -> Account | None:

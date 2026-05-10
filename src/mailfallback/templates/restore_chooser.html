@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Restore mail — MailFallBack{% endblock %}
+{% block content %}
+<h2><i data-lucide="archive-restore" class="icon-inline"></i> Restore mail</h2>
+
+<p class="text-muted">What do you want to do?</p>
+
+<div class="grid mt-1">
+    <a href="/recover" class="card chooser-card">
+        <h3><i data-lucide="cloud-download" class="icon-md icon-inline"></i> Recover from a snapshot</h3>
+        <p class="text-muted">
+            Bring back mail from an off-site Repository snapshot into a new mailbox.
+            Use after data loss, or to inspect an older state without disturbing the live mailbox.
+        </p>
+    </a>
+
+    <a href="/restore/move" class="card chooser-card">
+        <h3><i data-lucide="arrow-right-left" class="icon-md icon-inline"></i> Move mail between mailboxes</h3>
+        <p class="text-muted">
+            Copy or move messages from one connected mailbox to another (IMAP-to-IMAP).
+            Use to consolidate mailboxes or migrate mail between providers.
+        </p>
+    </a>
+</div>
+
+{% endblock %}

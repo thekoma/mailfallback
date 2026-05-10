@@ -29,7 +29,7 @@ filter_content_matches() {
             rest = substr($0, i + 1);
             j = index(rest, ":");
             content = substr(rest, j + 1);
-            standalone = "(^|[^a-zA-Z_/-])" word "([^a-zA-Z_/-]|$)";
+            standalone = "(^|[^a-zA-Z_./-])" word "([^a-zA-Z_/-]|$)";
             if (content ~ standalone) print $0;
         }
     '
