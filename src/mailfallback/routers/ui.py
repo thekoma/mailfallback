@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
@@ -320,7 +320,10 @@ def accounts_page(request: Request, show_all: str = "", db: Session = Depends(ge
         return RedirectResponse("/login")
     is_admin = user.role == UserRole.admin
     show_all_users = is_admin and show_all == "1"
-    accounts = db.query(Account).all() if show_all_users else get_accounts_for_user(db, user)
+    if show_all_users:
+        accounts = db.query(Account).options(selectinload(Account.backups)).all()
+    else:
+        accounts = get_accounts_for_user(db, user)
     return templates.TemplateResponse(
         request=request,
         name="accounts.html",
@@ -337,7 +340,10 @@ def accounts_table_partial(request: Request, show_all: str = "", db: Session = D
         return response
     is_admin = user.role == UserRole.admin
     show_all_users = is_admin and show_all == "1"
-    accounts = db.query(Account).all() if show_all_users else get_accounts_for_user(db, user)
+    if show_all_users:
+        accounts = db.query(Account).options(selectinload(Account.backups)).all()
+    else:
+        accounts = get_accounts_for_user(db, user)
     any_syncing = any(a.sync_state.value == "syncing" for a in accounts)
     response = templates.TemplateResponse(
         request=request,
