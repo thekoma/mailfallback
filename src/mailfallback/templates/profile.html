@@ -3,6 +3,15 @@
 {% block content %}
 <h2><i data-lucide="user" class="icon-xl icon-inline"></i>Profile</h2>
 
+{% if force_password_change %}
+<div class="alert-error mt-1" role="alert">
+    <i data-lucide="shield-alert" class="icon-md icon-inline"></i>
+    <strong>Change the default admin password before continuing.</strong>
+    The password is the same on every fresh MailFallBack install. Until you
+    change it, every page you try to open will redirect you back here.
+</div>
+{% endif %}
+
 <table>
     <tr><td><i data-lucide="at-sign" class="icon-md icon-inline"></i>Username</td><td>{{ user.username }}</td></tr>
     <tr><td><i data-lucide="shield" class="icon-md icon-inline"></i>Role</td><td>{{ user.role.value }}</td></tr>
