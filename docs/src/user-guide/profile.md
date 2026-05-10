@@ -16,9 +16,9 @@ To change your MFB password:
 !!! note "SSO users"
     If you log in via OIDC/SSO, your password is managed by the identity provider. The password change section is not available for SSO-only accounts.
 
-## Select Mail Store
+## Select mail store
 
-If an admin has granted you access to multiple mail stores, you can select which store new accounts are created on:
+If an admin has granted you access to multiple mail stores, you can select which store new mailboxes are created on:
 
 1. Go to **Profile**
 2. Select a store from the "Default Store" dropdown

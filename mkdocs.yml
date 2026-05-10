@@ -72,7 +72,8 @@ nav:
     - Profile: user-guide/profile.md
   - Admin Guide:
     - User Management: admin-guide/users.md
-    - Mail Stores: admin-guide/stores.md
+    - Mail stores: admin-guide/stores.md
+    - Repositories (off-site backup): admin-guide/repositories.md
     - Groups: admin-guide/groups.md
     - System Settings: admin-guide/settings.md
     - Audit Log: admin-guide/audit.md

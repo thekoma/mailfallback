@@ -1,4 +1,4 @@
-# Mail Stores
+# Mail stores
 
 Mail stores define where email data is physically stored on disk. Each store maps to a filesystem path that holds Maildir directories and Dovecot home directories.
 
