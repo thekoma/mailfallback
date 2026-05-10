@@ -40,3 +40,11 @@ repos:
         language: system
         files: '(models\.py|migrations/versions/.*\.py)$'
         pass_filenames: false
+
+      - id: lexicon-check
+        name: lexicon-check (advisory)
+        entry: scripts/lexicon-check.sh
+        language: script
+        files: '^(src/mailfallback/templates/.*\.html|src/mailfallback/routers/.*\.py)$'
+        pass_filenames: false
+        verbose: true
