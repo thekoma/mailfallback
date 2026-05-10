@@ -57,15 +57,17 @@
     <h3><i data-lucide="link" class="icon-md icon-inline"></i> Mail safety chain</h3>
     {% if show_chain_explainer %}
     <div class="chain-explainer" role="region" aria-label="What this means">
-        <p class="text-small">
+        <p class="text-small mb-05">
             <strong>How MailFallBack keeps your mail safe.</strong>
-            Each stage in this chain is a step further from the original mailbox:
-            <strong>Source</strong> is your provider (Gmail, Outlook, …);
-            <strong>Local backup</strong> is the always-on Maildir on this server;
-            <strong>Repository</strong> is an off-site, encrypted store you control;
-            <strong>Snapshot</strong> is a point-in-time capture inside a Repository.
-            Click any stage's link below to manage it.
+            Each stage in the chain moves your mail one step further from the original mailbox:
         </p>
+        <ul class="chain-explainer-list text-small">
+            <li><strong>Source</strong> — your provider (Gmail, Outlook, …).</li>
+            <li><strong>Local backup</strong> — the always-on Maildir on this server.</li>
+            <li><strong>Repository</strong> — an off-site, encrypted store you control.</li>
+            <li><strong>Snapshot</strong> — a point-in-time capture inside a Repository.</li>
+        </ul>
+        <p class="text-small text-muted mt-025">Click any stage's name below to manage it.</p>
         <form method="post" action="/profile/dismiss-chain-explainer" style="display:inline">
             <button type="submit" class="icon-btn">
                 <i data-lucide="check" class="icon-sm"></i> Got it — don't show again
