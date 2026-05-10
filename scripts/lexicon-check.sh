@@ -11,7 +11,7 @@ SCOPE_ROUTERS='src/mailfallback/routers/'
 ALLOWLIST="scripts/.lexicon-allowlist"
 
 # Allowed qualifiers (case-insensitive): "backup" must be adjacent to one of these to pass.
-ALLOWED='(local|off-site|offsite|locale|configuration|destination|policy|deposito|repository|snapshot|completed|failed|started|now|history|profile|tables|worker|service|operations|jobs?|email)'
+ALLOWED='(local|off-site|offsite|locale|configuration|destination|policy|policies|deposito|repository|snapshot|completed|failed|started|now|history|profile|tables|worker|service|operations|jobs?|email)'
 
 # Filter `grep -REn` output by matching the regex against the CONTENT only
 # (after path:line:). The match must be a STANDALONE WORD — surrounding

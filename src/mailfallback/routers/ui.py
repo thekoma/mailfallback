@@ -231,19 +231,35 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
                 }
             )
 
-    from mailfallback.models import AccountBackup, BackupStatus
+    from sqlalchemy import func
 
-    backup_summary = {
-        "total_policies": db.query(AccountBackup).count(),
-        "with_recent_success": db.query(AccountBackup)
+    from mailfallback.models import AccountBackup, BackupDestination, BackupStatus, SyncState
+
+    # Wave 4: chain summary feeds the dashboard hero card. Four stages:
+    # Source (mailboxes connected) → Mirror (local sync health) →
+    # Repository (configured + reachable) → Snapshot (cached counts).
+    mirrors_healthy = sum(1 for a in accounts if a.sync_state == SyncState.idle)
+    mirrors_error = sum(1 for a in accounts if a.sync_state == SyncState.error)
+    snapshots_total = (
+        db.query(func.coalesce(func.sum(AccountBackup.last_snapshot_count), 0)).scalar() or 0
+    )
+    chain_summary = {
+        "mailboxes": len(accounts),
+        "mirrors_healthy": mirrors_healthy,
+        "mirrors_error": mirrors_error,
+        "mirrors_total": len(accounts),
+        "repositories": db.query(BackupDestination).count(),
+        "policies": db.query(AccountBackup).count(),
+        "policies_with_recent_success": db.query(AccountBackup)
         .filter(AccountBackup.last_successful_run_at.isnot(None))
         .count(),
-        "with_failures": db.query(AccountBackup)
+        "policies_failed": db.query(AccountBackup)
         .filter(AccountBackup.last_status == BackupStatus.failed)
         .count(),
-        "never_succeeded": db.query(AccountBackup)
+        "policies_never_succeeded": db.query(AccountBackup)
         .filter(AccountBackup.last_successful_run_at.is_(None))
         .count(),
+        "snapshots_total": int(snapshots_total),
     }
 
     return templates.TemplateResponse(
@@ -252,9 +268,9 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         context={
             "user": user,
             "stats": stats,
+            "chain_summary": chain_summary,
             "attention": attention,
             "recent_jobs": recent_jobs,
-            "backup_summary": backup_summary,
         },
     )
 
