@@ -67,10 +67,13 @@ async def admin_create_backup_destination(request: Request, db: Session = Depend
         request.session["flash_error"] = "Restic password is required"
         return RedirectResponse("/admin/backup", status_code=303)
 
+    insecure_tls = bool(form.get("insecure_tls"))
+
     dest = BackupDestination(
         name=name,
         backend_type=backend_type,
         restic_password=encrypt_credentials(restic_password, settings.secret_key),
+        insecure_tls=insecure_tls,
     )
 
     if backend_type == "s3":
@@ -94,6 +97,17 @@ async def admin_create_backup_destination(request: Request, db: Session = Depend
 
     db.add(dest)
     db.commit()
+    db.refresh(dest)
+
+    from mailfallback.services.restic_service import test_destination
+
+    test_result = test_destination(dest)
+    if not test_result["ok"]:
+        db.delete(dest)
+        db.commit()
+        error_msg = test_result.get("error", "Unknown error")
+        request.session["flash_error"] = f"Connection test failed: {error_msg}"
+        return RedirectResponse("/admin/backup", status_code=303)
 
     log_action(
         db,
@@ -139,6 +153,79 @@ async def admin_delete_backup_destination(
         ip_address=request.client.host if request.client else None,
     )
     request.session["flash_success"] = f"Backup destination {dest_name} deleted"
+    return RedirectResponse("/admin/backup", status_code=303)
+
+
+@router.post("/admin/backup/{dest_id}/edit")
+async def admin_edit_backup_destination(
+    dest_id: str, request: Request, db: Session = Depends(get_db)
+):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+
+    dest = db.query(BackupDestination).filter(BackupDestination.id == dest_id).first()
+    if not dest:
+        request.session["flash_error"] = "Destination not found"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    form = await request.form()
+    name = form.get("name", "").strip()
+    if name:
+        dest.name = name
+
+    if dest.backend_type.value == "s3":
+        for field in ("s3_endpoint", "s3_bucket", "s3_access_key", "s3_secret_key"):
+            val = form.get(field, "").strip()
+            if val:
+                setattr(dest, field, encrypt_credentials(val, settings.secret_key))
+    else:
+        local_path = form.get("local_path", "").strip()
+        if local_path:
+            dest.local_path = encrypt_credentials(local_path, settings.secret_key)
+
+    restic_password = form.get("restic_password", "").strip()
+    if restic_password:
+        dest.restic_password = encrypt_credentials(restic_password, settings.secret_key)
+
+    dest.insecure_tls = bool(form.get("insecure_tls"))
+
+    db.commit()
+
+    log_action(
+        db,
+        user=user,
+        action="backup_destination.edit",
+        resource_type="backup_destination",
+        resource_id=dest_id,
+        resource_name=dest.name,
+        ip_address=request.client.host if request.client else None,
+    )
+    request.session["flash_success"] = f"Destination {dest.name} updated"
+    return RedirectResponse("/admin/backup", status_code=303)
+
+
+@router.post("/admin/backup/{dest_id}/test")
+async def admin_test_backup_destination(
+    dest_id: str, request: Request, db: Session = Depends(get_db)
+):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+
+    dest = db.query(BackupDestination).filter(BackupDestination.id == dest_id).first()
+    if not dest:
+        request.session["flash_error"] = "Destination not found"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    from mailfallback.services.restic_service import test_destination
+
+    result = test_destination(dest)
+    if result["ok"]:
+        request.session["flash_success"] = f"{dest.name}: connection OK"
+    else:
+        error_msg = result.get("error", "Unknown error")
+        request.session["flash_error"] = f"{dest.name}: {error_msg}"
     return RedirectResponse("/admin/backup", status_code=303)
 
 

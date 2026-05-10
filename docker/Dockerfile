@@ -2,7 +2,7 @@ FROM python:3.14-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       isync ca-certificates curl libsasl2-modules-kdexoauth2 \
+       isync ca-certificates curl restic libsasl2-modules-kdexoauth2 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 1000 vmail && useradd -u 1000 -g vmail -m -s /usr/sbin/nologin vmail \
     && mkdir -p /data /confs/dovecot /confs/webmail \

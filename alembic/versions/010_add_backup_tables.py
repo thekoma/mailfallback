@@ -33,6 +33,7 @@ def upgrade() -> None:
         sa.Column("s3_secret_key", sa.String(), nullable=True),
         sa.Column("local_path", sa.String(), nullable=True),
         sa.Column("restic_password", sa.String(), nullable=False),
+        sa.Column("insecure_tls", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
