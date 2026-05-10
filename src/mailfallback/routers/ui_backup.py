@@ -385,7 +385,7 @@ async def account_backup_restore(
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
     restored_account = Account(
-        name=f"Backup {account.name} ({datetime.now(UTC).strftime('%Y-%m-%d')})",
+        name=f"Recovered {account.name} ({datetime.now(UTC).strftime('%Y-%m-%d')})",
         email_address=account.email_address,
         imap_host="restored",
         imap_port=0,
@@ -408,5 +408,9 @@ async def account_backup_restore(
         ip_address=request.client.host if request.client else None,
         details={"snapshot_id": snapshot_id, "restored_account_id": restored_account.id},
     )
-    request.session["flash_success"] = f"Snapshot restored as '{restored_account.name}'"
+    request.session["flash_success"] = (
+        f"Recovered into '{restored_account.name}'. The mailbox is suspended — "
+        f"review and use the 'Promote to live' button to enable it, "
+        f"or delete it to drop the recovered data."
+    )
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)

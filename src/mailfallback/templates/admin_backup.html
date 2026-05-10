@@ -94,8 +94,17 @@
                     </div>
                     <div class="mt-05">
                         <label>
-                            <input type="checkbox" name="insecure_tls" value="1" {% if dest.insecure_tls %}checked{% endif %}> Skip TLS verification
+                            <input type="checkbox" name="insecure_tls" value="1"
+                                   {% if dest.insecure_tls %}checked{% endif %}
+                                   onchange="this.closest('form').querySelector('.tls-warning').hidden = !this.checked">
+                            <strong>Skip TLS certificate verification</strong>
+                            <small class="text-muted">— self-signed CA only. Production deployments must use a trusted certificate.</small>
                         </label>
+                        <div class="alert-error tls-warning mt-025" role="alert"
+                             {% if not dest.insecure_tls %}hidden{% endif %}>
+                            <i data-lucide="shield-alert" class="icon-md icon-inline"></i>
+                            <strong>Warning:</strong> certificate verification is disabled. The connection is encrypted but the server's identity is NOT verified.
+                        </div>
                     </div>
                     <button type="submit" class="icon-btn primary mt-05">
                         <i data-lucide="save" class="icon-md"></i> Save
@@ -164,8 +173,15 @@
         </div>
         <div>
             <label>
-                <input type="checkbox" name="insecure_tls" value="1"> Skip TLS verification
+                <input type="checkbox" name="insecure_tls" value="1"
+                       onchange="this.closest('form').querySelector('.tls-warning').hidden = !this.checked">
+                <strong>Skip TLS certificate verification</strong>
+                <small class="text-muted">— self-signed CA only. Production deployments must use a trusted certificate.</small>
             </label>
+            <div class="alert-error tls-warning mt-025" role="alert" hidden>
+                <i data-lucide="shield-alert" class="icon-md icon-inline"></i>
+                <strong>Warning:</strong> certificate verification is disabled. The connection is encrypted but the server's identity is NOT verified.
+            </div>
         </div>
         <button type="submit" class="icon-btn primary">
             <i data-lucide="plus-circle" class="icon-md"></i> Add

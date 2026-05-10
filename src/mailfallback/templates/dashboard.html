@@ -32,6 +32,32 @@
     {% endif %}
 </div>
 
+{% if backup_summary and backup_summary.total_policies > 0 %}
+<section class="card mt-1" role="status" aria-live="polite">
+    <h3><i data-lucide="cloud-upload" class="icon-md icon-inline"></i> Off-site backup health</h3>
+    <div class="flex gap-05 flex-wrap items-center">
+        {% if backup_summary.with_recent_success > 0 %}
+        <span class="stats-pill"><span class="stats-dot stats-dot-ok"></span>
+            {{ backup_summary.with_recent_success }} backed up
+        </span>
+        {% endif %}
+        {% if backup_summary.with_failures > 0 %}
+        <span class="stats-pill"><span class="stats-dot stats-dot-error"></span>
+            {{ backup_summary.with_failures }} with failures
+        </span>
+        {% endif %}
+        {% if backup_summary.never_succeeded > 0 %}
+        <span class="stats-pill"><span class="stats-dot"></span>
+            {{ backup_summary.never_succeeded }} no successful back-up yet
+        </span>
+        {% endif %}
+        {% if user.role.value == "admin" %}
+        <a href="/admin/backup" class="text-small">Manage repositories →</a>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
 {% if attention %}
 <details open>
     <summary><i data-lucide="alert-triangle" class="icon-md icon-inline"></i><strong>Needs Attention ({{ attention | length }})</strong></summary>
