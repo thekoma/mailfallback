@@ -43,28 +43,25 @@
 {% endif %}
 
 {% else %}
-<div class="flex gap-05 flex-wrap items-center mb-05">
-    <span class="stats-pill">
-        {% if backup_config.last_status.value == "completed" %}
-        <span class="stats-dot stats-dot-ok"></span> Completed
-        {% elif backup_config.last_status.value == "running" %}
-        <span class="stats-dot stats-dot-syncing"></span> Running
-        {% elif backup_config.last_status.value == "failed" %}
-        <span class="stats-dot stats-dot-error"></span> Failed
-        {% else %}
-        <span class="stats-dot"></span> Idle
-        {% endif %}
+<div class="flex gap-05 flex-wrap items-center mb-05" role="status" aria-live="polite">
+    {# TODO Wave 2.5: switch to last_successful_run_at #}
+    {% if backup_config.last_backup_at %}
+    <span class="stats-pill"><span class="stats-dot stats-dot-ok"></span>
+        Last back-up {{ backup_config.last_backup_at | time_ago }}
     </span>
+    {% elif backup_config.last_status.value == "running" %}
+    <span class="stats-pill"><span class="stats-dot stats-dot-syncing"></span> Back-up running</span>
+    {% elif backup_config.last_status.value == "failed" %}
+    <span class="stats-pill"><span class="stats-dot stats-dot-error"></span> Last back-up failed</span>
+    {% else %}
+    <span class="stats-pill"><span class="stats-dot"></span> Off-site policy set — no successful back-up yet</span>
+    {% endif %}
     <span class="stats-sep">·</span>
     <span class="stats-pill">{{ backup_config.destination.name }}</span>
     <span class="stats-sep">·</span>
     <span class="stats-pill"><code>{{ backup_config.schedule | cron_human }}</code></span>
     <span class="stats-sep">·</span>
     <span class="stats-pill">{{ backup_config.retention_preset.value | capitalize }}</span>
-    {% if backup_config.last_backup_at %}
-    <span class="stats-sep">·</span>
-    <span class="stats-pill">Last: {{ backup_config.last_backup_at | time_ago }}</span>
-    {% endif %}
 </div>
 
 {% if backup_config.last_error %}

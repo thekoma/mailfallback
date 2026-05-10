@@ -301,6 +301,16 @@
                 <i data-lucide="pause-circle" class="icon-md"></i> Suspend schedule
             </button>
             {% endif %}
+            {% if account.name.startswith("Recovered ") and account.suspended %}
+            <form method="post" action="/accounts/{{ account.id }}/promote-recovered" style="display:inline">
+                <button type="submit" class="icon-btn primary"
+                        title="Promote this recovered mailbox to a live one"
+                        data-confirm="Promote {{ account.name }} to a live mailbox? Sync will start running. Make sure this is the recovered data you want to keep."
+                        onsubmit="return confirm(this.dataset.confirm)">
+                    <i data-lucide="check-circle" class="icon-md"></i> Promote to live
+                </button>
+            </form>
+            {% endif %}
         </div>
     </div>
 </details>
