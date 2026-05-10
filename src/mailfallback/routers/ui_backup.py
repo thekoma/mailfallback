@@ -29,11 +29,41 @@ def admin_backup_page(request: Request, db: Session = Depends(get_db)):
     if not user or user.role.value != "admin":
         return RedirectResponse("/")
 
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import func
+
     destinations = db.query(BackupDestination).all()
-    dest_account_counts = {}
+    # Wave 4: per-Repository status quartet (mailbox count, snapshot count,
+    # last successful back-up, derived health). Read from cached
+    # AccountBackup columns; never shells restic.
+    dest_stats = {}
+    fresh_cutoff = datetime.now(UTC) - timedelta(days=2)
     for dest in destinations:
-        count = db.query(AccountBackup).filter(AccountBackup.destination_id == dest.id).count()
-        dest_account_counts[dest.id] = count
+        agg = (
+            db.query(
+                func.count(AccountBackup.id).label("policies"),
+                func.coalesce(func.sum(AccountBackup.last_snapshot_count), 0).label("snapshots"),
+                func.max(AccountBackup.last_successful_run_at).label("last_success"),
+            )
+            .filter(AccountBackup.destination_id == dest.id)
+            .one()
+        )
+        last_success = agg.last_success
+        if agg.policies == 0:
+            health = "empty"
+        elif last_success is None:
+            health = "no-backup"
+        elif last_success.replace(tzinfo=UTC) >= fresh_cutoff:
+            health = "ok"
+        else:
+            health = "stale"
+        dest_stats[dest.id] = {
+            "policies": agg.policies,
+            "snapshots": int(agg.snapshots or 0),
+            "last_success": last_success,
+            "health": health,
+        }
 
     return templates.TemplateResponse(
         request=request,
@@ -41,7 +71,9 @@ def admin_backup_page(request: Request, db: Session = Depends(get_db)):
         context={
             "user": user,
             "destinations": destinations,
-            "dest_account_counts": dest_account_counts,
+            "dest_stats": dest_stats,
+            # Legacy alias for backward-compat with the existing template loop.
+            "dest_account_counts": {d.id: dest_stats[d.id]["policies"] for d in destinations},
         },
     )
 
