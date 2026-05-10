@@ -112,7 +112,7 @@
             <td><code title="{{ account.sync_schedule }}">{{ account.sync_schedule | cron_human }}</code></td>
         </tr>
         <tr>
-            <td><i data-lucide="hard-drive" class="icon-md icon-inline"></i>Store</td>
+            <td><i data-lucide="hard-drive" class="icon-md icon-inline"></i>Mail store</td>
             <td>{{ account.store.name }}</td>
         </tr>
         {% if user.role.value == "admin" %}
@@ -282,7 +282,7 @@
 <details id="section-manage">
     <summary><i data-lucide="settings" class="icon-md icon-inline"></i><strong>Manage</strong></summary>
     <div class="mt-1">
-        <h4 class="mb-025">Migrate Store</h4>
+        <h4 class="mb-025">Migrate mail store</h4>
         {% if account.migrating %}
         <div hx-get="/accounts/{{ account.id }}/migration-progress" hx-trigger="every 2s" hx-swap="innerHTML">
             <progress></progress> Loading...

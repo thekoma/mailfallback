@@ -40,7 +40,7 @@
             {% if user.role.value == "admin" %}
             <div class="sidebar-label">Admin</div>
             <a href="/admin/users" {% if request.url.path.startswith("/admin/users") %}class="active"{% endif %}><i data-lucide="user-circle" class="icon-nav"></i>Users</a>
-            <a href="/admin/stores" {% if request.url.path.startswith("/admin/stores") %}class="active"{% endif %}><i data-lucide="database" class="icon-nav"></i>Stores</a>
+            <a href="/admin/stores" {% if request.url.path.startswith("/admin/stores") %}class="active"{% endif %}><i data-lucide="database" class="icon-nav"></i>Mail stores</a>
             <a href="/admin/backup" {% if request.url.path.startswith("/admin/backup") %}class="active"{% endif %}><i data-lucide="cloud-upload" class="icon-nav"></i>Repositories</a>
             <a href="/admin/groups" {% if request.url.path.startswith("/admin/groups") %}class="active"{% endif %}><i data-lucide="users-round" class="icon-nav"></i>Groups</a>
             <a href="/settings" {% if request.url.path == "/settings" %}class="active"{% endif %}><i data-lucide="sliders" class="icon-nav"></i>System</a>
