@@ -4,9 +4,9 @@
 
 from mailfallback.models import (
     Account,
-    AccountBackup,
     BackendType,
-    BackupDestination,
+    BackupPolicy,
+    Repository,
     UserRole,
 )
 from mailfallback.services.user_service import create_user
@@ -17,7 +17,7 @@ def _login(client, username, password):
 
 
 def _make_destination(db_session, name="rustfs"):
-    dest = BackupDestination(
+    dest = Repository(
         name=name,
         backend_type=BackendType.s3,
         restic_password="encrypted",  # pragma: allowlist secret
@@ -49,7 +49,7 @@ def _make_account_with_backup(
     from mailfallback.services.account_service import assign_owner
 
     assign_owner(db_session, account.id, owner.id)
-    backup = AccountBackup(
+    backup = BackupPolicy(
         account_id=account.id,
         destination_id=destination.id,
         last_snapshot_count=snapshot_count,

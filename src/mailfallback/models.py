@@ -305,7 +305,15 @@ class BackgroundTask(Base):
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
-class BackupDestination(Base):
+class Repository(Base):
+    """Off-site repository (restic) where mailbox snapshots are stored.
+
+    DB table name kept as 'backup_destinations' for backward compatibility
+    with existing data and migrations 010/011. Audit log action strings
+    (`backup_destination.*`) likewise preserved; user-facing display labels
+    are mapped via services.audit_service.ACTION_LABELS.
+    """
+
     __tablename__ = "backup_destinations"
 
     id = Column(String, primary_key=True, default=_new_uuid)
@@ -321,7 +329,19 @@ class BackupDestination(Base):
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
-class AccountBackup(Base):
+# Legacy alias — kept so external imports (notably alembic env.py) don't break
+# during the transition. New code MUST use Repository.
+BackupDestination = Repository
+
+
+class BackupPolicy(Base):
+    """Per-mailbox off-site backup policy (Repository + schedule + retention).
+
+    DB table name kept as 'account_backups' for backward compatibility with
+    existing data and migrations 010/011. Backref on Account is named
+    `backup_policies` to match the canonical noun.
+    """
+
     __tablename__ = "account_backups"
 
     id = Column(String, primary_key=True, default=_new_uuid)
@@ -346,5 +366,10 @@ class AccountBackup(Base):
     last_error = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
-    account = relationship("Account", backref="backups")
-    destination = relationship("BackupDestination")
+    account = relationship("Account", backref="backup_policies")
+    destination = relationship("Repository")
+
+
+# Legacy alias — kept so external imports don't break during the transition.
+# New code MUST use BackupPolicy.
+AccountBackup = BackupPolicy
