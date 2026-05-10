@@ -2,12 +2,12 @@
 
 ## Tools covered
 - **restic** (CLI) + ResticBrowser / restatic (third-party GUIs)
-- **Borg** + **Vorta** (cross-platform desktop GUI)
-- **Duplicati** (web UI, cross-platform)
+- **Borg** + **Vorta** (desktop GUI)
+- **Duplicati** (web UI)
 - **Kopia** (web UI + KopiaUI desktop)
-- **Time Machine** (macOS, system-integrated)
+- **Time Machine** (macOS)
 - **Synology Hyper Backup** (DSM appliance)
-- **Backblaze Personal Backup** (consumer cloud, opinionated)
+- **Backblaze Personal Backup** (consumer cloud)
 
 Each has to teach a casual user the same loop — "**source data → repository → snapshot/policy → restore**" — without the user reading the man page. MFB inherits restic's underlying terminology; the question is which surface vocabulary the ecosystem has converged on.
 
@@ -50,11 +50,11 @@ Kopia's "repository → source → policy → snapshot" is essentially the four-
 
 ### Counter-example: Duplicati
 
-Duplicati's wizard asks for an **encryption passphrase on step 1** — before the user has even picked a destination — and its forums fill with "what should I put here" threads. Cautionary tale for MFB: don't ask the user about a thing whose context they don't yet have.
+Duplicati's wizard asks for an **encryption passphrase on step 1** — before the user has picked a destination — and its forums fill with "what should I put here" threads. MFB lesson: don't ask about a thing whose context the user doesn't yet have.
 
 ## Status-surface patterns
 
-MFB needs to communicate four numbers per account: **last snapshot age**, **next snapshot ETA**, **repo size**, **snapshot count**. Here's how the field handles them:
+MFB needs four numbers per account: **last snapshot age**, **next snapshot ETA**, **repo size**, **snapshot count**. The field:
 
 | Surface | Vorta | Duplicati | Kopia | Time Machine | Backblaze |
 |---|---|---|---|---|---|
@@ -72,7 +72,7 @@ Patterns worth lifting:
 
 ## Restore UX patterns
 
-The interesting question for MFB: is "restore creates a new suspended account" a known pattern, or are we inventing?
+Is "restore creates a new suspended account" a known pattern or invention?
 
 | Tool | In-place | New location | New "thing" / sandbox | Default |
 |---|---|---|---|---|
@@ -93,27 +93,21 @@ What MFB should learn:
 
 ## What MFB can borrow
 
-1. **Adopt "Repository" (or its IT translation "Deposito remoto") as the canonical term for the offsite store.** Six of seven competitors converge here; MFB's current "Backup Destination" reads as Duplicati-flavoured and Duplicati is the outlier.
-2. **Rename UI surfaces around "Snapshot" not "Backup".** "Backup" is a *verb* in this ecosystem; the noun for the artifact is "snapshot". MFB's current overloading of "backup" maps directly onto the Italian critique that opened this audit.
-3. **Per-account status row with the four-number quartet** (last age / next ETA / size triplet / snapshot count) — modelled on Kopia and Vorta's source rows.
-4. **First-run wizard with one decision per screen.** Kopia is the gold standard. Five screens for an MFB account: source IMAP → local store → schedule → repository → policy. Don't show step N+1 until step N is valid.
-5. **Default-safe restore with explicit naming of the snapshot in the confirmation modal.** Synology + Kopia pattern. The new-suspended-account model is fine; just label it like a real restore from a real point in time.
-6. **Three-number size disclosure (logical / on-disk / deduplicated)** wherever a repository is shown. Borg's killer feature for trust-building, free for MFB because restic exposes the same numbers.
+1. **Adopt "Repository" (IT: "Deposito remoto") as the canonical term for the offsite store.** Five of seven competitors converge here; MFB's current "Backup Destination" reads as Duplicati-flavoured, and Duplicati is the outlier with documented confusion.
+2. **Reserve "Snapshot" for the artifact and "backup" for the verb.** This directly addresses the Italian critique that opened the audit.
+3. **Per-account status row with the four-number quartet** (last age / next ETA / size triplet / snapshot count) — Kopia and Vorta's source-row pattern.
+4. **First-run wizard with one decision per screen.** Kopia gold standard. Five screens for an MFB account: source IMAP → local store → schedule → repository → policy. Don't show step N+1 until step N validates.
+5. **Default-safe restore that names the snapshot in the confirmation modal** (Synology + Kopia). The new-suspended-account model is fine; label it like a real restore from a real point in time.
+6. **Three-number size disclosure (logical / on-disk / deduplicated)** wherever a repository is shown. Borg's trust-builder, free for MFB because restic exposes the same numbers.
 
 ## References
 
-- Kopia, *Getting Started Guide* — https://kopia.io/docs/getting-started/
-- Kopia, *Repositories* — https://kopia.io/docs/repositories/
-- Vorta for BorgBackup, *Usage* — https://vorta.borgbase.com/usage/
-- Vorta for BorgBackup, *Local Backups* — https://vorta.borgbase.com/usage/local/
-- restic, *Removing backup snapshots* — https://restic.readthedocs.io/en/stable/060_forget.html
-- Duplicati, *Community docs: using the graphical user interface* — https://docs.duplicati.com/community-docs/community-docs-using-the-graphical-user-interface
-- Duplicati, *Retention settings* — https://docs.duplicati.com/configuration-and-management/retention-settings
-- Duplicati, *Restoring files* — https://docs.duplicati.com/getting-started/restoring-files
-- Synology, *Hyper Backup — Restoration* — https://www.synology.com/knowledgebase/DSM/help/HyperBackup/restore
-- Synology, *Methods to restore Hyper Backup data and LUN* — https://kb.synology.com/DSM/tutorial/What_methods_are_available_for_restoring_Hyper_Backup_backup_data_and_LUN
-- Backblaze, *Version History* — https://www.backblaze.com/computer-backup/docs/version-history
-- Backblaze, *Restore app v9.0 announcement* — https://www.backblaze.com/blog/restore-like-never-before-introducing-backblaze-computer-backup-v9-0/
-- Home Assistant 2025.1 release notes (next-backup-time pattern) — https://www.home-assistant.io/blog/2025/01/03/release-20251/
-- Andrea Grandi, *My Backup Strategy with Borg, Vorta and BorgBase* — https://www.andreagrandi.it/posts/my-backup-strategy/
-- odd.blog, *Borg-ui and Vorta are nice BorgBackup frontends* — https://odd.blog/2026/01/05/borg-ui-and-vorta-are-nice-borgbackup-frontends/
+- Kopia — https://kopia.io/docs/getting-started/, https://kopia.io/docs/repositories/
+- Vorta — https://vorta.borgbase.com/usage/, https://vorta.borgbase.com/usage/local/
+- restic — https://restic.readthedocs.io/en/stable/060_forget.html
+- Duplicati — https://docs.duplicati.com/community-docs/community-docs-using-the-graphical-user-interface, https://docs.duplicati.com/configuration-and-management/retention-settings, https://docs.duplicati.com/getting-started/restoring-files
+- Synology Hyper Backup — https://www.synology.com/knowledgebase/DSM/help/HyperBackup/restore, https://kb.synology.com/DSM/tutorial/What_methods_are_available_for_restoring_Hyper_Backup_backup_data_and_LUN
+- Backblaze — https://www.backblaze.com/computer-backup/docs/version-history, https://www.backblaze.com/blog/restore-like-never-before-introducing-backblaze-computer-backup-v9-0/
+- Home Assistant 2025.1 (next-backup pattern) — https://www.home-assistant.io/blog/2025/01/03/release-20251/
+- Andrea Grandi, *My Backup Strategy with Borg/Vorta* — https://www.andreagrandi.it/posts/my-backup-strategy/
+- odd.blog, *Borg-ui and Vorta* — https://odd.blog/2026/01/05/borg-ui-and-vorta-are-nice-borgbackup-frontends/

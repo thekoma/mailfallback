@@ -47,65 +47,55 @@ MFB's "Sync Settings" panel today (`partials/sync_settings_fields.html`) leaks
 the full mbsync vocabulary verbatim. Each row below is a label or option a real
 user sees in the form right now.
 
-| MFB UI label / option | Inherited from | Helpful or confusing? | Verdict |
-|---|---|---|---|
-| **Direction** with values *Pull only (remote → local) / Push only (local → remote) / Full (bidirectional) / None* | mbsync `Sync` keyword | **Helpful** for the *labels*, **confusing** for the *option name "None"*. Direction with arrows is good UX; "None" sounds like "skip the field". | Keep label. Rename "None" → "Disabled". |
-| **Create Mailboxes** with values *Near (local only) / Both / Far (remote only) / None* | mbsync `Create` + `Far`/`Near` | **Confusing.** Far/Near is the *least* discoverable rename in mbsync 1.4. Even mbsync power users had to relearn it. We hand the user that vocabulary with no glossary. | Rewrite as *"When the source has a new folder…"* with options *Mirror it locally only / Mirror it on both sides / Don't create*. Hide "Far". |
-| **Expunge Deleted** with same Near/Far/Both/None | mbsync `Expunge` | **Confusing twice over.** "Expunge" is an IMAP4 verb (RFC 3501); end users say "permanently delete". And then Near/Far comes back. | Rewrite as *"When a message is marked for deletion…"* with *Keep it / Permanently remove locally / Permanently remove on source / Permanently remove on both*. |
-| **Folder Patterns** with placeholder `* ![Gmail]* "[Gmail]/Sent Mail"` | mbsync `Patterns` (IMAP wildcards `*` `%` and `!` exclude) | **Confusing.** This is a mini-DSL with three sigils. Even the placeholder cannot be parsed by a non-mbsync user. | Replace with a tri-state per-folder picker (Sync / Skip) populated by `LIST` + a free-text "advanced patterns" field hidden behind a disclosure. |
-| **Max Messages (0 = unlimited)** | mbsync `MaxMessages` | Mostly OK, but the unit is wrong: users want "messages per folder" or "size cap"; raw count is mbsync's old way of capping the slave. | Rename to *"Keep at most N most-recent messages per folder"* and offer a size-based alternative. |
-| **SubFolders Format = Verbatim** (disabled) | mbsync `SubFolders Verbatim\|Maildir++\|Legacy` | Not user-facing concept. We force Verbatim because of LAYOUT=fs. | Drop the field entirely; document the choice in the architecture page. |
-| **Pipeline Depth (0 = unlimited)** | mbsync `PipelineDepth` | **Confusing.** A user who knows what it means won't be using a GUI; a user who doesn't can't tell whether the default is fast or safe. | Move to "Advanced" hidden by default; add a tooltip. |
-| **Disable IMAP Extensions** placeholder `COMPRESS=DEFLATE` | mbsync `DisableExtension` | **Confusing for the GUI**, indispensable for some Gmail / Yahoo workarounds. | Keep but rename to *"Server quirks / workarounds"* and provide a curated dropdown of known toggles instead of free text. |
-| **Preserve message arrival dates** | mbsync `CopyArrivalDate` | **Helpful.** Plain English, action-oriented, default-on. | Keep as-is. |
-| **Timeout (seconds)** | mbsync `Timeout` | OK but homeless — should be paired with the connection block, not the sync block. | Move under "Source connection". |
+| MFB UI label / option | Inherited from | Verdict |
+|---|---|---|
+| **Direction** *Pull / Push / Full / None* | mbsync `Sync` | Labels are helpful. Rename "None" → "Disabled". |
+| **Create Mailboxes** *Near / Both / Far / None* | mbsync `Create` + `Far`/`Near` | Confusing. Rewrite *"When the source has a new folder…"* → *Mirror locally / Mirror on both / Don't create*. |
+| **Expunge Deleted** *None / Near / Far / Both* | mbsync `Expunge` | Confusing twice (RFC 3501 verb + Far/Near). Rewrite *"When a message is marked for deletion…"* with plain *Keep / Delete locally / Delete on source / Delete on both*. |
+| **Folder Patterns** placeholder `* ![Gmail]* "[Gmail]/Sent Mail"` | mbsync `Patterns` | A three-sigil mini-DSL. Replace with a Sync/Skip per-folder picker populated by `LIST`; keep the raw field behind a disclosure. |
+| **Max Messages (0 = unlimited)** | mbsync `MaxMessages` | Wrong unit. Rename *"Keep at most N most-recent messages per folder"* and add a size cap. |
+| **SubFolders Format = Verbatim** (disabled) | mbsync `SubFolders` | Not user-facing. Drop the field; document in architecture. |
+| **Pipeline Depth** | mbsync `PipelineDepth` | Move to "Advanced", off by default. |
+| **Disable IMAP Extensions** | mbsync `DisableExtension` | Rename *"Server quirks / workarounds"*; provide a curated dropdown of known toggles. |
+| **Preserve message arrival dates** | mbsync `CopyArrivalDate` | Plain English already. Keep. |
+| **Timeout (seconds)** | mbsync `Timeout` | Move under "Source connection" — belongs with the connection, not the sync policy. |
 
 The biggest single inheritance problem is **Far/Near**. mbsync renamed
 Master/Slave → Far/Near in 1.4 (Feb 2021) for ethical reasons; the new pair is
-*more* abstract, not less. Outside the .mbsyncrc, no mail vocabulary uses these
-words. By comparison, OfflineIMAP uses `localrepository` / `remoterepository`,
-which any user can read.
+*more* abstract, not less. OfflineIMAP's `localrepository` / `remoterepository`
+is the right answer for a GUI — it tells you *what* each side is.
 
 ---
 
 ## What the CLI ecosystem teaches
 
-Patterns the OSS CLIs get right that MFB could borrow today, ranked by leverage:
+1. **OfflineIMAP's `localrepository` / `remoterepository` is the right pair
+   for a GUI.** It names *what* each side is. MFB should adopt *Source* and
+   *Local backup* and never write Far/Near in a UI string.
 
-1. **OfflineIMAP's `localrepository` / `remoterepository` is the right semantic
-   pair for a GUI.** It says *what* each side is, not where it sits in some
-   abstract topology. MFB should adopt *Source* (remote IMAP being protected)
-   and *Local backup* (Maildir on disk) and never use Far/Near in a UI string.
+2. **imapsync's `--just*` family is the gold standard for "preview before
+   commit".** `--justconnect / --justlogin / --justfolders / --justfoldersizes`
+   give a four-rung confidence ladder. MFB has a single "Test connection"; it
+   should split into *Login → List folders → Estimate size* so users fail fast
+   at the right rung.
 
-2. **imapsync's `--just*` family is the gold standard for "preview before you
-   commit".** `--justconnect` / `--justlogin` / `--justfolders` /
-   `--justfoldersizes` give the user a four-rung ladder of confidence before
-   they start moving bytes. MFB has a single "Test connection" button. We
-   should split it into "Test login → List folders → Estimate size" so the user
-   can fail fast at the right rung.
-
-3. **Cyrus's separation of `archive_after` (move to slow disk) from `expire`
-   (actually delete) is the cleanest model in the ecosystem.** MFB conflates
-   "expunge" (mbsync's term for "permanently delete on a side") with
-   "retention" (how long we keep things in the local backup). We should adopt
-   Cyrus's two-axis model: *tiering* (which store) and *retention* (when to
-   delete) are different policies, with different defaults, on different
-   pages. This also makes the restic layer legible: snapshots are *another*
-   tier.
+3. **Cyrus's separation of `archive_after` (tier) from `expire` (delete)
+   is the cleanest model.** MFB conflates "expunge" with "retention". Adopt
+   Cyrus's two axes: *tiering* (which store) and *retention* (when to delete)
+   are different policies, on different pages. This makes the restic layer
+   legible: snapshots are simply another tier.
 
 4. **MailPiler's deliberate refusal of the word "backup".** Their docs say
-   *archive* on every page, never *backup* or *sync*. The discipline is
-   striking and pays off: a Piler user always knows whether they're running
-   ingest, retention, search, or restore. MFB's mixed lexicon today
-   ("backup destinations" + "sync jobs" + "snapshots" + "stores") is exactly
+   *archive* on every page. A Piler user always knows whether they're running
+   ingest, retention, search, or restore. MFB's mixed lexicon today —
+   "backup destinations" + "sync jobs" + "snapshots" + "stores" — is exactly
    what Piler avoided.
 
-5. **getmail's strict 4-section grammar (`[retriever]`, `[destination]`,
-   `[options]`, `[filter]`) maps cleanly to a wizard.** Each section is one
-   step, each step has one decision. MFB's "Add account" form crams source +
-   credentials + sync policy + storage choice + scheduling into one screen.
-   A 4-step wizard mirroring getmail's mental sections (*Where it comes from /
-   Where it lands / How often / What's allowed*) would be more discoverable.
+5. **getmail's 4-section grammar (`[retriever] / [destination] / [options] /
+   [filter]`) maps cleanly to a wizard.** MFB's "Add account" form crams
+   source + credentials + sync policy + storage + schedule into one screen. A
+   4-step wizard (*Where it comes from / Where it lands / How often / What's
+   allowed*) mirrors getmail's sections and is more discoverable.
 
 ---
 
@@ -114,18 +104,18 @@ Patterns the OSS CLIs get right that MFB could borrow today, ranked by leverage:
 Terms MFB exposes today that should arguably stay in the `.mbsyncrc` and never
 appear in the GUI, with the rationale per term:
 
-| Term in current UI | Why it should be hidden | Where it should live |
+| Term in current UI | Why hide it | Where it should live |
 |---|---|---|
-| `Far`, `Near` | Mbsync-internal renaming of Master/Slave. Carries no meaning to a user. Replaceable by *Source* / *Local backup*. | Generated `.mbsyncrc` only. |
-| `Channel` | mbsync object name. The user sees an *Account*; "Channel" is the engine's word for the join. | `.mbsyncrc` only. |
-| `Patterns` with `!` and `%` syntax | An IMAP4 wildcard mini-DSL. Two distinct sigils plus quoting rules. | Move behind an "Advanced — raw mbsync patterns" disclosure for power users. Default UI = checkbox list of folders. |
-| `Expunge` | RFC 3501 verb for "remove flagged-for-deletion messages from the mailbox". Users say *delete*. | Replace with "Permanently delete" in the GUI. |
-| `SubFolders Verbatim` | Implementation choice required by LAYOUT=fs. Not actionable. | Architecture docs only. |
-| `PipelineDepth` | Performance knob; a wrong value silently corrupts nothing but slows down throughput. Most users never touch it. | "Advanced" disclosure, off by default. |
-| `DisableExtension COMPRESS=DEFLATE` etc. | Provider-specific workarounds. The free-text field implies the user knows IMAP capability strings. | Curated "Provider quirks" dropdown with named entries (e.g., "Yahoo: disable COMPRESS"). |
-| `MaxMessages` count vs `MaxSize` bytes | Two competing caps with no relationship explained in UI. | Single retention page with two clearly labeled sliders. |
-| `CopyArrivalDate` (the keyword, not the toggle) | Internal mbsync field name occasionally surfacing in error messages. | Hide from labels (we already do); also strip from any error toast we forward. |
-| The literal word "Sync" as a noun for the job entity | Inherited from mbsync's `Sync` keyword *and* getmail's job loop. Now overloaded with the Backup-destination work. | Reserve "Sync" for the IMAP→Maildir step only; use "Backup" for restic and "Snapshot" for restic point-in-time. The four-stage model in the kickoff already implies this split. |
+| `Far`, `Near` | Mbsync rename of Master/Slave; meaningless to users. | Generated `.mbsyncrc` only. |
+| `Channel` | mbsync's word for the join. Users see an *Account*. | `.mbsyncrc` only. |
+| `Patterns` with `!` and `%` | IMAP4 wildcard mini-DSL with three sigils. | Hide behind "Advanced — raw mbsync patterns"; default UI = folder checkboxes. |
+| `Expunge` | RFC 3501 verb. Users say *delete*. | Replace with "Permanently delete". |
+| `SubFolders Verbatim` | Required by LAYOUT=fs; not actionable. | Architecture docs only. |
+| `PipelineDepth` | Performance knob most users never touch. | "Advanced" disclosure. |
+| `DisableExtension COMPRESS=DEFLATE` | Implies the user knows IMAP capability strings. | Curated "Provider quirks" dropdown. |
+| `MaxMessages` vs `MaxSize` | Two competing caps with no explained relationship. | Single retention page, two labeled sliders. |
+| `CopyArrivalDate` (the keyword) | Internal field name that sometimes leaks into error toasts. | Strip from forwarded errors. |
+| "Sync" as the noun for a job | Now overloaded with the restic backup work. | Reserve "Sync" for IMAP→Maildir; "Backup" for restic; "Snapshot" for restic point-in-time. |
 
 A useful litmus test, applied to every label in the form: **could a Roundcube
 user read it cold and act on it?** If the answer requires a `man mbsync` tab,
