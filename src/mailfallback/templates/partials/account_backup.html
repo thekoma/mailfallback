@@ -1,0 +1,118 @@
+{% macro retention_options(selected_value=None) %}
+    {% set presets = [
+        ("light", "Light (7d / 4w)"),
+        ("standard", "Standard (30d / 12w / 6m)"),
+        ("full", "Full (90d / 52w / 24m)"),
+    ] %}
+    {% for value, label in presets %}
+    <option value="{{ value }}" {% if value == selected_value %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+{% endmacro %}
+
+{% if not backup_config %}
+<p class="text-muted text-small">No offsite backup configured for this account.</p>
+
+{% if backup_destinations %}
+<form method="post" action="/accounts/{{ account.id }}/backup/configure">
+    <div class="grid-2">
+        <div>
+            <label for="backup_dest">Destination</label>
+            <select id="backup_dest" name="destination_id" required>
+                {% for dest in backup_destinations %}
+                <option value="{{ dest.id }}">{{ dest.name }} ({{ dest.backend_type.value }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="backup_schedule">Schedule</label>
+            <input type="text" id="backup_schedule" name="schedule" value="0 2 * * *" placeholder="0 2 * * *">
+        </div>
+        <div>
+            <label for="backup_retention">Retention</label>
+            <select id="backup_retention" name="retention_preset">
+                {{ retention_options("standard") }}
+            </select>
+        </div>
+    </div>
+    <button type="submit" class="icon-btn primary mt-05">
+        <i data-lucide="cloud-upload" class="icon-md"></i> Enable Backup
+    </button>
+</form>
+{% else %}
+<p class="text-muted text-small">No backup destinations configured. <a href="/admin/backup">Add one</a> first.</p>
+{% endif %}
+
+{% else %}
+<div class="flex gap-05 flex-wrap items-center mb-05">
+    <span class="stats-pill">
+        {% if backup_config.last_status.value == "completed" %}
+        <span class="stats-dot stats-dot-ok"></span> Completed
+        {% elif backup_config.last_status.value == "running" %}
+        <span class="stats-dot stats-dot-syncing"></span> Running
+        {% elif backup_config.last_status.value == "failed" %}
+        <span class="stats-dot stats-dot-error"></span> Failed
+        {% else %}
+        <span class="stats-dot"></span> Idle
+        {% endif %}
+    </span>
+    <span class="stats-sep">·</span>
+    <span class="stats-pill">{{ backup_config.destination.name }}</span>
+    <span class="stats-sep">·</span>
+    <span class="stats-pill"><code>{{ backup_config.schedule | cron_human }}</code></span>
+    <span class="stats-sep">·</span>
+    <span class="stats-pill">{{ backup_config.retention_preset.value | capitalize }}</span>
+    {% if backup_config.last_backup_at %}
+    <span class="stats-sep">·</span>
+    <span class="stats-pill">Last: {{ backup_config.last_backup_at | time_ago }}</span>
+    {% endif %}
+</div>
+
+{% if backup_config.last_error %}
+<p class="text-small sync-error">{{ backup_config.last_error }}</p>
+{% endif %}
+
+<div class="flex gap-05 mb-05">
+    <form method="post" action="/accounts/{{ account.id }}/backup/now">
+        <button type="submit" class="icon-btn primary">
+            <i data-lucide="cloud-upload" class="icon-md"></i> Backup Now
+        </button>
+    </form>
+</div>
+
+<details>
+    <summary class="text-small"><i data-lucide="pencil" class="icon-sm icon-inline"></i>Update Configuration</summary>
+    <form method="post" action="/accounts/{{ account.id }}/backup/configure" class="mt-05">
+        <div class="grid-2">
+            <div>
+                <label for="backup_dest">Destination</label>
+                <select id="backup_dest" name="destination_id" required>
+                    {% for dest in backup_destinations %}
+                    <option value="{{ dest.id }}" {% if dest.id == backup_config.destination_id %}selected{% endif %}>{{ dest.name }} ({{ dest.backend_type.value }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="backup_schedule">Schedule</label>
+                <input type="text" id="backup_schedule" name="schedule" value="{{ backup_config.schedule }}" placeholder="0 2 * * *">
+            </div>
+            <div>
+                <label for="backup_retention">Retention</label>
+                <select id="backup_retention" name="retention_preset">
+                    {{ retention_options(backup_config.retention_preset.value) }}
+                </select>
+            </div>
+        </div>
+        <button type="submit" class="icon-btn primary mt-05">
+            <i data-lucide="save" class="icon-md"></i> Save
+        </button>
+    </form>
+</details>
+
+<h4 class="mt-1 mb-025">Snapshots</h4>
+<div id="backup-snapshots"
+    hx-get="/accounts/{{ account.id }}/backup/snapshots"
+    hx-trigger="revealed"
+    hx-swap="innerHTML">
+    <span class="text-muted text-small">Loading snapshots...</span>
+</div>
+{% endif %}

@@ -5,10 +5,17 @@ import threading
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from mailfallback.dependencies import get_db
-from mailfallback.models import Account, JobStatus, StoreMigration, SyncJob
+from mailfallback.models import (
+    Account,
+    AccountBackup,
+    BackupDestination,
+    JobStatus,
+    StoreMigration,
+    SyncJob,
+)
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.services.account_service import (
     assign_owner,
@@ -426,6 +433,14 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
             .first()
         )
 
+    backup_config = (
+        db.query(AccountBackup)
+        .options(joinedload(AccountBackup.destination))
+        .filter(AccountBackup.account_id == account_id)
+        .first()
+    )
+    backup_destinations = db.query(BackupDestination).all()
+
     return templates.TemplateResponse(
         request=request,
         name="account_detail.html",
@@ -443,6 +458,8 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
             "snap": snap,
             "last_job": last_job,
             "migration": migration,
+            "backup_config": backup_config,
+            "backup_destinations": backup_destinations,
         },
     )
 
