@@ -78,6 +78,7 @@ nav:
     - Audit Log: admin-guide/audit.md
     - SSO / OIDC: admin-guide/sso.md
     - OAuth Providers: admin-guide/oauth-providers.md
+    - Disaster Recovery: admin-guide/disaster-recovery.md
   - Architecture:
     - Overview: architecture/overview.md
     - Centralized Config: architecture/config-generation.md
