@@ -1,223 +1,269 @@
 {% extends "base.html" %}
 {% block title %}{{ account.name }} — MFB{% endblock %}
+{% block body_class %}page-wide{% endblock %}
 {% block content %}
 <div id="account-page" data-account-id="{{ account.id }}">
-<div class="flex-between mb-025">
-    <div>
-        <h2 class="mb-025">{{ account.name }}</h2>
-        {% if account.email_address %}
-        <p class="email-text mt-0">{{ account.email_address }}
-            {% if user.role.value == "admin" %}
-            — {% for owner in account.owners %}<span class="badge badge-user">{{ owner.username }}</span> {% endfor %}
-            {% endif %}
-        </p>
-        {% endif %}
-    </div>
+
+{# ── Identity strip ── #}
+<div class="identity-strip">
+    <h2>{{ account.name }}</h2>
+    {% if account.email_address %}
+    <span class="id-meta">{{ account.email_address }}</span>
+    {% endif %}
+    {% if account.store and account.store.name %}
+    <span class="badge badge-user" title="Mail store">{{ account.store.name }}</span>
+    {% endif %}
+    {% if user.role.value == "admin" and account.owners %}
+    <span class="id-meta">·</span>
+    {% for owner in account.owners %}
+    <span class="badge badge-user">{{ owner.username }}</span>
+    {% endfor %}
+    {% endif %}
 </div>
 
 {% if flash_error %}
 <script>document.addEventListener('DOMContentLoaded', function() { showToast('{{ flash_error }}', 'error'); });</script>
 {% endif %}
 
-{% include "partials/sync_panel.html" %}
+{# ── BENTO ── #}
+<div class="bento" id="bento-grid">
 
-{# ── Wave 4 chain status header — one line, per-account ── #}
-<div class="chain-status flex gap-05 items-center mb-05" role="status" aria-live="polite">
-    <span class="stats-pill" title="Local backup">
-        {% if account.last_sync_at %}
-        <span class="stats-dot stats-dot-ok"></span>
-        Local backup — {{ account.last_sync_at | time_ago }}
-        {% else %}
-        <span class="stats-dot"></span>
-        Local backup — never synced
-        {% endif %}
-    </span>
-    <span class="stats-sep">·</span>
-    <span class="stats-pill" title="Off-site Repository">
-        {% if backup_config and backup_config.last_successful_run_at %}
-        <span class="stats-dot stats-dot-ok"></span>
-        Repository — {{ backup_config.last_successful_run_at | time_ago }}
-        {% elif backup_config %}
-        <span class="stats-dot"></span>
-        Repository — no back-up yet
-        {% else %}
-        <span class="stats-dot"></span>
-        Repository — not configured
-        {% endif %}
-    </span>
-</div>
+    {# A — Hero (sync status + Sync now) ── #}
+    <div class="card-bento span-8 row-2" id="hero-card">
+        {% include "partials/sync_panel.html" %}
+    </div>
 
-{# ── Stats Strip ── #}
-<div class="stats-strip"
-    id="stats-strip"
-    hx-get="/accounts/{{ account.id }}/partials/stats"
-    hx-trigger="sync-finished from:body"
-    hx-swap="innerHTML">
-    <span class="stats-pill">
-        {% if account.sync_state.value == 'syncing' %}
-        <span class="stats-dot stats-dot-syncing"></span> Syncing
-        {% elif account.sync_state.value == 'error' %}
-        <span class="stats-dot stats-dot-error"></span> Error
-        {% else %}
-        <span class="stats-dot stats-dot-ok"></span> OK
-        {% endif %}
-    </span>
-    <span class="stats-sep">·</span>
-    <span class="stats-pill">{{ account.total_messages | number }} msgs</span>
-    <span class="stats-sep">·</span>
-    <span class="stats-pill">{{ account.maildir_size_bytes | filesizeformat }}</span>
-    {% if folder_stats %}
-    <span class="stats-sep">·</span>
-    <span class="stats-pill">{{ folder_stats | length }} folders</span>
-    {% endif %}
-    <span class="stats-sep">·</span>
-    <span class="stats-pill">{{ account.last_sync_at | time_ago }}</span>
-    <span class="stats-sep">·</span>
-    <span class="stats-pill"><code>{{ account.sync_schedule | cron_human }}</code></span>
-    <span class="stats-sep">·</span>
-    <span class="stats-pill">
-        {% if account.auth_type.value == "oauth2" %}XOAUTH2{% else %}Password{% endif %}
-    </span>
-</div>
-
-{# ── Overview ── #}
-<details id="section-overview">
-    <summary><i data-lucide="info" class="icon-md icon-inline"></i><strong>Overview</strong></summary>
-    <div class="mt-1">
-    <div class="table-wrap">
-    <table>
-        <tr>
-            <td><i data-lucide="at-sign" class="icon-md icon-inline"></i>Email</td>
-            <td>{{ account.email_address or '—' }}</td>
-        </tr>
-        <tr>
-            <td><i data-lucide="globe" class="icon-md icon-inline"></i>Provider</td>
-            <td>
-                {% if account.auth_type.value == "oauth2" %}
-                <span class="auth-badge">
-                    {% with provider=account.provider %}{% include "partials/provider_logo.html" %}{% endwith %}
-                    {{ account.provider | capitalize }} OAuth2
-                </span>
+    {# B — Health pulse ── #}
+    <div class="card-bento span-4 row-2">
+        <h3>Health</h3>
+        <div class="health-rows">
+            <div class="health-row">
+                {% if account.sync_state.value == 'syncing' %}
+                <span class="stats-dot stats-dot-syncing"></span>
+                {% elif account.sync_state.value == 'error' %}
+                <span class="stats-dot stats-dot-error"></span>
+                {% elif account.last_sync_at %}
+                <span class="stats-dot stats-dot-ok"></span>
                 {% else %}
-                {{ account.provider | capitalize }}
+                <span class="stats-dot"></span>
                 {% endif %}
-            </td>
-        </tr>
-        <tr>
-            <td><i data-lucide="server" class="icon-md icon-inline"></i>Host</td>
-            <td>{{ account.imap_host }}:{{ account.imap_port }} ({{ account.tls_type }})</td>
-        </tr>
-        <tr>
-            <td><i data-lucide="calendar-clock" class="icon-md icon-inline"></i>Schedule</td>
-            <td><code title="{{ account.sync_schedule }}">{{ account.sync_schedule | cron_human }}</code></td>
-        </tr>
-        <tr>
-            <td><i data-lucide="hard-drive" class="icon-md icon-inline"></i>Mail store</td>
-            <td>{{ account.store.name }}</td>
-        </tr>
-        {% if user.role.value == "admin" %}
-        <tr>
-            <td><i data-lucide="folder" class="icon-md icon-inline"></i>Maildir</td>
-            <td><code>{{ account.maildir_path }}</code></td>
-        </tr>
-        {% endif %}
-    </table>
-    </div>
-    </div>
-</details>
-
-{# ── Mailbox Stats ── #}
-<div id="stats-section"
-    hx-get="/accounts/{{ account.id }}/partials/stats"
-    hx-trigger="sync-finished from:body"
-    hx-swap="innerHTML">
-{% include "partials/account_stats.html" %}
-</div>
-
-{# ── Sync History ── #}
-<div id="history-section"
-    hx-get="/accounts/{{ account.id }}/partials/history"
-    hx-trigger="sync-finished from:body"
-    hx-swap="innerHTML">
-{% include "partials/account_history.html" %}
-</div>
-
-{# ── Off-site backup → Repository ── promoted from buried position so it's discoverable; opens by default when configured #}
-<details id="section-backup"{% if backup_config %} open{% endif %}>
-    <summary><i data-lucide="cloud-upload" class="icon-md icon-inline"></i><strong>Off-site backup → Repository</strong></summary>
-    <div class="mt-1">
-    {% include "partials/account_backup.html" %}
-    </div>
-</details>
-
-{# ── Recoveries (recovered snapshots — read-only artefacts under this account) ── #}
-{% if recoveries %}
-<details id="section-recoveries" open>
-    <summary><i data-lucide="archive-restore" class="icon-md icon-inline"></i><strong>Recoveries</strong> ({{ recoveries | length }})</summary>
-    <div class="mt-1">
-    {% include "partials/account_recoveries.html" %}
-    </div>
-</details>
-{% endif %}
-
-{# ── Ownership & Visibility ── #}
-<details id="section-ownership">
-    <summary><i data-lucide="users" class="icon-md icon-inline"></i><strong>Ownership & Visibility</strong></summary>
-    <div class="mt-1">
-        <strong>Owners:</strong>
-        <div class="flex gap-05 flex-wrap mt-025">
-            {% for o in account.owners %}
-            <span class="badge badge-user">
-                {{ o.username }}
-                {% if (is_owner or user.role.value == "admin") and account.owners | length > 1 %}
-                <form method="post" action="/accounts/{{ account.id }}/remove-owner" class="inline-form" style="display:inline"
-                    data-confirm="Remove {{ o.username }} as owner?"
-                    onsubmit="return confirm(this.dataset.confirm)">
-                    <input type="hidden" name="user_id" value="{{ o.id }}">
-                    <button type="submit" class="icon-btn-inline" title="Remove owner">
-                        <i data-lucide="x" class="icon-sm"></i>
-                    </button>
-                </form>
-                {% endif %}
-            </span>
-            {% endfor %}
-        </div>
-
-        {% if is_owner or user.role.value == "admin" %}
-        <form method="post" action="/accounts/{{ account.id }}/add-owner" class="mt-05">
-            <div class="flex gap-05 items-end">
-                <div>
-                    <label class="text-small">Add owner:</label>
-                    <select name="user_id" style="margin-bottom:0">
-                        {% for u in all_users %}
-                        {% if u not in account.owners %}
-                        <option value="{{ u.id }}">{{ u.username }}</option>
-                        {% endif %}
-                        {% endfor %}
-                    </select>
-                </div>
-                <button type="submit" class="icon-btn primary">
-                    <i data-lucide="user-plus" class="icon-md"></i> Add
-                </button>
+                <span class="health-label">Local sync</span>
+                <span class="health-value">{{ account.last_sync_at | time_ago if account.last_sync_at else '—' }}</span>
             </div>
-        </form>
-        {% endif %}
+            <div class="health-row">
+                {% if backup_config and backup_config.last_status.value == "failed" %}
+                <span class="stats-dot stats-dot-error"></span>
+                {% elif backup_config and backup_config.last_status.value == "running" %}
+                <span class="stats-dot stats-dot-syncing"></span>
+                {% elif backup_config and backup_config.last_successful_run_at %}
+                <span class="stats-dot stats-dot-ok"></span>
+                {% else %}
+                <span class="stats-dot"></span>
+                {% endif %}
+                <span class="health-label">Off-site</span>
+                <span class="health-value">
+                    {% if backup_config and backup_config.last_successful_run_at %}
+                    {{ backup_config.last_successful_run_at | time_ago }}
+                    {% elif backup_config %}
+                    no off-site backup yet
+                    {% else %}
+                    not configured
+                    {% endif %}
+                </span>
+            </div>
+            <div class="health-row">
+                {% if account.is_authenticated %}
+                <span class="stats-dot stats-dot-ok"></span>
+                {% else %}
+                <span class="stats-dot stats-dot-error"></span>
+                {% endif %}
+                <span class="health-label">Auth</span>
+                <span class="health-value">{% if account.auth_type.value == "oauth2" %}XOAUTH2{% else %}Password{% endif %}</span>
+            </div>
+        </div>
+    </div>
 
-        {% if account.visible_to_groups %}
-        <strong class="mt-05" style="display:block">Visible to groups:</strong>
-        <div class="flex gap-05 flex-wrap mt-025">
-            {% for g in account.visible_to_groups %}
-            <span class="badge badge-admin">{{ g.name }}</span>
+    {# C — Messages ── #}
+    <div class="card-bento span-3">
+        <h3>Messages</h3>
+        <div class="kpi-num">{{ account.total_messages | number }}</div>
+        {% if account.unread_messages %}
+        <div class="kpi-sub">{{ account.unread_messages | number }} unread</div>
+        {% endif %}
+    </div>
+
+    {# D — Storage ── #}
+    <div class="card-bento span-3">
+        <h3>Storage</h3>
+        <div class="kpi-num">{{ account.maildir_size_bytes | filesizeformat }}</div>
+        <div class="kpi-sub">on disk</div>
+    </div>
+
+    {# E — Folders ── #}
+    <div class="card-bento span-3">
+        <h3>Folders</h3>
+        <div class="kpi-num">{{ folder_stats | length }}</div>
+        <div class="kpi-list">
+            {% for f in folder_stats|sort(attribute='size_bytes', reverse=True)|list %}{% if loop.index <= 3 %}{{ f.name|truncate(18, true, '…') }}{% if not loop.last and loop.index < 3 %} · {% endif %}{% endif %}{% endfor %}
+        </div>
+    </div>
+
+    {# F — Schedule ── #}
+    <div class="card-bento span-3">
+        <h3>Schedule</h3>
+        <div class="kpi-num" style="font-size:1.2rem">{{ account.sync_schedule | cron_human }}</div>
+        <div class="kpi-sub"><code>{{ account.sync_schedule }}</code></div>
+        {% if account.suspended %}
+        <div class="kpi-sub" style="color: var(--mfb-stats-dot-error)">Suspended</div>
+        {% endif %}
+    </div>
+
+    {# G — Folder treemap ── #}
+    <div class="card-bento span-8 row-2" id="treemap-card">
+        <h3>Folder treemap <span style="font-weight:400;text-transform:none;letter-spacing:0;">— hover to spotlight</span></h3>
+        {% if folder_stats %}
+        <div class="treemap" id="treemap">
+            {% set total = folder_stats|sum(attribute='size_bytes') or 1 %}
+            {% for f in folder_stats|sort(attribute='size_bytes', reverse=True)|list %}
+            {% if f.size_bytes %}
+            <div class="treemap-cell"
+                 data-folder="{{ f.name }}"
+                 data-size="{{ f.size_bytes }}"
+                 style="flex-grow: {{ f.size_bytes }}; flex-basis: {{ ((f.size_bytes / total * 100) | round(1)) }}%;"
+                 title="{{ f.name }} — {{ f.messages }} msgs · {{ f.size_bytes|filesizeformat }}">
+                <div class="tm-name">{{ f.name }}</div>
+                <div class="tm-size">{{ f.size_bytes|filesizeformat }}</div>
+            </div>
+            {% endif %}
             {% endfor %}
+        </div>
+        {% else %}
+        <div class="treemap-empty">No folder data yet — sync this mailbox to see the breakdown.</div>
+        {% endif %}
+    </div>
+
+    {# H — Off-site backup ── #}
+    <div class="card-bento span-4">
+        <h3>Off-site backup</h3>
+        {% if backup_config %}
+        <div class="kpi-num" style="font-size:1.5rem">
+            {% if backup_config.last_snapshot_count %}{{ backup_config.last_snapshot_count }}{% else %}—{% endif %}
+            <span style="font-size:0.8rem;color:var(--pico-muted-color);font-weight:400;">snapshots</span>
+        </div>
+        <div class="kpi-sub">
+            {% if backup_config.last_successful_run_at %}
+            Last clean: {{ backup_config.last_successful_run_at | time_ago }}
+            {% elif backup_config.last_status.value == "failed" %}
+            <span style="color:var(--mfb-stats-dot-error)">Last attempt failed</span>
+            {% else %}
+            No off-site backup yet
+            {% endif %}
+        </div>
+        <div class="kpi-sub">→ {{ backup_config.destination.name }}</div>
+        <div class="card-actions">
+            <a href="#admin-section" onclick="document.querySelector('[data-admin-target=offsite]')?.click()" class="icon-btn-inline">
+                <i data-lucide="settings" class="icon-sm"></i> Configure
+            </a>
+        </div>
+        {% else %}
+        <div class="kpi-sub">No off-site copy yet — your mail isn't protected against disk loss.</div>
+        <div class="card-actions">
+            <a href="#admin-section" onclick="document.querySelector('[data-admin-target=offsite]')?.click()" class="icon-btn primary">
+                <i data-lucide="cloud-upload" class="icon-sm"></i> Configure off-site
+            </a>
         </div>
         {% endif %}
     </div>
-</details>
 
-{# ── Settings ── #}
-<details id="section-settings">
-    <summary><i data-lucide="pencil" class="icon-md icon-inline"></i><strong>Settings</strong></summary>
-    <form method="post" action="/accounts/{{ account.id }}/edit" class="mt-1">
+    {# I — Timeline strip ── #}
+    <div class="card-bento span-8" id="timeline-card">
+        <h3>Sync timeline <span style="font-weight:400;text-transform:none;letter-spacing:0;">— last {{ timeline_global|length }} runs</span></h3>
+        {% if timeline_global %}
+        <div class="timeline-wrap">
+            <div class="timeline-strip" id="timeline-strip" data-mode="status">
+                {% for t in timeline_global %}
+                {% set cls = 'tl-error' if t.status in ('failed','error') else ('tl-syncing' if t.status in ('running','pending') else ('tl-cancelled' if t.status == 'cancelled' else '')) %}
+                <div class="timeline-bar {{ cls }}" data-ts="{{ t.ts }}" data-status="{{ t.status }}" style="height:60%"></div>
+                {% endfor %}
+            </div>
+            <div class="timeline-legend">
+                <span><span class="tl-swatch" style="background:var(--mfb-stats-dot-ok,#22c55e)"></span>ok</span>
+                <span><span class="tl-swatch" style="background:var(--mfb-stats-dot-error,#ef4444)"></span>fail</span>
+                <span><span class="tl-swatch" style="background:var(--mfb-stats-dot-syncing,#3b82f6)"></span>running</span>
+                <span id="tl-mode-label"></span>
+            </div>
+        </div>
+        {% else %}
+        <div class="timeline-empty">No sync runs yet.</div>
+        {% endif %}
+    </div>
+
+    {# J — Recoveries ── #}
+    <div class="card-bento span-4">
+        <h3>Recoveries</h3>
+        {% if recoveries %}
+        <div class="kpi-num" style="font-size:1.5rem">{{ recoveries|length }}
+            <span style="font-size:0.8rem;color:var(--pico-muted-color);font-weight:400;">restored</span>
+        </div>
+        <div class="kpi-list">
+            {% for r in recoveries[:2] %}
+            <div>
+                <code>{{ r.snapshot_id[:8] }}</code> · {{ r.restored_at | time_ago }}
+                {% if r.status.value == "ready" %}
+                <span class="stats-pill"><span class="stats-dot stats-dot-ok"></span> ready</span>
+                {% elif r.status.value == "failed" %}
+                <span class="stats-pill" title="{{ r.error or '' }}"><span class="stats-dot stats-dot-error"></span> failed</span>
+                {% elif r.status.value == "restoring" %}
+                <span class="stats-pill"><span class="stats-dot stats-dot-syncing"></span> restoring</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        <div class="card-actions">
+            <a href="/accounts" class="icon-btn-inline" title="Browse via webmail">
+                <i data-lucide="external-link" class="icon-sm"></i> Browse in webmail
+            </a>
+        </div>
+        {% else %}
+        <div class="kpi-sub">No recoveries yet — your safety net is unused, which is good news.</div>
+        {% endif %}
+    </div>
+
+</div> {# /bento #}
+
+{# ── Bottom admin row ── #}
+<div class="admin-row" id="admin-row">
+    <button type="button" class="admin-btn" data-admin-target="edit">
+        <i data-lucide="pencil" class="icon-sm"></i> Edit
+    </button>
+    <button type="button" class="admin-btn" data-admin-target="ownership">
+        <i data-lucide="users" class="icon-sm"></i> Ownership
+    </button>
+    {% if user.role.value == "admin" %}
+    <button type="button" class="admin-btn" data-admin-target="offsite">
+        <i data-lucide="cloud-upload" class="icon-sm"></i> Off-site
+    </button>
+    {% endif %}
+    {% if user.role.value == "admin" %}
+    <button type="button" class="admin-btn" data-admin-target="manage">
+        <i data-lucide="settings" class="icon-sm"></i> Maintenance
+    </button>
+    {% endif %}
+    <button type="button" class="admin-btn" data-admin-target="data">
+        <i data-lucide="table" class="icon-sm"></i> Raw data
+    </button>
+    {% if user.role.value == "admin" %}
+    <button type="button" class="admin-btn danger" data-admin-target="delete">
+        <i data-lucide="trash-2" class="icon-sm"></i> Delete
+    </button>
+    {% endif %}
+</div>
+
+{# ── Admin sections (one revealed at a time by JS) ── #}
+
+<div class="admin-section" id="admin-edit">
+    <h3 style="margin-top:0">Edit account</h3>
+    <form method="post" action="/accounts/{{ account.id }}/edit">
         <div class="grid-2">
             <div>
                 <label for="name">Account Name</label>
@@ -285,100 +331,204 @@
             <i data-lucide="save" class="icon-md icon-inline"></i> Save Changes
         </button>
     </form>
-</details>
+</div>
 
-{# ── Manage (admin) ── #}
-{% if user.role.value == "admin" %}
-<details id="section-manage">
-    <summary><i data-lucide="settings" class="icon-md icon-inline"></i><strong>Manage</strong></summary>
-    <div class="mt-1">
-        <h4 class="mb-025">Migrate mail store</h4>
-        {% if account.migrating %}
-        <div hx-get="/accounts/{{ account.id }}/migration-progress" hx-trigger="every 2s" hx-swap="innerHTML">
-            <progress></progress> Loading...
-        </div>
-        {% else %}
-        <form method="post" action="/accounts/{{ account.id }}/migrate"
-            data-confirm="Migrate mailbox for {{ account.name }}? Sync will be blocked during migration."
-            onsubmit="return confirm(this.dataset.confirm)">
-            <label>Current: <strong>{{ account.store.name }}</strong> — Move to</label>
-            <div class="flex gap-05 items-end">
-                <select name="target_store_id" style="margin-bottom:0">
-                    {% for s in stores %}
-                    {% if s.id != account.store.id %}
-                    <option value="{{ s.id }}">{{ s.name }} ({{ s.path }})</option>
+<div class="admin-section" id="admin-ownership">
+    <h3 style="margin-top:0">Ownership &amp; visibility</h3>
+    <strong>Owners:</strong>
+    <div class="flex gap-05 flex-wrap mt-025">
+        {% for o in account.owners %}
+        <span class="badge badge-user">
+            {{ o.username }}
+            {% if (is_owner or user.role.value == "admin") and account.owners | length > 1 %}
+            <form method="post" action="/accounts/{{ account.id }}/remove-owner" class="inline-form" style="display:inline"
+                data-confirm="Remove {{ o.username }} as owner?"
+                onsubmit="return confirm(this.dataset.confirm)">
+                <input type="hidden" name="user_id" value="{{ o.id }}">
+                <button type="submit" class="icon-btn-inline" title="Remove owner">
+                    <i data-lucide="x" class="icon-sm"></i>
+                </button>
+            </form>
+            {% endif %}
+        </span>
+        {% endfor %}
+    </div>
+
+    {% if is_owner or user.role.value == "admin" %}
+    <form method="post" action="/accounts/{{ account.id }}/add-owner" class="mt-05">
+        <div class="flex gap-05 items-end">
+            <div>
+                <label class="text-small">Add owner:</label>
+                <select name="user_id" style="margin-bottom:0">
+                    {% for u in all_users %}
+                    {% if u not in account.owners %}
+                    <option value="{{ u.id }}">{{ u.username }}</option>
                     {% endif %}
                     {% endfor %}
                 </select>
-                <button type="submit" class="icon-btn warning">
-                    <i data-lucide="truck" class="icon-md"></i> Migrate
-                </button>
             </div>
-        </form>
-        {% endif %}
-
-        <h4 class="mt-1 mb-025">Visibility</h4>
-        <div class="flex gap-05">
-            {% if account.enabled %}
-            <button class="icon-btn" title="Hide from webmail"
-                hx-post="/accounts/{{ account.id }}/toggle-visible" hx-swap="none"
-                hx-on::after-request="location.reload()">
-                <i data-lucide="eye-off" class="icon-md"></i> Hide from webmail
+            <button type="submit" class="icon-btn primary">
+                <i data-lucide="user-plus" class="icon-md"></i> Add
             </button>
-            {% else %}
-            <button class="icon-btn success" title="Show in webmail"
-                hx-post="/accounts/{{ account.id }}/toggle-visible" hx-swap="none"
-                hx-on::after-request="location.reload()">
-                <i data-lucide="eye" class="icon-md"></i> Show in webmail
-            </button>
-            {% endif %}
-            {% if account.suspended %}
-            <button class="icon-btn success" title="Resume sync schedule"
-                hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
-                hx-on::after-request="location.reload()">
-                <i data-lucide="play-circle" class="icon-md"></i> Resume schedule
-            </button>
-            {% else %}
-            <button class="icon-btn" title="Suspend sync schedule"
-                hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
-                hx-on::after-request="location.reload()">
-                <i data-lucide="pause-circle" class="icon-md"></i> Suspend schedule
-            </button>
-            {% endif %}
         </div>
-    </div>
-</details>
+    </form>
+    {% endif %}
 
-<details id="delete-section" class="danger-zone">
-    <summary class="alert-error"><i data-lucide="trash-2" class="icon-md icon-inline"></i><strong>Delete Account</strong></summary>
-    <div class="mt-1">
-        <p>This action is irreversible. Type <strong>{{ account.email_address or account.name }}</strong> to confirm.</p>
-        <label>
-            <input type="checkbox" id="delete-files" value="1">
-            Also delete maildir folder (<code>{{ account.maildir_path }}</code>)
-        </label>
-        <input type="text" id="delete-confirm" placeholder="Type to confirm"
-            data-expected="{{ account.email_address or account.name }}"
-            oninput="checkDeleteConfirm('delete-confirm', this.dataset.expected, 'delete-btn')">
-        <button id="delete-btn" class="icon-btn danger" disabled
-            hx-delete="/api/accounts/{{ account.id }}"
-            hx-swap="none"
-            hx-timeout="600s"
-            hx-on::before-request="
-                if(document.getElementById('delete-files').checked) {
-                    this.setAttribute('hx-delete', '/api/accounts/{{ account.id }}?delete_files=true');
-                    htmx.process(this);
-                }
-                this.disabled=true;
-                this.innerHTML='<i data-lucide=\'loader\' class=\'icon-md spin\'></i> Deleting...';
-                lucide.createIcons();
-            "
-            hx-on::after-request="window.location='/'">
-            <i data-lucide="trash-2" class="icon-md"></i> Delete Account
-        </button>
+    {% if account.visible_to_groups %}
+    <strong class="mt-05" style="display:block">Visible to groups:</strong>
+    <div class="flex gap-05 flex-wrap mt-025">
+        {% for g in account.visible_to_groups %}
+        <span class="badge badge-admin">{{ g.name }}</span>
+        {% endfor %}
     </div>
-</details>
-{% endif %}
+    {% endif %}
 </div>
+
+<div class="admin-section" id="admin-offsite">
+    <h3 style="margin-top:0">Off-site backup → Repository</h3>
+    {% include "partials/account_backup.html" %}
+</div>
+
+{% if user.role.value == "admin" %}
+<div class="admin-section" id="admin-manage">
+    <h3 style="margin-top:0">Maintenance</h3>
+    <h4 class="mb-025">Migrate mail store</h4>
+    {% if account.migrating %}
+    <div hx-get="/accounts/{{ account.id }}/migration-progress" hx-trigger="every 2s" hx-swap="innerHTML">
+        <progress></progress> Loading...
+    </div>
+    {% else %}
+    <form method="post" action="/accounts/{{ account.id }}/migrate"
+        data-confirm="Migrate mailbox for {{ account.name }}? Sync will be blocked during migration."
+        onsubmit="return confirm(this.dataset.confirm)">
+        <label>Current: <strong>{{ account.store.name }}</strong> — Move to</label>
+        <div class="flex gap-05 items-end">
+            <select name="target_store_id" style="margin-bottom:0">
+                {% for s in stores %}
+                {% if s.id != account.store.id %}
+                <option value="{{ s.id }}">{{ s.name }} ({{ s.path }})</option>
+                {% endif %}
+                {% endfor %}
+            </select>
+            <button type="submit" class="icon-btn warning">
+                <i data-lucide="truck" class="icon-md"></i> Migrate
+            </button>
+        </div>
+    </form>
+    {% endif %}
+
+    <h4 class="mt-1 mb-025">Visibility</h4>
+    <div class="flex gap-05">
+        {% if account.enabled %}
+        <button class="icon-btn" title="Hide from webmail"
+            hx-post="/accounts/{{ account.id }}/toggle-visible" hx-swap="none"
+            hx-on::after-request="location.reload()">
+            <i data-lucide="eye-off" class="icon-md"></i> Hide from webmail
+        </button>
+        {% else %}
+        <button class="icon-btn success" title="Show in webmail"
+            hx-post="/accounts/{{ account.id }}/toggle-visible" hx-swap="none"
+            hx-on::after-request="location.reload()">
+            <i data-lucide="eye" class="icon-md"></i> Show in webmail
+        </button>
+        {% endif %}
+        {% if account.suspended %}
+        <button class="icon-btn success" title="Resume sync schedule"
+            hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
+            hx-on::after-request="location.reload()">
+            <i data-lucide="play-circle" class="icon-md"></i> Resume schedule
+        </button>
+        {% else %}
+        <button class="icon-btn" title="Suspend sync schedule"
+            hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
+            hx-on::after-request="location.reload()">
+            <i data-lucide="pause-circle" class="icon-md"></i> Suspend schedule
+        </button>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<div class="admin-section" id="admin-data">
+    <h3 style="margin-top:0">Raw data</h3>
+    <details open>
+        <summary><strong>Mailbox statistics</strong></summary>
+        <div id="stats-section"
+             hx-get="/accounts/{{ account.id }}/partials/stats"
+             hx-trigger="sync-finished from:body"
+             hx-swap="innerHTML">
+        {% include "partials/account_stats.html" %}
+        </div>
+    </details>
+    <details>
+        <summary><strong>Sync history</strong></summary>
+        <div id="history-section"
+             hx-get="/accounts/{{ account.id }}/partials/history"
+             hx-trigger="sync-finished from:body"
+             hx-swap="innerHTML">
+        {% include "partials/account_history.html" %}
+        </div>
+    </details>
+    {% if recoveries %}
+    <details>
+        <summary><strong>Recoveries</strong> ({{ recoveries|length }})</summary>
+        {% include "partials/account_recoveries.html" %}
+    </details>
+    {% endif %}
+    <details>
+        <summary><strong>Connection details</strong></summary>
+        <div class="table-wrap mt-1">
+        <table>
+            <tr><td>Email</td><td>{{ account.email_address or '—' }}</td></tr>
+            <tr><td>Provider</td><td>{{ account.provider | capitalize }}{% if account.auth_type.value == "oauth2" %} (OAuth2){% endif %}</td></tr>
+            <tr><td>Host</td><td>{{ account.imap_host }}:{{ account.imap_port }} ({{ account.tls_type }})</td></tr>
+            <tr><td>Schedule</td><td><code>{{ account.sync_schedule }}</code> — {{ account.sync_schedule | cron_human }}</td></tr>
+            <tr><td>Mail store</td><td>{{ account.store.name }}</td></tr>
+            {% if user.role.value == "admin" %}
+            <tr><td>Maildir</td><td><code>{{ account.maildir_path }}</code></td></tr>
+            {% endif %}
+        </table>
+        </div>
+    </details>
+</div>
+
+{% if user.role.value == "admin" %}
+<div class="admin-section" id="admin-delete">
+    <h3 style="margin-top:0; color: var(--mfb-stats-dot-error)">⚠ Delete this account</h3>
+    <p>This action is irreversible. Type <strong>{{ account.email_address or account.name }}</strong> to confirm.</p>
+    <label>
+        <input type="checkbox" id="delete-files" value="1">
+        Also delete maildir folder (<code>{{ account.maildir_path }}</code>)
+    </label>
+    <input type="text" id="delete-confirm" placeholder="Type to confirm"
+        data-expected="{{ account.email_address or account.name }}"
+        oninput="checkDeleteConfirm('delete-confirm', this.dataset.expected, 'delete-btn')">
+    <button id="delete-btn" class="icon-btn danger" disabled
+        hx-delete="/api/accounts/{{ account.id }}"
+        hx-swap="none"
+        hx-timeout="600s"
+        hx-on::before-request="
+            if(document.getElementById('delete-files').checked) {
+                this.setAttribute('hx-delete', '/api/accounts/{{ account.id }}?delete_files=true');
+                htmx.process(this);
+            }
+            this.disabled=true;
+            this.innerHTML='<i data-lucide=\'loader\' class=\'icon-md spin\'></i> Deleting...';
+            lucide.createIcons();
+        "
+        hx-on::after-request="window.location='/'">
+        <i data-lucide="trash-2" class="icon-md"></i> Delete Account
+    </button>
+</div>
+{% endif %}
+
+</div>
+
+{# Inline data for the bento JS (linked-view treemap → timeline) #}
+<script id="bento-data" type="application/json">
+{ "folder_timeline": {{ folder_timeline_data | tojson }},
+  "timeline_global": {{ timeline_global | tojson }} }
+</script>
+
 {% endblock %}
-{% block scripts %}<script src="/static/js/account-form.js"></script><script src="/static/js/account-detail.js"></script>{% endblock %}
+{% block scripts %}<script src="/static/js/account-form.js"></script><script src="/static/js/account-detail.js"></script><script src="/static/js/account-bento.js"></script>{% endblock %}
