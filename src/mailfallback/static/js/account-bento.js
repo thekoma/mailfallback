@@ -117,6 +117,23 @@
             });
         });
 
+        // URL hash takes priority over localStorage so deep-links from /recover
+        // and similar wizards land on the right section open. Hash format:
+        // #admin-edit, #admin-offsite, #admin-ownership, etc. Never auto-open delete.
+        const hashTarget = (location.hash || "").replace(/^#admin-/, "");
+        if (hashTarget && hashTarget !== "delete" && document.getElementById("admin-" + hashTarget)) {
+            open(hashTarget);
+            localStorage.setItem(storageKey, hashTarget);
+            // Defer scroll to next tick so the layout has settled.
+            setTimeout(() => {
+                document.getElementById("admin-" + hashTarget)?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start",
+                });
+            }, 50);
+            return;
+        }
+
         // Restore last-open section, but never auto-restore "delete" (too dangerous).
         const last = localStorage.getItem(storageKey);
         if (last && last !== "delete") {

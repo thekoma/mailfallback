@@ -4,9 +4,9 @@
 <h2><i data-lucide="cloud-download" class="icon-inline"></i> Recover from a snapshot</h2>
 
 <p class="text-muted">
-    Pick a mailbox to see its off-site snapshots. Recovering creates a new
-    suspended mailbox named <code>Recovered &lt;name&gt; (date)</code> — review it
-    and click <strong>Promote to live</strong> to enable it.
+    Pick a mailbox to see its off-site snapshots. Recovering writes the snapshot
+    to disk as a read-only Recovery attached to the source mailbox — it never
+    syncs and shows up as a separate folder in your webmail.
     <a href="/restore">← back to Restore choice</a>
 </p>
 
@@ -36,7 +36,7 @@
         {% for entry in recoverable %}
         <tr>
             <td>
-                <a href="/accounts/{{ entry.account.id }}#section-backup">
+                <a href="/accounts/{{ entry.account.id }}#admin-offsite">
                     <strong>{{ entry.account.name }}</strong>
                 </a>
                 {% if entry.account.email_address %}
@@ -59,8 +59,8 @@
             </td>
             <td>
                 <div class="actions flex-end">
-                    <a href="/accounts/{{ entry.account.id }}#section-backup" class="icon-btn">
-                        <i data-lucide="list" class="icon-sm"></i> View snapshots
+                    <a href="/accounts/{{ entry.account.id }}#admin-offsite" class="icon-btn primary">
+                        <i data-lucide="list" class="icon-sm"></i> Pick a snapshot →
                     </a>
                 </div>
             </td>
