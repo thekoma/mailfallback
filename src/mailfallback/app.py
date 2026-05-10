@@ -169,9 +169,14 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    from mailfallback.middleware.force_password_change import ForcePasswordChangeMiddleware
     from mailfallback.middleware.rate_limit import RateLimitMiddleware
 
+    # Order: SessionMiddleware first (innermost) so request.session is populated
+    # by the time the others run. Starlette executes outermost-added FIRST on
+    # the request path, so we add SessionMiddleware LAST.
     app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(ForcePasswordChangeMiddleware)
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.session_secret,
