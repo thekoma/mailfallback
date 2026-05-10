@@ -1,0 +1,39 @@
+{# Lazy-loaded by /restore — renders the 30-day dot strip for one mailbox.
+   Replaces the placeholder <div class="calendar-row" id="cal-row-{{account.id}}">
+   via HTMX outerHTML swap. #}
+<div class="calendar-row" id="cal-row-{{ account.id }}">
+    <div class="cal-mailbox">
+        <strong>{{ account.name }}</strong>
+        {% if account.email_address %}
+        <span class="cal-meta">{{ account.email_address }}</span>
+        {% endif %}
+        <span class="cal-meta">to: {{ policy.destination.name }}</span>
+    </div>
+
+    {% if degraded %}
+    <div class="cal-degraded">
+        <i data-lucide="alert-triangle" class="icon-sm icon-inline"></i>
+        couldn't reach repository — try again later
+    </div>
+    <div></div>
+    {% else %}
+    <div class="cal-strip" role="list" aria-label="Snapshot calendar (30 days)">
+        {% for d in days %}
+        {% if d.filled %}
+        {% set first = d.snapshots[0] %}
+        <a href="/accounts/{{ account.id }}#admin-offsite&date={{ d.iso }}"
+           class="snap-dot snap-dot-filled{% if d.is_today %} snap-dot-today{% endif %}"
+           role="listitem"
+           title="{{ d.date.strftime('%b %d') }} · {{ d.snapshots | length }} snapshot{{ '' if d.snapshots | length == 1 else 's' }} · click to open"></a>
+        {% else %}
+        <span class="snap-dot snap-dot-empty{% if d.is_today %} snap-dot-today{% endif %}"
+              role="listitem"
+              title="{{ d.date.strftime('%b %d') }} · no snapshot"></span>
+        {% endif %}
+        {% endfor %}
+    </div>
+    <div class="cal-count" title="{{ filled_count }} day{{ '' if filled_count == 1 else 's' }} with at least one snapshot in the last {{ days | length }} days">
+        {{ filled_count }}/{{ days | length }}
+    </div>
+    {% endif %}
+</div>
