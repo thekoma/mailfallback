@@ -37,6 +37,14 @@
             <td>{{ dest_account_counts.get(dest.id, 0) }}</td>
             <td>
                 <div class="actions flex-end">
+                    <button class="icon-btn" title="Edit" onclick="toggleRow('edit-{{ dest.id }}')">
+                        <i data-lucide="pencil" class="icon-md"></i>
+                    </button>
+                    <form method="post" action="/admin/backup/{{ dest.id }}/test" class="inline-form">
+                        <button type="submit" class="icon-btn" title="Test connection">
+                            <i data-lucide="plug-zap" class="icon-md"></i>
+                        </button>
+                    </form>
                     <form method="post" action="/admin/backup/{{ dest.id }}/delete" class="inline-form"
                         data-confirm="Delete backup destination {{ dest.name }}?"
                         onsubmit="return confirm(this.dataset.confirm)">
@@ -46,6 +54,53 @@
                         </button>
                     </form>
                 </div>
+            </td>
+        </tr>
+        <tr id="edit-{{ dest.id }}" class="hidden">
+            <td colspan="5">
+                <form method="post" action="/admin/backup/{{ dest.id }}/edit">
+                    <div class="grid-2">
+                        <div>
+                            <label>Name</label>
+                            <input type="text" name="name" value="{{ dest.name }}" required>
+                        </div>
+                        {% if dest.backend_type.value == "s3" %}
+                        <div>
+                            <label>S3 Endpoint</label>
+                            <input type="text" name="s3_endpoint" placeholder="Leave blank to keep current">
+                        </div>
+                        <div>
+                            <label>S3 Bucket</label>
+                            <input type="text" name="s3_bucket" placeholder="Leave blank to keep current">
+                        </div>
+                        <div>
+                            <label>Access Key</label>
+                            <input type="password" name="s3_access_key" placeholder="Leave blank to keep current">
+                        </div>
+                        <div>
+                            <label>Secret Key</label>
+                            <input type="password" name="s3_secret_key" placeholder="Leave blank to keep current">
+                        </div>
+                        {% else %}
+                        <div>
+                            <label>Local Path</label>
+                            <input type="text" name="local_path" placeholder="Leave blank to keep current">
+                        </div>
+                        {% endif %}
+                        <div>
+                            <label>Restic Password</label>
+                            <input type="password" name="restic_password" placeholder="Leave blank to keep current">
+                        </div>
+                    </div>
+                    <div class="mt-05">
+                        <label>
+                            <input type="checkbox" name="insecure_tls" value="1" {% if dest.insecure_tls %}checked{% endif %}> Skip TLS verification
+                        </label>
+                    </div>
+                    <button type="submit" class="icon-btn primary mt-05">
+                        <i data-lucide="save" class="icon-md"></i> Save
+                    </button>
+                </form>
             </td>
         </tr>
         {% endfor %}
@@ -106,6 +161,11 @@
         <div>
             <label for="restic_password">Restic Password</label>
             <input type="password" id="restic_password" name="restic_password" placeholder="Repository encryption password" required>
+        </div>
+        <div>
+            <label>
+                <input type="checkbox" name="insecure_tls" value="1"> Skip TLS verification
+            </label>
         </div>
         <button type="submit" class="icon-btn primary">
             <i data-lucide="plus-circle" class="icon-md"></i> Add

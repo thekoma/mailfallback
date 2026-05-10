@@ -22,6 +22,12 @@
         <i data-lucide="archive-restore" class="icon-sm"></i>
         {{ active_restores|length }} restore{{ 's' if active_restores|length != 1 else '' }}
     </span>
+
+    <span class="status-badge {% if active_backups > 0 %}status-active{% else %}status-neutral{% endif %}"
+          onclick="toggleStatusDetail('backup')">
+        <i data-lucide="cloud-upload" class="icon-sm {% if active_backups > 0 %}spin{% endif %}"></i>
+        {{ active_backups }} backup{{ 's' if active_backups != 1 else '' }}
+    </span>
 </div>
 
 <div id="status-detail-dovecot" class="status-detail" style="display:none;">
@@ -105,6 +111,14 @@
         {% endif %}
     </div>
     {% endfor %}
+    {% endif %}
+</div>
+
+<div id="status-detail-backup" class="status-detail" style="display:none;">
+    {% if active_backups == 0 %}
+    <span class="text-small text-muted">No active backup jobs</span>
+    {% else %}
+    <span class="text-small">{{ active_backups }} backup job{{ 's' if active_backups != 1 else '' }} running</span>
     {% endif %}
 </div>
 
