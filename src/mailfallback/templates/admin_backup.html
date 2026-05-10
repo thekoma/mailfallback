@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Backup Destinations — MFB{% endblock %}
+{% block title %}Repositories — MFB{% endblock %}
 {% block content %}
-<h2><i data-lucide="cloud-upload" class="icon-xl icon-inline"></i>Backup Destinations</h2>
+<h2><i data-lucide="cloud-upload" class="icon-xl icon-inline"></i>Repositories</h2>
 
-<p class="text-muted">Manage offsite backup destinations for account maildir data. Each destination is a restic repository backed by S3 or a local path.</p>
+<p class="text-muted">Off-site repositories where mailbox snapshots are stored. Each Repository is an encrypted restic repository backed by S3 or a local path. Mailboxes pick a Repository in their backup policy.</p>
 
 <p class="text-small text-muted">
     <i data-lucide="info" class="icon-sm icon-inline"></i>
@@ -121,7 +121,7 @@
         </tr>
         {% endfor %}
         {% if not destinations %}
-        <tr><td colspan="5" class="text-muted">No backup destinations configured yet.</td></tr>
+        <tr><td colspan="5" class="text-muted">No repositories configured yet.</td></tr>
         {% endif %}
     </tbody>
 </table>
@@ -134,7 +134,7 @@
     <div class="grid-2">
         <div>
             <label for="dest_name">Name</label>
-            <input type="text" id="dest_name" name="name" placeholder="Offsite S3 Backup" required>
+            <input type="text" id="dest_name" name="name" placeholder="Offsite S3 repository" required>
         </div>
         <div>
             <label for="backend_type">Backend Type</label>
