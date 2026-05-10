@@ -257,7 +257,7 @@ def account_form(request: Request, db: Session = Depends(get_db)):
     )
     return templates.TemplateResponse(
         request=request,
-        name="account_form.html",
+        name="account_wizard.html",
         context={
             "user": user,
             "store": store,

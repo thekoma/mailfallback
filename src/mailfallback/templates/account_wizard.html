@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Connect a mailbox — MFB{% endblock %}
+{% block content %}
+<h2><i data-lucide="plus-circle" class="icon-xl icon-inline"></i>Connect a mailbox</h2>
+<p class="text-muted">Three quick steps. Your data stays on your server.</p>
+
+{% if oauth_providers and (oauth_providers.google or oauth_providers.microsoft) %}
+<script>window._oauthAvailable = {{ oauth_providers | tojson }};</script>
+{% endif %}
+
+{% if oauth_failed %}
+<div class="alert-error mt-1" role="alert">
+    <i data-lucide="alert-circle" class="icon-md icon-inline"></i>
+    Authorization didn't complete. Try again or use an app password instead.
+</div>
+{% endif %}
+
+{% if error %}
+<div class="alert-error mt-1" role="alert">
+    <i data-lucide="alert-circle" class="icon-md icon-inline"></i>{{ error }}
+</div>
+{% endif %}
+
+<ol class="wizard-steps" aria-label="Wizard progress">
+    <li class="wizard-step active" data-step="1"><span class="wizard-step-num">1</span>Provider</li>
+    <li class="wizard-step" data-step="2"><span class="wizard-step-num">2</span>Sign in</li>
+    <li class="wizard-step" data-step="3"><span class="wizard-step-num">3</span>Confirm</li>
+</ol>
+
+<form id="account-form" data-auth="password" onsubmit="return handleAccountSubmit(event)">
+    <input type="hidden" id="provider" name="provider" value="other">
+    <input type="hidden" id="auth_type" name="auth_type" value="app_password">
+
+    {# ── Step 1: Provider picker ── #}
+    <section class="wizard-pane active" id="wizard-pane-1">
+        <h3 class="mt-1">Which provider hosts your mail?</h3>
+        <p class="text-muted text-small">Pick the right one and we'll fill in the technical bits for you.</p>
+        <div class="provider-grid mt-1">
+            <button type="button" class="provider-card" data-provider="google" onclick="wizardPickProvider(this)">
+                <i data-lucide="mail" class="icon-lg"></i>
+                <strong>Gmail</strong>
+                <small class="text-muted">Sign in with Google</small>
+            </button>
+            <button type="button" class="provider-card" data-provider="microsoft" onclick="wizardPickProvider(this)">
+                <i data-lucide="mail" class="icon-lg"></i>
+                <strong>Outlook / Microsoft 365</strong>
+                <small class="text-muted">Sign in with Microsoft</small>
+            </button>
+            <button type="button" class="provider-card" data-provider="yahoo" onclick="wizardPickProvider(this)">
+                <i data-lucide="mail" class="icon-lg"></i>
+                <strong>Yahoo</strong>
+                <small class="text-muted">App password</small>
+            </button>
+            <button type="button" class="provider-card" data-provider="icloud" onclick="wizardPickProvider(this)">
+                <i data-lucide="mail" class="icon-lg"></i>
+                <strong>iCloud</strong>
+                <small class="text-muted">App-specific password</small>
+            </button>
+            <button type="button" class="provider-card" data-provider="other" onclick="wizardPickProvider(this)">
+                <i data-lucide="server" class="icon-lg"></i>
+                <strong>Other IMAP</strong>
+                <small class="text-muted">Custom IMAP server</small>
+            </button>
+        </div>
+    </section>
+
+    {# ── Step 2: Sign in ── #}
+    <section class="wizard-pane" id="wizard-pane-2">
+        <h3 class="mt-1" id="wizard-step2-title">Sign in</h3>
+
+        <div id="wizard-oauth-block" class="hidden">
+            <p>Click below to authorise MailFallBack with your provider in a new tab. We never see your password.</p>
+            <button type="button" class="icon-btn primary" id="wizard-oauth-btn" onclick="wizardStartOAuth()">
+                <span id="wizard-oauth-label">Sign in</span>
+            </button>
+            <p class="text-small text-muted mt-05">
+                <a href="#" onclick="wizardSwitchToImap(); return false;">Or sign in with an app password instead →</a>
+            </p>
+        </div>
+
+        <div id="wizard-imap-block">
+            <div>
+                <label for="email_address">Email address</label>
+                <input type="email" id="email_address" name="email_address"
+                    placeholder="user@example.com" required autocomplete="email"
+                    onblur="autoDetectProvider()"
+                    value="{{ prefill.email if prefill else '' }}">
+            </div>
+            <div id="password-section">
+                <label for="credentials">Password</label>
+                <div style="position:relative">
+                    <input type="password" id="credentials" name="credentials" required autocomplete="current-password">
+                    <button type="button" class="pass-toggle" onclick="togglePasswordVisibility()" aria-label="Toggle password visibility">
+                        <i data-lucide="eye" class="icon-md" id="pass-toggle-icon"></i>
+                    </button>
+                </div>
+                <small class="text-muted">For Gmail, iCloud, Yahoo, and most providers, use an <strong>app password</strong>, not your normal one. <a href="https://support.google.com/accounts/answer/185833" target="_blank" rel="noopener">How to create one</a></small>
+            </div>
+
+            <details id="server-settings">
+                <summary id="server-settings-label"><i data-lucide="server" class="icon-md icon-inline"></i><strong>Server settings</strong></summary>
+                <div class="grid-2 mt-1">
+                    <div>
+                        <label for="imap_host">IMAP host</label>
+                        <input type="text" id="imap_host" name="imap_host" placeholder="imap.example.com" required>
+                    </div>
+                    <div>
+                        <label for="imap_port">Port</label>
+                        <input type="number" id="imap_port" name="imap_port" value="993">
+                    </div>
+                </div>
+                <div class="grid-2">
+                    <div>
+                        <label for="tls_type">Security</label>
+                        <select id="tls_type" name="tls_type">
+                            <option value="IMAPS" selected>SSL/TLS</option>
+                            <option value="STARTTLS">STARTTLS</option>
+                            <option value="None">None (insecure)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="auth_mechs_select">Auth mechanism</label>
+                        <select id="auth_mechs_select" onchange="document.getElementById('auth_mechs').value = this.value">
+                            <option value="">Auto (recommended)</option>
+                            <option value="PLAIN">PLAIN</option>
+                            <option value="LOGIN">LOGIN</option>
+                            <option value="CRAM-MD5">CRAM-MD5</option>
+                        </select>
+                        <input type="hidden" id="auth_mechs" name="auth_mechs" value="">
+                    </div>
+                </div>
+                {% if selectable_stores %}
+                <div>
+                    <label for="store_id">Mail store</label>
+                    <select id="store_id" name="store_id">
+                        {% for s in selectable_stores %}
+                        <option value="{{ s.id }}" {% if s.id == store.id %}selected{% endif %}>{{ s.name }} ({{ s.path }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+                <div class="mt-05">
+                    <a href="#" id="test-without-saving" class="text-small" onclick="testWithoutSaving(); return false;">
+                        <i data-lucide="check-circle" class="icon-sm icon-inline"></i>Test connection
+                    </a>
+                    <span id="check-result" class="text-small"></span>
+                </div>
+            </details>
+        </div>
+
+        <div class="wizard-nav mt-1">
+            <button type="button" class="icon-btn" onclick="wizardGoTo(1)">← Back</button>
+            <button type="button" class="icon-btn primary" id="wizard-step2-next" onclick="wizardStep2Next()">Continue →</button>
+        </div>
+    </section>
+
+    {# ── Step 3: Confirm + name ── #}
+    <section class="wizard-pane" id="wizard-pane-3">
+        <h3 class="mt-1">Almost there</h3>
+        <p class="text-muted text-small">Pick a nickname so you can recognise this mailbox in the list.</p>
+
+        <div class="confirm-summary mt-1">
+            <strong>Provider:</strong> <span id="wizard-summary-provider">—</span><br>
+            <strong>Email:</strong> <span id="wizard-summary-email">—</span>
+        </div>
+
+        <div class="mt-1">
+            <label for="name">Nickname</label>
+            <input type="text" id="name" name="name" placeholder="Personal Gmail" required>
+        </div>
+
+        <div class="wizard-nav mt-1">
+            <button type="button" class="icon-btn" onclick="wizardGoTo(2)">← Back</button>
+            <button type="submit" class="icon-btn primary" id="submit-btn">
+                <i data-lucide="plus" class="icon-md icon-inline" id="submit-icon"></i>
+                <span id="submit-text">Connect mailbox</span>
+            </button>
+        </div>
+    </section>
+
+    {# Hidden form state aux #}
+    <div id="form-errors"></div>
+</form>
+
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/account-form.js"></script>
+<script src="/static/js/account-wizard.js"></script>
+{% endblock %}
