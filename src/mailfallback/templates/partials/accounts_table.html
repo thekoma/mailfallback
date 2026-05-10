@@ -84,8 +84,8 @@
                 </span>
             </td>
             <td>
-                {% if account.backups %}
-                    {% set bc = account.backups[0] %}
+                {% if account.backup_policies %}
+                    {% set bc = account.backup_policies[0] %}
                     {% if bc.last_successful_run_at %}
                     <span class="stats-pill" title="Last back-up to {{ bc.destination.name }}">
                         <span class="stats-dot stats-dot-ok"></span>

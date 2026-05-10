@@ -3,10 +3,10 @@
 
 from mailfallback.models import (
     Account,
-    AccountBackup,
     BackendType,
-    BackupDestination,
+    BackupPolicy,
     BackupStatus,
+    Repository,
     UserRole,
 )
 from mailfallback.services.user_service import create_user
@@ -45,14 +45,14 @@ def test_dashboard_populated_renders_chain_hero(client, db_session, default_stor
     from mailfallback.services.account_service import assign_owner
 
     assign_owner(db_session, account.id, admin.id)
-    dest = BackupDestination(
+    dest = Repository(
         name="rustfs",
         backend_type=BackendType.s3,
         restic_password="encrypted",  # pragma: allowlist secret
     )
     db_session.add(dest)
     db_session.flush()
-    backup = AccountBackup(
+    backup = BackupPolicy(
         account_id=account.id,
         destination_id=dest.id,
         last_snapshot_count=7,

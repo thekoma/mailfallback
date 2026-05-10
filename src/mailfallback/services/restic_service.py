@@ -6,7 +6,7 @@ import os
 import subprocess
 
 from mailfallback.config import settings
-from mailfallback.models import BackupDestination
+from mailfallback.models import Repository
 from mailfallback.security import decrypt_credentials
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ _RETENTION_PRESETS: dict[str, tuple[int, int, int]] = {
 }
 
 
-def build_repo_url(destination: BackupDestination, account_id: str) -> str:
+def build_repo_url(destination: Repository, account_id: str) -> str:
     """Build the restic repository URL for a given destination and account."""
     if destination.backend_type.value == "s3":
         endpoint = decrypt_credentials(destination.s3_endpoint, settings.secret_key)
@@ -31,7 +31,7 @@ def build_repo_url(destination: BackupDestination, account_id: str) -> str:
     )
 
 
-def build_env(destination: BackupDestination, account_id: str) -> dict[str, str]:
+def build_env(destination: Repository, account_id: str) -> dict[str, str]:
     """Build environment variables dict for restic subprocess calls."""
     env: dict[str, str] = {
         "RESTIC_REPOSITORY": build_repo_url(destination, account_id),
@@ -84,11 +84,11 @@ def _run_restic(
     return subprocess.run(cmd, capture_output=True, text=True, env=full_env)
 
 
-def _is_insecure(destination: BackupDestination) -> bool:
+def _is_insecure(destination: Repository) -> bool:
     return getattr(destination, "insecure_tls", False)
 
 
-def test_destination(destination: BackupDestination) -> dict:
+def test_destination(destination: Repository) -> dict:
     """Test connectivity to a backup destination. Returns {ok: bool, error: str}."""
     test_id = "__mfb_connection_test__"
     env = build_env(destination, test_id)
@@ -101,7 +101,7 @@ def test_destination(destination: BackupDestination) -> dict:
     return {"ok": False, "error": result.stderr.strip()[:200]}
 
 
-def init_repo(destination: BackupDestination, account_id: str) -> bool:
+def init_repo(destination: Repository, account_id: str) -> bool:
     """Initialize a restic repository. Returns True if init succeeded or repo exists."""
     env = build_env(destination, account_id)
     result = _run_restic(["init"], env, _is_insecure(destination))
@@ -116,7 +116,7 @@ def init_repo(destination: BackupDestination, account_id: str) -> bool:
     return False
 
 
-def run_backup(destination: BackupDestination, account_id: str, maildir_path: str) -> dict:
+def run_backup(destination: Repository, account_id: str, maildir_path: str) -> dict:
     """Run a restic backup of the maildir path. Returns parsed JSON output."""
     env = build_env(destination, account_id)
     result = _run_restic(["backup", "--json", maildir_path], env, _is_insecure(destination))
@@ -135,7 +135,7 @@ def run_backup(destination: BackupDestination, account_id: str, maildir_path: st
     return summary
 
 
-def list_snapshots(destination: BackupDestination, account_id: str) -> list[dict]:
+def list_snapshots(destination: Repository, account_id: str) -> list[dict]:
     """List snapshots in the restic repository, newest first."""
     env = build_env(destination, account_id)
     result = _run_restic(["snapshots", "--json"], env, _is_insecure(destination))
@@ -150,7 +150,7 @@ def list_snapshots(destination: BackupDestination, account_id: str) -> list[dict
 
 
 def restore_snapshot(
-    destination: BackupDestination,
+    destination: Repository,
     account_id: str,
     snapshot_id: str,
     target_path: str,
@@ -168,7 +168,7 @@ def restore_snapshot(
 
 
 def apply_retention(
-    destination: BackupDestination,
+    destination: Repository,
     account_id: str,
     preset: str,
     keep_daily: int | None = None,
@@ -186,7 +186,7 @@ def apply_retention(
     return {"pruned": True, "output": result.stdout}
 
 
-def forget_all(destination: BackupDestination, account_id: str) -> bool:
+def forget_all(destination: Repository, account_id: str) -> bool:
     """Delete all snapshots from the repository."""
     env = build_env(destination, account_id)
     # First list snapshots to get their IDs

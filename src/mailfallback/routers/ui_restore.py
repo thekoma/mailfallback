@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from mailfallback.dependencies import get_db
-from mailfallback.models import AccountBackup, JobStatus, UserRole
+from mailfallback.models import BackupPolicy, JobStatus, UserRole
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import decrypt_credentials
 from mailfallback.services.account_service import get_account, get_accounts_for_user
@@ -78,9 +78,9 @@ def recover_page(request: Request, db: Session = Depends(get_db)):
     accounts = get_accounts_for_user(db, user)
     account_ids = {a.id for a in accounts}
     backups = (
-        db.query(AccountBackup)
-        .filter(AccountBackup.account_id.in_(account_ids))
-        .filter(AccountBackup.last_snapshot_count > 0)
+        db.query(BackupPolicy)
+        .filter(BackupPolicy.account_id.in_(account_ids))
+        .filter(BackupPolicy.last_snapshot_count > 0)
         .all()
     )
     accounts_by_id = {a.id: a for a in accounts}

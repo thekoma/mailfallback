@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
-from mailfallback.models import Account, AccountBackup, BackupDestination
+from mailfallback.models import Account, BackupPolicy, Repository
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import encrypt_credentials
 from mailfallback.services.account_service import assign_owner, get_account
@@ -33,20 +33,20 @@ def admin_backup_page(request: Request, db: Session = Depends(get_db)):
 
     from sqlalchemy import func
 
-    destinations = db.query(BackupDestination).all()
+    destinations = db.query(Repository).all()
     # Wave 4: per-Repository status quartet (mailbox count, snapshot count,
     # last successful back-up, derived health). Read from cached
-    # AccountBackup columns; never shells restic.
+    # BackupPolicy columns; never shells restic.
     dest_stats = {}
     fresh_cutoff = datetime.now(UTC) - timedelta(days=2)
     for dest in destinations:
         agg = (
             db.query(
-                func.count(AccountBackup.id).label("policies"),
-                func.coalesce(func.sum(AccountBackup.last_snapshot_count), 0).label("snapshots"),
-                func.max(AccountBackup.last_successful_run_at).label("last_success"),
+                func.count(BackupPolicy.id).label("policies"),
+                func.coalesce(func.sum(BackupPolicy.last_snapshot_count), 0).label("snapshots"),
+                func.max(BackupPolicy.last_successful_run_at).label("last_success"),
             )
-            .filter(AccountBackup.destination_id == dest.id)
+            .filter(BackupPolicy.destination_id == dest.id)
             .one()
         )
         last_success = agg.last_success
@@ -101,7 +101,7 @@ async def admin_create_backup_destination(request: Request, db: Session = Depend
 
     insecure_tls = bool(form.get("insecure_tls"))
 
-    dest = BackupDestination(
+    dest = Repository(
         name=name,
         backend_type=backend_type,
         restic_password=encrypt_credentials(restic_password, settings.secret_key),
@@ -162,14 +162,14 @@ async def admin_delete_backup_destination(
     if not user or user.role.value != "admin":
         return RedirectResponse("/", status_code=303)
 
-    ref_count = db.query(AccountBackup).filter(AccountBackup.destination_id == dest_id).count()
+    ref_count = db.query(BackupPolicy).filter(BackupPolicy.destination_id == dest_id).count()
     if ref_count > 0:
         request.session["flash_error"] = (
             f"Cannot delete: {ref_count} account(s) still use this destination"
         )
         return RedirectResponse("/admin/backup", status_code=303)
 
-    dest = db.query(BackupDestination).filter(BackupDestination.id == dest_id).first()
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
     dest_name = dest.name if dest else dest_id
     if dest:
         db.delete(dest)
@@ -196,7 +196,7 @@ async def admin_edit_backup_destination(
     if not user or user.role.value != "admin":
         return RedirectResponse("/", status_code=303)
 
-    dest = db.query(BackupDestination).filter(BackupDestination.id == dest_id).first()
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
     if not dest:
         request.session["flash_error"] = "Destination not found"
         return RedirectResponse("/admin/backup", status_code=303)
@@ -245,7 +245,7 @@ async def admin_test_backup_destination(
     if not user or user.role.value != "admin":
         return RedirectResponse("/", status_code=303)
 
-    dest = db.query(BackupDestination).filter(BackupDestination.id == dest_id).first()
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
     if not dest:
         request.session["flash_error"] = "Destination not found"
         return RedirectResponse("/admin/backup", status_code=303)
@@ -285,18 +285,18 @@ async def account_backup_configure(
         request.session["flash_error"] = "Destination is required"
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
-    dest = db.query(BackupDestination).filter(BackupDestination.id == destination_id).first()
+    dest = db.query(Repository).filter(Repository.id == destination_id).first()
     if not dest:
         request.session["flash_error"] = "Destination not found"
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
-    backup = db.query(AccountBackup).filter(AccountBackup.account_id == account_id).first()
+    backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
     if backup:
         backup.destination_id = destination_id
         backup.schedule = schedule
         backup.retention_preset = retention_preset
     else:
-        backup = AccountBackup(
+        backup = BackupPolicy(
             account_id=account_id,
             destination_id=destination_id,
             schedule=schedule,
@@ -328,7 +328,7 @@ async def account_backup_now(account_id: str, request: Request, db: Session = De
     if not account:
         return RedirectResponse("/", status_code=303)
 
-    backup = db.query(AccountBackup).filter(AccountBackup.account_id == account_id).first()
+    backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
     if not backup:
         request.session["flash_error"] = "No off-site backup configured for this account"
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
@@ -360,7 +360,7 @@ def account_backup_snapshots(account_id: str, request: Request, db: Session = De
     if not account:
         return HTMLResponse("")
 
-    backup = db.query(AccountBackup).filter(AccountBackup.account_id == account_id).first()
+    backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
     if not backup:
         return HTMLResponse('<p class="text-muted">No backup configured.</p>')
 
@@ -397,7 +397,7 @@ async def account_backup_restore(
     if not account:
         return RedirectResponse("/", status_code=303)
 
-    backup = db.query(AccountBackup).filter(AccountBackup.account_id == account_id).first()
+    backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
     if not backup:
         request.session["flash_error"] = "No off-site backup configured for this account"
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
