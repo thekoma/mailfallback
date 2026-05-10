@@ -156,85 +156,130 @@
 
 <hr>
 
-<h3><i data-lucide="plus-circle" class="icon-lg icon-inline"></i>Add Repository</h3>
-<form method="post" action="/admin/backup/new" id="backup-dest-form">
-    <div class="grid-2">
-        <div>
-            <label for="dest_name">Name</label>
-            <input type="text" id="dest_name" name="name" placeholder="Offsite S3 repository" required>
-        </div>
-        <div>
-            <label for="backend_type">Backend Type</label>
-            <select id="backend_type" name="backend_type" onchange="toggleBackupFields()">
-                <option value="s3">S3</option>
-                <option value="local">Local Path</option>
-            </select>
-        </div>
-    </div>
+{# ── Add Repository — 3-step wizard ── #}
+<details id="repo-wizard-details" class="mt-1">
+    <summary><i data-lucide="plus-circle" class="icon-lg icon-inline"></i><strong>Add Repository</strong></summary>
 
-    <div id="s3-fields">
-        <div class="grid-2">
-            <div>
-                <label for="s3_endpoint">S3 Endpoint</label>
-                <input type="text" id="s3_endpoint" name="s3_endpoint" placeholder="https://s3.amazonaws.com">
-            </div>
-            <div>
-                <label for="s3_bucket">S3 Bucket</label>
-                <input type="text" id="s3_bucket" name="s3_bucket" placeholder="my-backup-bucket">
-            </div>
-            <div>
-                <label for="s3_access_key">Access Key</label>
-                <input type="password" id="s3_access_key" name="s3_access_key" placeholder="AKIA...">
-            </div>
-            <div>
-                <label for="s3_secret_key">Secret Key</label>
-                <input type="password" id="s3_secret_key" name="s3_secret_key" placeholder="secret">
-            </div>
-        </div>
-    </div>
+    <ol class="wizard-steps mt-1" aria-label="Add Repository wizard">
+        <li class="wizard-step active" data-step="1"><span class="wizard-step-num">1</span>Backend</li>
+        <li class="wizard-step" data-step="2"><span class="wizard-step-num">2</span>Connection</li>
+        <li class="wizard-step" data-step="3"><span class="wizard-step-num">3</span>Encryption</li>
+    </ol>
 
-    <div id="local-fields" class="hidden">
-        <div>
-            <label for="local_path">Local Path</label>
-            <input type="text" id="local_path" name="local_path" placeholder="/backups/restic">
-        </div>
-    </div>
+    <form method="post" action="/admin/backup/new" id="repo-wizard-form">
+        <input type="hidden" id="backend_type" name="backend_type" value="s3">
 
-    <div class="grid-2-auto mt-05">
-        <div>
-            <label for="restic_password">Restic Password</label>
-            <input type="password" id="restic_password" name="restic_password" placeholder="Repository encryption password" required>
-        </div>
-        <div>
-            <label>
-                <input type="checkbox" name="insecure_tls" value="1"
-                       onchange="this.closest('form').querySelector('.tls-warning').hidden = !this.checked">
-                <strong>Skip TLS certificate verification</strong>
-                <small class="text-muted">— self-signed CA only. Production deployments must use a trusted certificate.</small>
-            </label>
-            <div class="alert-error tls-warning mt-025" role="alert" hidden>
-                <i data-lucide="shield-alert" class="icon-md icon-inline"></i>
-                <strong>Warning:</strong> certificate verification is disabled. The connection is encrypted but the server's identity is NOT verified.
+        {# ── Step 1: Backend type ── #}
+        <section class="wizard-pane active" id="repo-pane-1">
+            <h3 class="mt-1">Where will snapshots live?</h3>
+            <p class="text-muted text-small">A Repository is an off-site, encrypted store. Pick the backend that matches the storage you have.</p>
+            <div class="provider-grid mt-1">
+                <button type="button" class="provider-card" data-backend="s3" onclick="repoWizardPickBackend(this)">
+                    <i data-lucide="cloud" class="icon-lg"></i>
+                    <strong>S3-compatible</strong>
+                    <small class="text-muted">AWS S3, MinIO, Backblaze B2, RustFS, etc.</small>
+                </button>
+                <button type="button" class="provider-card" data-backend="local" onclick="repoWizardPickBackend(this)">
+                    <i data-lucide="hard-drive" class="icon-lg"></i>
+                    <strong>Local path</strong>
+                    <small class="text-muted">A filesystem path on this host (typically a mounted volume).</small>
+                </button>
             </div>
-        </div>
-        <button type="submit" class="icon-btn primary">
-            <i data-lucide="plus-circle" class="icon-md"></i> Add
-        </button>
-    </div>
-</form>
+        </section>
 
-<script>
-function toggleBackupFields() {
-    var bt = document.getElementById('backend_type').value;
-    var s3 = document.getElementById('s3-fields');
-    var local = document.getElementById('local-fields');
-    if (bt === 's3') {
-        s3.classList.remove('hidden');
-        local.classList.add('hidden');
-    } else {
-        s3.classList.add('hidden');
-        local.classList.remove('hidden');
-    }
-}
-</script>
+        {# ── Step 2: Connection ── #}
+        <section class="wizard-pane" id="repo-pane-2">
+            <h3 class="mt-1" id="repo-step2-title">Connection</h3>
+
+            <div id="repo-s3-block">
+                <div class="grid-2 mt-1">
+                    <div>
+                        <label for="s3_endpoint">S3 Endpoint</label>
+                        <input type="text" id="s3_endpoint" name="s3_endpoint" placeholder="https://s3.amazonaws.com">
+                    </div>
+                    <div>
+                        <label for="s3_bucket">S3 Bucket</label>
+                        <input type="text" id="s3_bucket" name="s3_bucket" placeholder="mailfallback-snapshots">
+                    </div>
+                    <div>
+                        <label for="s3_access_key">Access Key</label>
+                        <input type="password" id="s3_access_key" name="s3_access_key" placeholder="AKIA...">
+                    </div>
+                    <div>
+                        <label for="s3_secret_key">Secret Key</label>
+                        <input type="password" id="s3_secret_key" name="s3_secret_key" placeholder="secret">
+                    </div>
+                </div>
+                <p class="text-muted text-small mt-05">
+                    Each mailbox's snapshots are isolated under a per-account path inside the bucket.
+                </p>
+            </div>
+
+            <div id="repo-local-block" class="hidden">
+                <div class="mt-1">
+                    <label for="local_path">Local path</label>
+                    <input type="text" id="local_path" name="local_path" placeholder="/backups/restic">
+                </div>
+                <p class="text-muted text-small mt-05">
+                    Must exist and be writable inside the MailFallBack container. Typically a mounted volume.
+                </p>
+            </div>
+
+            <div class="wizard-nav mt-1">
+                <button type="button" class="icon-btn" onclick="repoWizardGoTo(1)">← Back</button>
+                <button type="button" class="icon-btn primary" onclick="repoWizardStep2Next()">Continue →</button>
+            </div>
+        </section>
+
+        {# ── Step 3: Encryption + name ── #}
+        <section class="wizard-pane" id="repo-pane-3">
+            <h3 class="mt-1">Encrypt and name</h3>
+            <p class="text-muted text-small">
+                The Restic password encrypts the entire Repository. <strong>Treat it as a master key</strong> — losing it means snapshots are unrecoverable. See
+                <a href="/docs/admin-guide/disaster-recovery/" target="_blank" rel="noopener">disaster recovery</a>.
+            </p>
+
+            <div class="grid-2 mt-1">
+                <div>
+                    <label for="dest_name">Name</label>
+                    <input type="text" id="dest_name" name="name" placeholder="My Repository" required>
+                </div>
+                <div>
+                    <label for="restic_password">Restic password</label>
+                    <input type="password" id="restic_password" name="restic_password" placeholder="strong passphrase" required>
+                </div>
+            </div>
+
+            <div class="mt-1">
+                <label>
+                    <input type="checkbox" name="insecure_tls" value="1"
+                           onchange="this.closest('form').querySelector('.tls-warning').hidden = !this.checked">
+                    <strong>Skip TLS certificate verification</strong>
+                    <small class="text-muted">— self-signed CA only. Production deployments must use a trusted certificate.</small>
+                </label>
+                <div class="alert-error tls-warning mt-025" role="alert" hidden>
+                    <i data-lucide="shield-alert" class="icon-md icon-inline"></i>
+                    <strong>Warning:</strong> certificate verification is disabled. The connection is encrypted but the server's identity is NOT verified.
+                </div>
+            </div>
+
+            <div class="confirm-summary mt-1">
+                <strong>Backend:</strong> <span id="repo-summary-backend">—</span><br>
+                <strong>Target:</strong> <span id="repo-summary-target">—</span>
+            </div>
+
+            <div class="wizard-nav mt-1">
+                <button type="button" class="icon-btn" onclick="repoWizardGoTo(2)">← Back</button>
+                <button type="submit" class="icon-btn primary">
+                    <i data-lucide="plus-circle" class="icon-md"></i> Create Repository
+                </button>
+            </div>
+            <p class="text-muted text-small mt-05">
+                We'll run <code>restic init</code> against this Repository. If it fails (bad credentials, unreachable host, etc.), nothing is saved.
+            </p>
+        </section>
+    </form>
+</details>
+
+<script src="/static/js/repository-wizard.js"></script>
 {% endblock %}
