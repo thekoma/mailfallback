@@ -120,3 +120,67 @@ def test_force_unmount_delegates_to_delete_recovery(mock_recovery, db_session, a
     mount_service.force_unmount(db_session, rec.id)
 
     mock_recovery.delete_recovery.assert_called_once_with(db_session, rec.id)
+
+
+@patch("mailfallback.services.mount_service.recovery_service")
+def test_cleanup_idle_mounts_removes_expired_ephemeral(
+    mock_recovery, db_session, account_with_backup
+):
+    expired = Recovery(
+        account_id=account_with_backup.id,
+        snapshot_id="old",
+        restore_path="/tmp/r",
+        status=RecoveryStatus.ready,
+        kind=RecoveryKind.ephemeral,
+        ttl_minutes=30,
+        last_accessed_at=datetime.now(UTC) - timedelta(minutes=45),
+    )
+    db_session.add(expired)
+    db_session.commit()
+
+    removed = mount_service.cleanup_idle_mounts(db_session)
+
+    assert removed == 1
+    mock_recovery.delete_recovery.assert_called_once_with(db_session, expired.id)
+
+
+@patch("mailfallback.services.mount_service.recovery_service")
+def test_cleanup_idle_mounts_keeps_recent_ephemeral(mock_recovery, db_session, account_with_backup):
+    fresh = Recovery(
+        account_id=account_with_backup.id,
+        snapshot_id="fresh",
+        restore_path="/tmp/r",
+        status=RecoveryStatus.ready,
+        kind=RecoveryKind.ephemeral,
+        ttl_minutes=30,
+        last_accessed_at=datetime.now(UTC) - timedelta(minutes=5),
+    )
+    db_session.add(fresh)
+    db_session.commit()
+
+    removed = mount_service.cleanup_idle_mounts(db_session)
+
+    assert removed == 0
+    mock_recovery.delete_recovery.assert_not_called()
+
+
+@patch("mailfallback.services.mount_service.recovery_service")
+def test_cleanup_idle_mounts_keeps_persistent_even_if_old(
+    mock_recovery, db_session, account_with_backup
+):
+    persistent = Recovery(
+        account_id=account_with_backup.id,
+        snapshot_id="forever",
+        restore_path="/tmp/r",
+        status=RecoveryStatus.ready,
+        kind=RecoveryKind.persistent,
+        ttl_minutes=None,
+        last_accessed_at=datetime.now(UTC) - timedelta(days=30),
+    )
+    db_session.add(persistent)
+    db_session.commit()
+
+    removed = mount_service.cleanup_idle_mounts(db_session)
+
+    assert removed == 0
+    mock_recovery.delete_recovery.assert_not_called()

@@ -14,7 +14,7 @@ directly (or ensure_mounted with kind=persistent).
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -80,3 +80,35 @@ def force_unmount(db: Session, recovery_id: str) -> None:
     Idempotent: succeeds silently if the Recovery is already gone.
     """
     recovery_service.delete_recovery(db, recovery_id)
+
+
+def cleanup_idle_mounts(db: Session) -> int:
+    """Remove ephemeral Recoveries whose last_accessed_at is older than ttl.
+
+    Returns the number of recoveries removed.
+    """
+    now = datetime.now(UTC)
+    candidates = (
+        db.query(Recovery)
+        .filter(
+            Recovery.kind == RecoveryKind.ephemeral,
+            Recovery.ttl_minutes.is_not(None),
+        )
+        .all()
+    )
+    removed = 0
+    for rec in candidates:
+        if rec.last_accessed_at is None:
+            continue
+        cutoff = rec.last_accessed_at + timedelta(minutes=rec.ttl_minutes)
+        # SQLite drops tzinfo on DateTime(timezone=True) round-trips while
+        # PostgreSQL preserves it. Normalise both sides to naive UTC for the
+        # comparison so tests on SQLite and prod on PostgreSQL behave the same.
+        cutoff_cmp = cutoff.replace(tzinfo=None) if cutoff.tzinfo else cutoff
+        now_cmp = now.replace(tzinfo=None)
+        if cutoff_cmp < now_cmp:
+            recovery_service.delete_recovery(db, rec.id)
+            removed += 1
+    if removed:
+        logger.info("cleanup_idle_mounts: removed %d ephemeral recoveries", removed)
+    return removed
