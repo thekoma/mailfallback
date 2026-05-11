@@ -33,6 +33,10 @@ from mailfallback.services import restic_service
 
 logger = logging.getLogger(__name__)
 
+# Maximum rows touched per transaction during the live Maildir walk.
+# Bounded so big mailboxes (150k+ messages) don't lock the index for minutes.
+BATCH_SIZE = 1000
+
 
 def _hash_message_id(message_id: str) -> bytes:
     """SHA-1 of the bare Message-Id (without angle brackets)."""
@@ -140,6 +144,9 @@ def upsert_message_set(db: Session, account_id: str) -> int:
                     )
                 )
             touched += 1
+            # Bound transaction size for big mailboxes (150k+ messages)
+            if touched % BATCH_SIZE == 0:
+                db.commit()
         # Mark missing rows as deleted
         alive = (
             db.query(MailIndexMessage)
@@ -150,10 +157,14 @@ def upsert_message_set(db: Session, account_id: str) -> int:
             .all()
         )
         now = datetime.now(UTC)
+        deleted_in_batch = 0
         for row in alive:
             if row.message_id_hash not in seen_hashes:
                 row.deleted_at = now
                 touched += 1
+                deleted_in_batch += 1
+                if deleted_in_batch % BATCH_SIZE == 0:
+                    db.commit()
         rs.state = "idle"
         rs.last_indexed_at = now
         rs.last_error = None

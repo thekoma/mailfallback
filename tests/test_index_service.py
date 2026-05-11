@@ -183,3 +183,48 @@ def test_backfill_snapshots_sets_bits_for_matched_filenames(
 
     bits = db_session.query(SnapshotMessage).filter(SnapshotMessage.snapshot_id == "snapXXXX").all()
     assert len(bits) == 1
+
+
+def test_upsert_message_set_batched_commits(db_session, default_store, tmp_path, monkeypatch):
+    """Verify the walk commits in batches (not one giant transaction).
+
+    We monkey-patch BATCH_SIZE to a small value, create more files than that,
+    and assert db.commit() was called multiple times.
+    """
+    from mailfallback.models import Account
+    from mailfallback.services import index_service
+
+    # Tiny batch size for the test
+    monkeypatch.setattr(index_service, "BATCH_SIZE", 2)
+
+    acct = Account(
+        name="a",
+        store=default_store,
+        maildir_path=str(tmp_path),
+        imap_host="imap.example.com",
+    )
+    db_session.add(acct)
+    db_session.commit()
+
+    inbox_cur = tmp_path / "INBOX" / "cur"
+    inbox_cur.mkdir(parents=True)
+    # Create 5 mails — with BATCH_SIZE=2 we expect ≥2 commits during the walk
+    for i in range(5):
+        (inbox_cur / f"{i}.host:2,").write_bytes(
+            f"From: a{i}@x\r\nSubject: s{i}\r\nMessage-Id: <{i}@h>\r\n\r\n".encode()
+        )
+
+    commit_count = [0]
+    original_commit = db_session.commit
+
+    def counting_commit():
+        commit_count[0] += 1
+        original_commit()
+
+    monkeypatch.setattr(db_session, "commit", counting_commit)
+
+    n = index_service.upsert_message_set(db_session, acct.id)
+    assert n == 5
+    # 5 messages / 2 per batch = 3 batches → at least 3 mid-walk commits
+    # plus the final commits in the success path. We just assert >2.
+    assert commit_count[0] >= 3
