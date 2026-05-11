@@ -28,11 +28,23 @@
       </select>
     </label>
 
-    <label>Time range
-      <input type="date" id="ws-range-start" name="range_start">
-      <input type="date" id="ws-range-end" name="range_end">
-    </label>
-    <p class="text-muted text-xsmall" id="ws-range-cost">— snapshots in range</p>
+    <div class="ws-range-block">
+      <label class="text-small">Time range</label>
+      <div class="ws-range-labels">
+        <span id="ws-range-start-label">7d ago</span>
+        <span id="ws-range-end-label">today</span>
+      </div>
+      <div class="ws-range-slider">
+        <input type="range" id="ws-range-start-days" min="0" max="365" value="7" step="1" class="ws-range-input">
+        <input type="range" id="ws-range-end-days" min="0" max="365" value="0" step="1" class="ws-range-input">
+        <div class="ws-range-track"></div>
+        <div class="ws-range-fill" id="ws-range-fill"></div>
+      </div>
+      {# Hidden ISO date fields populated by JS — preserves existing JS contract #}
+      <input type="hidden" id="ws-range-start" name="range_start">
+      <input type="hidden" id="ws-range-end" name="range_end">
+      <p class="text-muted text-xsmall" id="ws-range-cost">— snapshots in range</p>
+    </div>
 
     <fieldset>
       <legend>Sources</legend>
