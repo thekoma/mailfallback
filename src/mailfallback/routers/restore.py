@@ -15,6 +15,7 @@ from mailfallback.services import account_service, mount_service, restic_service
 from mailfallback.services.audit_service import log_action
 from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
 from mailfallback.services.imap_check import connect_imap
+from mailfallback.services.recovery_service import namespace_prefix as recovery_namespace_prefix
 from mailfallback.services.restore_service import (
     cancel_restore_job,
     create_restore_job,
@@ -559,11 +560,9 @@ def workspace_search(
             continue
         # Namespace label MUST match the prefix Dovecot publishes in
         # routers/dovecot.py for this Recovery — otherwise SELECT fails on
-        # the temp IMAP user. Keep the two formatters in sync.
-        short = (rec.snapshot_id or rec.id)[:8]
-        label = account.name
-        ts = rec.restored_at.strftime("%Y-%m-%d") if rec.restored_at else "snapshot"
-        ns_label = f"Recovery - {label} ({ts}) [{short}]/"
+        # the temp IMAP user. Both call recovery_namespace_prefix as the
+        # single source of truth.
+        ns_label = recovery_namespace_prefix(rec, account.name)
         mounted.append((snap_id, ns_label))
 
     # Resolve which IMAP fields to search across. UI defaults to Subject only;
