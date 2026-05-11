@@ -581,6 +581,71 @@ def workspace_search(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """DEPRECATED — use POST /api/restore/search.
+
+    Translates the legacy single-account request to the new search_service
+    call and returns the legacy {results, mounted_snapshots} shape so the
+    pre-cycle-2 UI keeps working. Setting MAILFALLBACK_USE_INDEX_SEARCH=false
+    falls back to the legacy mount-based path.
+    """
+    if not settings.use_index_search:
+        return _legacy_mount_workspace_search(req, request, user, db)
+
+    # Build criteria fields list as before (subject/from/to/body)
+    criteria: list[str] = []
+    if req.search_subject:
+        criteria.append("SUBJECT")
+    if req.search_from:
+        criteria.append("FROM")
+    if req.search_to:
+        criteria.append("TO")
+    body = req.search_body or "BODY" in criteria
+
+    new_result = search_service.search_messages(
+        db,
+        user=user,
+        query=req.query,
+        account_ids=[req.account_id],
+        range_start=req.range_start,
+        range_end=req.range_end,
+        include_deleted=req.include_snapshots,
+        body=body,
+        page=1,
+        page_size=200,
+    )
+    legacy_results = []
+    for r in new_result["results"]:
+        if r["alive_in_live"]:
+            primary_source = "live"
+        elif r["snapshots"]:
+            primary_source = r["snapshots"][0]
+        else:
+            primary_source = "?"
+        legacy_results.append(
+            {
+                "message_id": r["message_id"],
+                "subject": r["subject"],
+                "from": r["from_addr"] or "",
+                "folder": r["folder_path"],
+                "sources": (["live"] if r["alive_in_live"] else []) + r["snapshots"],
+                "locations": [
+                    {
+                        "source": primary_source,
+                        "namespace": "",
+                        "folder": r["folder_path"],
+                        "uid": None,  # legacy uid not available from index — restore via Message-Id
+                    }
+                ],
+            }
+        )
+    return {"results": legacy_results, "mounted_snapshots": []}
+
+
+def _legacy_mount_workspace_search(req, request, user, db):
+    """The pre-index-search implementation, kept behind the use_index_search=False
+    feature flag for fallback during rollout. Cycle-1 UI continues to work via
+    the dispatcher above.
+    """
     account = account_service.get_account(db, req.account_id, user)
     if not account:
         raise HTTPException(404, "account not found")

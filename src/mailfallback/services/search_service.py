@@ -78,10 +78,19 @@ def search_messages(
     q = db.query(MailIndexMessage).filter(MailIndexMessage.account_id.in_(scope))
     if not include_deleted:
         q = q.filter(MailIndexMessage.deleted_at.is_(None))
+    # NULL date_sent is treated as "unknown date" and kept in the result set
+    # for any range — otherwise messages whose Date: header didn't parse
+    # disappear from any date-filtered search. Discovered via T10's wrapper
+    # test: the workspace UI passes a wide year range and expects messages
+    # without a parsed date to still match.
     if range_start:
-        q = q.filter(MailIndexMessage.date_sent >= range_start)
+        q = q.filter(
+            (MailIndexMessage.date_sent >= range_start) | MailIndexMessage.date_sent.is_(None)
+        )
     if range_end:
-        q = q.filter(MailIndexMessage.date_sent <= range_end)
+        q = q.filter(
+            (MailIndexMessage.date_sent <= range_end) | MailIndexMessage.date_sent.is_(None)
+        )
     if snapshot_id:
         q = q.join(
             SnapshotMessage,

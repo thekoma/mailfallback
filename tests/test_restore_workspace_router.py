@@ -127,7 +127,14 @@ def test_workspace_search_dedup_by_message_id(
     db_session,
     default_store,
     login_user,
+    monkeypatch,
 ):
+    # Exercises the legacy mount-based path explicitly — flag OFF so the
+    # dispatcher routes to _legacy_mount_workspace_search.
+    from mailfallback.config import settings
+
+    monkeypatch.setattr(settings, "use_index_search", False)
+
     repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
     db_session.add(repo)
     acct = Account(
@@ -457,8 +464,20 @@ def test_list_namespace_folders_falls_back_when_list_fails():
 @patch("mailfallback.routers.restore._connect_dovecot_for_account")
 @patch("mailfallback.routers.restore.restic_service")
 def test_workspace_search_passes_ttl_override(
-    mock_restic, mock_connect, mock_mount, client, db_session, default_store, login_user
+    mock_restic,
+    mock_connect,
+    mock_mount,
+    client,
+    db_session,
+    default_store,
+    login_user,
+    monkeypatch,
 ):
+    # Exercises the legacy mount-based path explicitly — flag OFF.
+    from mailfallback.config import settings
+
+    monkeypatch.setattr(settings, "use_index_search", False)
+
     repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
     db_session.add(repo)
     acct = Account(
@@ -572,11 +591,25 @@ def test_workspace_snapshot_count(mock_restic, client, db_session, default_store
 @patch("mailfallback.routers.restore._connect_dovecot_for_account")
 @patch("mailfallback.routers.restore.restic_service")
 def test_workspace_search_uses_account_namespace_for_live_select(
-    mock_restic, mock_connect, mock_mount, client, db_session, default_store, login_user
+    mock_restic,
+    mock_connect,
+    mock_mount,
+    client,
+    db_session,
+    default_store,
+    login_user,
+    monkeypatch,
 ):
     """B5 regression: live SELECT must use the account's full namespace prefix,
     not bare 'INBOX'. Otherwise the dovecot SELECT fails silently and search
     returns 0 results even when matches exist."""
+    # Exercises the legacy mount-based path explicitly — flag OFF so the
+    # SELECT-namespace assertion is checked against the legacy implementation
+    # (the new wrapper does not call IMAP SELECT directly).
+    from mailfallback.config import settings
+
+    monkeypatch.setattr(settings, "use_index_search", False)
+
     repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
     db_session.add(repo)
     acct = Account(
@@ -689,3 +722,51 @@ def test_api_restore_search_endpoint(client, db_session, default_store, login_us
     body = resp.json()
     assert body["total"] == 1
     assert body["results"][0]["subject"] == "invoice from acme"
+
+
+def test_workspace_search_wrapper_uses_new_search_when_flag_on(
+    client, db_session, default_store, login_user, monkeypatch
+):
+    """With use_index_search=True, /workspace/search is a thin wrapper that
+    calls search_service and returns the legacy shape."""
+    from mailfallback.config import settings
+    from mailfallback.models import Account, MailIndexMessage
+
+    monkeypatch.setattr(settings, "use_index_search", True)
+
+    acct = Account(name="a", store=default_store, maildir_path="/x", imap_host="i")
+    db_session.add(acct)
+    db_session.flush()
+    acct.owners.append(login_user)
+    db_session.add(
+        MailIndexMessage(
+            account_id=acct.id,
+            message_id_hash=b"\x20" * 20,
+            message_id="<20@h>",
+            subject="alpha keyword",
+            folder_path="INBOX",
+            maildir_filename="1",
+        )
+    )
+    db_session.commit()
+
+    login = client.post("/api/auth/login", json={"username": "koma", "password": "x"})
+    assert login.status_code in (200, 303)
+
+    resp = client.post(
+        "/api/restore/workspace/search",
+        json={
+            "account_id": acct.id,
+            "query": "alpha",
+            "range_start": "2026-01-01T00:00:00Z",
+            "range_end": "2026-12-31T23:59:59Z",
+            "include_live": True,
+            "include_snapshots": True,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    # Legacy shape: {results: [...], mounted_snapshots: [...]}
+    assert "results" in body
+    assert "mounted_snapshots" in body
+    assert any(r["subject"] == "alpha keyword" for r in body["results"])
