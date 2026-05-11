@@ -67,13 +67,17 @@ function restoreWorkspace() {
       this._initCalendar();
       this.refreshIcons();
 
-      // Default range: last 7 days
+      // Default range: last 7 days. Set state DIRECTLY (don't rely on
+      // flatpickr's onChange firing during init — it doesn't always).
       const end = new Date();
       const start = new Date();
       start.setDate(start.getDate() - 7);
-      if (this._fp) this._fp.setDate([start, end], true);
+      this.rangeStart = start;
+      this.rangeEnd = end;
+      if (this._fp) this._fp.setDate([start, end], false);
 
       this.fetchSnapshotDates().then(() => this.updateRangeCost());
+      this.updateRangeCost();
     },
 
     _initCalendar() {
@@ -144,14 +148,16 @@ function restoreWorkspace() {
       const end = new Date();
       const start = new Date();
       start.setDate(start.getDate() - days);
-      if (this._fp) this._fp.setDate([start, end], true);
+      this.rangeStart = start;
+      this.rangeEnd = end;
+      if (this._fp) this._fp.setDate([start, end], false);
       this.results = [];
       this.selected = [];
       this.searched = false;
       this.statusText = '';
       this.refreshIcons();
       if (id === 'folder') this.loadFolders();
-      // updateRangeCost() will be called by flatpickr's onChange
+      this.updateRangeCost();
     },
 
     onAccountChange() {
