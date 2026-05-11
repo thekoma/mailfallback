@@ -382,17 +382,60 @@ def _fetch_message_header(conn, uid, folder_name: str = "") -> dict | None:
     return env
 
 
+def _list_namespace_folders(conn, namespace: str) -> list[str]:
+    """LIST all selectable folders under a namespace prefix.
+
+    Returns folder names WITHOUT the namespace prefix (so they can be
+    re-combined later: target = namespace + folder).
+
+    For the live namespace (prefix `Andrea ... [c260]/`) this returns
+    ["INBOX", "Sent", "Archive", "[Gmail]/All Mail", ...].
+    """
+    pattern = f'"{namespace}*"' if namespace else '"*"'
+    try:
+        typ, data = conn.list('""', pattern)
+    except Exception:
+        return ["INBOX"]
+    if typ != "OK" or not data:
+        return ["INBOX"]
+    folders: list[str] = []
+    for line_bytes in data:
+        if not line_bytes:
+            continue
+        decoded = line_bytes.decode() if isinstance(line_bytes, bytes) else line_bytes
+        # Skip non-selectable folders (parent placeholders like "[Gmail]").
+        if "\\Noselect" in decoded:
+            continue
+        # Parse name: response is like `(\HasChildren) "/" "namespace/folder"`
+        # Extract the last quoted string.
+        parts = decoded.rsplit('"', 2)
+        if len(parts) < 3:
+            continue
+        full_name = parts[-2]
+        if namespace and full_name.startswith(namespace):
+            folders.append(full_name[len(namespace) :])
+        else:
+            folders.append(full_name)
+    if not folders:
+        folders = ["INBOX"]
+    return folders
+
+
 def _search_namespace_for_query(
     conn,
     namespace: str,
     query: str,
-    folder: str = "INBOX",
     *,
+    folders: list[str] | None = None,
     criteria_fields: list[str] | None = None,
     type_filter: str = "all",
     search_body: bool = False,
 ) -> list[dict]:
-    """Run a Dovecot SEARCH on `namespace + folder` for `query`.
+    """Run a Dovecot SEARCH on each folder under `namespace` for `query`.
+
+    `folders`: explicit folder names (without namespace prefix). If None,
+    enumerate all selectable folders in the namespace via IMAP LIST. Tests
+    pass an explicit list to skip LIST mocking.
 
     `criteria_fields`: subset of {"SUBJECT", "FROM", "TO", "BODY"} to search
     across. The query is OR'd across the selected fields. Defaults to
@@ -408,46 +451,51 @@ def _search_namespace_for_query(
     Returns a list of dicts with: uid, subject, from, namespace, folder, message_id.
     Caller is responsible for the connection lifecycle.
     """
+    if folders is None:
+        folders = _list_namespace_folders(conn, namespace)
     if not criteria_fields:
         criteria_fields = ["SUBJECT"]
     # Honour the legacy search_body kwarg if BODY wasn't already requested.
     if search_body and "BODY" not in criteria_fields:
         criteria_fields = [*criteria_fields, "BODY"]
 
-    target = f"{namespace}{folder}" if namespace else folder
-    typ, _ = conn.select(f'"{target}"', readonly=True)
-    if typ != "OK":
-        return []
     quoted = _sanitize_imap_string(query)
     # Wrap in IMAP quoted-string so multi-word queries are passed as a single
     # token. _sanitize_imap_string strips ", \, and control chars, so the wrap
     # is safe against injection.
     quoted_arg = f'"{quoted}"'
-
-    # Build SEARCH args: [TYPE_MODIFIER?] [OR x (n-1)] [FIELD QUOTED]*
-    args: list[str] = []
     type_map = {"unseen": "UNSEEN", "flagged": "FLAGGED", "unanswered": "UNANSWERED"}
-    if type_filter in type_map:
-        args.append(type_map[type_filter])
-    # IMAP4rev1 OR is binary; chain (n-1) OR tokens to OR n criteria together.
-    for _ in range(len(criteria_fields) - 1):
-        args.append("OR")
-    for field in criteria_fields:
-        args.extend([field, quoted_arg])
 
-    typ, data = conn.uid("SEARCH", *args)
-    if typ != "OK" or not data or not data[0]:
-        return []
-    raw = data[0].decode() if isinstance(data[0], bytes) else str(data[0])
-    uids = raw.split()
-    hits: list[dict] = []
-    for uid in uids:
-        env = _fetch_message_header(conn, uid, folder_name=target)
-        if env:
-            env["namespace"] = namespace
-            env["folder"] = folder
-            hits.append(env)
-    return hits
+    all_hits: list[dict] = []
+    for folder in folders:
+        target = f"{namespace}{folder}" if namespace else folder
+        typ, _ = conn.select(f'"{target}"', readonly=True)
+        if typ != "OK":
+            continue
+        # Build SEARCH args: [TYPE_MODIFIER?] [OR x (n-1)] [FIELD QUOTED]*
+        args: list[str] = []
+        if type_filter in type_map:
+            args.append(type_map[type_filter])
+        # IMAP4rev1 OR is binary; chain (n-1) OR tokens to OR n criteria together.
+        for _ in range(len(criteria_fields) - 1):
+            args.append("OR")
+        for field in criteria_fields:
+            args.extend([field, quoted_arg])
+
+        typ, data = conn.uid("SEARCH", *args)
+        if typ != "OK" or not data or not data[0]:
+            continue
+        raw = data[0].decode() if isinstance(data[0], bytes) else str(data[0])
+        uids = raw.split()
+        # Cap per-folder hits to keep the response sane on huge folders like
+        # [Gmail]/All Mail with tens of thousands of matches.
+        for uid in uids[:200]:
+            env = _fetch_message_header(conn, uid, folder_name=target)
+            if env:
+                env["namespace"] = namespace
+                env["folder"] = folder
+                all_hits.append(env)
+    return all_hits
 
 
 @browse_router.get("/accounts/{account_id}/mailboxes/{folder:path}/search")
