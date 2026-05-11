@@ -347,7 +347,14 @@ def accounts_page(request: Request, show_all: str = "", db: Session = Depends(ge
     is_admin = user.role == UserRole.admin
     show_all_users = is_admin and show_all == "1"
     if show_all_users:
-        accounts = db.query(Account).options(selectinload(Account.backup_policies)).all()
+        accounts = (
+            db.query(Account)
+            .options(
+                selectinload(Account.backup_policies),
+                selectinload(Account.recoveries),
+            )
+            .all()
+        )
     else:
         accounts = get_accounts_for_user(db, user)
     return templates.TemplateResponse(
@@ -367,7 +374,14 @@ def accounts_table_partial(request: Request, show_all: str = "", db: Session = D
     is_admin = user.role == UserRole.admin
     show_all_users = is_admin and show_all == "1"
     if show_all_users:
-        accounts = db.query(Account).options(selectinload(Account.backup_policies)).all()
+        accounts = (
+            db.query(Account)
+            .options(
+                selectinload(Account.backup_policies),
+                selectinload(Account.recoveries),
+            )
+            .all()
+        )
     else:
         accounts = get_accounts_for_user(db, user)
     any_syncing = any(a.sync_state.value == "syncing" for a in accounts)

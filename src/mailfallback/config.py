@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     sync_max_workers: int = 4
     sync_log_dir: str = "/data/logs/sync"
 
+    recovery_ephemeral_ttl_minutes: int = 30
+    recovery_max_parallel_mounts: int = 5
+    recovery_backend: str = "restore"  # "restore" (default) | "fuse" (future)
+
     metrics_api_key: str = ""
 
     dovecot_api_url: str = "http://dovecot:8080"

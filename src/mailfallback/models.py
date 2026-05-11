@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    text,
 )
 from sqlalchemy.orm import relationship
 
@@ -84,6 +85,18 @@ class RetentionPreset(enum.StrEnum):
     standard = "standard"
     full = "full"
     custom = "custom"
+
+
+class RecoveryStatus(enum.StrEnum):
+    restoring = "restoring"
+    ready = "ready"
+    failed = "failed"
+    deleting = "deleting"
+
+
+class RecoveryKind(enum.StrEnum):
+    persistent = "persistent"
+    ephemeral = "ephemeral"
 
 
 class BackupStatus(enum.StrEnum):
@@ -373,3 +386,46 @@ class BackupPolicy(Base):
 # Legacy alias — kept so external imports don't break during the transition.
 # New code MUST use BackupPolicy.
 AccountBackup = BackupPolicy
+
+
+class Recovery(Base):
+    """A snapshot recovered from a Repository, attached to its source Account.
+
+    Distinct from an Account: a Recovery is a read-only artefact (not a live
+    mailbox). It is exposed through Dovecot as an additional namespace under
+    the source Account's owner(s), and never synced. Removing the Recovery
+    deletes both the DB row and the on-disk extracted Maildir.
+    """
+
+    __tablename__ = "recoveries"
+
+    id = Column(String, primary_key=True, default=_new_uuid)
+    account_id = Column(
+        String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    repository_id = Column(
+        String, ForeignKey("backup_destinations.id", ondelete="SET NULL"), nullable=True
+    )
+    snapshot_id = Column(String, nullable=False)  # restic short_id
+    snapshot_time = Column(DateTime(timezone=True), nullable=True)  # when the snapshot was taken
+    restored_at = Column(DateTime(timezone=True), default=_utcnow)
+    restore_path = Column(String, nullable=False)  # absolute path to the recovered Maildir root
+    status = Column(Enum(RecoveryStatus), nullable=False, default=RecoveryStatus.restoring)
+    error = Column(Text, nullable=True)
+    size_bytes = Column(Integer, nullable=True)  # disk size of the recovered tree
+    kind = Column(
+        Enum(RecoveryKind),
+        nullable=False,
+        default=RecoveryKind.persistent,
+        server_default=RecoveryKind.persistent.value,
+    )
+    last_accessed_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
+        server_default=text("now()"),
+    )
+    ttl_minutes = Column(Integer, nullable=True)  # NULL = no TTL
+
+    account = relationship("Account", backref="recoveries")
+    repository = relationship("Repository")

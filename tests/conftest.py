@@ -72,3 +72,20 @@ def client(app):
 
     reset_rate_limits()
     return TestClient(app)
+
+
+@pytest.fixture
+def login_user(db_session, default_store):
+    from mailfallback.models import User, UserRole
+    from mailfallback.security import hash_password
+
+    u = User(
+        username="koma",
+        password_hash=hash_password("x"),
+        role=UserRole.admin,
+        enabled=True,
+        store_id=default_store.id,
+    )
+    db_session.add(u)
+    db_session.commit()
+    return u

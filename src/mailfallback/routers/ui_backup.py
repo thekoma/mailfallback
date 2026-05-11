@@ -1,6 +1,5 @@
 # src/mailfallback/routers/ui_backup.py
 import logging
-import os
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Request
@@ -9,10 +8,10 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
-from mailfallback.models import Account, BackupPolicy, Repository
+from mailfallback.models import BackupPolicy, Repository
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import encrypt_credentials
-from mailfallback.services.account_service import assign_owner, get_account
+from mailfallback.services.account_service import get_account
 from mailfallback.services.audit_service import log_action
 
 logger = logging.getLogger(__name__)
@@ -29,7 +28,7 @@ def admin_backup_page(request: Request, db: Session = Depends(get_db)):
     if not user or user.role.value != "admin":
         return RedirectResponse("/")
 
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
     from sqlalchemy import func
 
@@ -389,6 +388,14 @@ async def account_backup_restore(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    """Restore a snapshot into a Recovery (read-only on-disk artefact).
+
+    Replaces the legacy Account-as-recovery flow. The Recovery is attached
+    to the source Account; Dovecot exposes it as an additional read-only
+    namespace under the source account's owners. It is NEVER synced.
+    """
+    from mailfallback.services.recovery_service import create_recovery
+
     user = _get_session_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -397,38 +404,11 @@ async def account_backup_restore(
     if not account:
         return RedirectResponse("/", status_code=303)
 
-    backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
-    if not backup:
-        request.session["flash_error"] = "No off-site backup configured for this account"
-        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
-
-    from mailfallback.services.restic_service import restore_snapshot
-
-    temp_dir = (
-        f"{account.store.path}/.offsite-restore"
-        f"/{account.id}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
-    )
-    os.makedirs(temp_dir, exist_ok=True)
-
     try:
-        restore_snapshot(backup.destination, account.id, snapshot_id, temp_dir)
-    except Exception as e:
-        request.session["flash_error"] = f"Restore failed: {e}"
+        recovery = create_recovery(db, account.id, snapshot_id)
+    except ValueError as e:
+        request.session["flash_error"] = str(e)
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
-
-    restored_account = Account(
-        name=f"Recovered {account.name} ({datetime.now(UTC).strftime('%Y-%m-%d')})",
-        email_address=account.email_address,
-        imap_host="restored",
-        imap_port=0,
-        maildir_path=temp_dir,
-        store_id=account.store_id,
-        suspended=True,
-    )
-    db.add(restored_account)
-    db.flush()
-    assign_owner(db, restored_account.id, user.id)
-    db.commit()
 
     log_action(
         db,
@@ -438,11 +418,49 @@ async def account_backup_restore(
         resource_id=account_id,
         resource_name=account.email_address or account.name,
         ip_address=request.client.host if request.client else None,
-        details={"snapshot_id": snapshot_id, "restored_account_id": restored_account.id},
+        details={"snapshot_id": snapshot_id, "recovery_id": recovery.id},
     )
-    request.session["flash_success"] = (
-        f"Recovered into '{restored_account.name}'. The mailbox is suspended — "
-        f"review and use the 'Promote to live' button to enable it, "
-        f"or delete it to drop the recovered data."
+
+    if recovery.status.value == "ready":
+        request.session["flash_success"] = (
+            f"Snapshot {snapshot_id} recovered. Browse it in webmail under the "
+            f"'Recovered {snapshot_id}' folder, or delete it from the account page when done."
+        )
+    else:
+        request.session["flash_error"] = f"Recovery failed: {recovery.error or 'unknown error'}"
+
+    return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+
+
+@router.post("/accounts/{account_id}/recoveries/{recovery_id}/delete")
+async def account_recovery_delete(
+    account_id: str,
+    recovery_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Delete a Recovery: removes the on-disk tree + DB row."""
+    from mailfallback.services.recovery_service import delete_recovery
+
+    user = _get_session_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    account = get_account(db, account_id, user)
+    if not account:
+        return RedirectResponse("/", status_code=303)
+
+    delete_recovery(db, recovery_id)
+
+    log_action(
+        db,
+        user=user,
+        action="account.recovery_delete",
+        resource_type="account",
+        resource_id=account_id,
+        resource_name=account.email_address or account.name,
+        ip_address=request.client.host if request.client else None,
+        details={"recovery_id": recovery_id},
     )
+    request.session["flash_success"] = "Recovery deleted."
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)

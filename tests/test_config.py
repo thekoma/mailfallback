@@ -56,3 +56,27 @@ def test_webmail_settings_defaults():
     s = Settings()
     assert s.webmail_enabled is False
     assert s.confs_path == "/confs"
+
+
+def test_recovery_settings_defaults(monkeypatch):
+    monkeypatch.delenv("MAILFALLBACK_RECOVERY_EPHEMERAL_TTL_MINUTES", raising=False)
+    monkeypatch.delenv("MAILFALLBACK_RECOVERY_MAX_PARALLEL_MOUNTS", raising=False)
+    monkeypatch.delenv("MAILFALLBACK_RECOVERY_BACKEND", raising=False)
+    from mailfallback.config import Settings
+
+    s = Settings()
+    assert s.recovery_ephemeral_ttl_minutes == 30
+    assert s.recovery_max_parallel_mounts == 5
+    assert s.recovery_backend == "restore"
+
+
+def test_recovery_settings_env_override(monkeypatch):
+    monkeypatch.setenv("MAILFALLBACK_RECOVERY_EPHEMERAL_TTL_MINUTES", "60")
+    monkeypatch.setenv("MAILFALLBACK_RECOVERY_MAX_PARALLEL_MOUNTS", "10")
+    monkeypatch.setenv("MAILFALLBACK_RECOVERY_BACKEND", "fuse")
+    from mailfallback.config import Settings
+
+    s = Settings()
+    assert s.recovery_ephemeral_ttl_minutes == 60
+    assert s.recovery_max_parallel_mounts == 10
+    assert s.recovery_backend == "fuse"

@@ -1,0 +1,73 @@
+{# Recoveries sub-section: read-only restored snapshots attached to this account.
+   Each row exposes the snapshot id, when it was taken, when WE restored it,
+   the on-disk size, and a delete button. Browsing happens through the user's
+   webmail (Roundcube): each Recovery becomes an additional Dovecot namespace. #}
+<p class="text-muted text-small">
+    Recoveries are read-only restored snapshots attached to this mailbox.
+    They appear as a separate folder in your webmail; they are not synced and
+    do not become a new account.
+</p>
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Snapshot</th>
+            <th>Taken</th>
+            <th>Restored</th>
+            <th>Size</th>
+            <th>Status</th>
+            <th class="text-right">Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in recoveries %}
+        <tr>
+            <td><code>{{ r.snapshot_id }}</code></td>
+            <td>
+                {% if r.snapshot_time %}
+                {{ r.snapshot_time.strftime('%Y-%m-%d %H:%M') }}
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+            </td>
+            <td>{{ r.restored_at | time_ago }}</td>
+            <td>
+                {% if r.size_bytes %}
+                {{ r.size_bytes | filesizeformat }}
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if r.status.value == "ready" %}
+                <span class="stats-pill"><span class="stats-dot stats-dot-ok"></span> Ready</span>
+                {% elif r.status.value == "restoring" %}
+                <span class="stats-pill"><span class="stats-dot stats-dot-syncing"></span> Restoring</span>
+                {% elif r.status.value == "failed" %}
+                <span class="stats-pill" title="{{ r.error or '' }}">
+                    <span class="stats-dot stats-dot-error"></span> Failed
+                </span>
+                {% else %}
+                <span class="stats-pill"><span class="stats-dot"></span> {{ r.status.value | capitalize }}</span>
+                {% endif %}
+            </td>
+            <td>
+                <div class="actions flex-end">
+                    <form method="post" action="/accounts/{{ account.id }}/recoveries/{{ r.id }}/delete"
+                          data-confirm="Delete this recovery? The on-disk Maildir will be removed permanently."
+                          onsubmit="return confirm(this.dataset.confirm)" style="display:inline">
+                        <button type="submit" class="icon-btn danger" title="Delete recovery">
+                            <i data-lucide="trash-2" class="icon-sm"></i>
+                        </button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+<p class="text-muted text-small mt-05">
+    To browse the recovered mail, open <a href="/accounts">Webmail</a> as one of this mailbox's owners
+    and look for the "Recovery" namespace in the folder tree.
+</p>

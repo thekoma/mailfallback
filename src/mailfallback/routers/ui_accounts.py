@@ -441,6 +441,12 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
     )
     backup_destinations = db.query(Repository).all()
 
+    from mailfallback.services.recovery_service import list_recoveries_for_account
+
+    recoveries = list_recoveries_for_account(db, account_id)
+
+    timeline_global, folder_timeline_data = _build_bento_timeline(jobs[:30])
+
     return templates.TemplateResponse(
         request=request,
         name="account_detail.html",
@@ -460,8 +466,40 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
             "migration": migration,
             "backup_config": backup_config,
             "backup_destinations": backup_destinations,
+            "recoveries": recoveries,
+            "timeline_global": timeline_global,
+            "folder_timeline_data": folder_timeline_data,
         },
     )
+
+
+def _build_bento_timeline(jobs: list) -> tuple[list[dict], dict[str, list[dict]]]:
+    """Build the bento timeline data: global bar list + per-folder hover overlay.
+
+    `timeline_global`: oldest-first list of {ts, status} for the timeline strip.
+    `folder_timeline_data`: {folder_name: [{ts, added}, ...]} for the linked-view
+    hover effect — when the user hovers a treemap cell, the JS swaps the bars
+    to reflect that folder's added_done per sync run.
+    """
+    timeline_global: list[dict] = []
+    folder_data: dict[str, list[dict]] = {}
+    for job in reversed(jobs):  # oldest → newest, so bars read left-to-right
+        ts = (job.completed_at or job.started_at or job.requested_at).isoformat()
+        timeline_global.append({"ts": ts, "status": job.status.value})
+        if not job.parsed_summary:
+            continue
+        try:
+            snap = json.loads(job.parsed_summary)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for entry in snap.get("per_folder", []) or []:
+            name = entry.get("name")
+            if not name:
+                continue
+            folder_data.setdefault(name, []).append(
+                {"ts": ts, "added": int(entry.get("added_done", 0) or 0)}
+            )
+    return timeline_global, folder_data
 
 
 @router.post("/accounts/{account_id}/edit")
@@ -599,35 +637,6 @@ async def account_toggle_suspend(
             resource_name=account.email_address or account.name,
             ip_address=request.client.host if request.client else None,
         )
-    return RedirectResponse(f"/accounts/{account_id}", status_code=303)
-
-
-@router.post("/accounts/{account_id}/promote-recovered")
-async def account_promote_recovered(
-    account_id: str,
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    user = _get_session_user(request, db)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-    account = get_account(db, account_id, user)
-    if not account:
-        return RedirectResponse("/", status_code=303)
-    if not account.name.startswith("Recovered "):
-        request.session["flash_error"] = "Only recovered mailboxes can be promoted to live."
-        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
-    update_account(db, account_id, user, suspended=False)
-    log_action(
-        db,
-        user=user,
-        action="account.promote_recovered",
-        resource_type="account",
-        resource_id=account_id,
-        resource_name=account.email_address or account.name,
-        ip_address=request.client.host if request.client else None,
-    )
-    request.session["flash_success"] = f"Promoted '{account.name}' to live. Sync may now run."
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
 
