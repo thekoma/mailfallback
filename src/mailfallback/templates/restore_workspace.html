@@ -51,8 +51,8 @@
 
     <label>Destination
       <select name="destination_id" id="ws-destination">
-        {% for acct, _ in protected %}
-        <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address }})</option>
+        {% for acct in all_accounts %}
+        <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address or "—" }})</option>
         {% endfor %}
       </select>
     </label>
