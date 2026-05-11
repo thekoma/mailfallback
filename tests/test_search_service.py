@@ -1,0 +1,145 @@
+"""Tests for search_service — Phase 1 header search via mail_index."""
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from mailfallback.models import (
+    Account,
+    MailIndexMessage,
+    User,
+    UserRole,
+)
+from mailfallback.security import hash_password
+from mailfallback.services import search_service
+
+
+@pytest.fixture
+def search_setup(db_session, default_store, tmp_path):
+    user = User(
+        username="u",
+        password_hash=hash_password("p"),
+        role=UserRole.admin,
+        enabled=True,
+        store_id=default_store.id,
+    )
+    db_session.add(user)
+
+    acct = Account(
+        name="a",
+        store=default_store,
+        maildir_path=str(tmp_path),
+        imap_host="imap.example.com",
+    )
+    db_session.add(acct)
+    db_session.flush()
+    acct.owners.append(user)
+
+    # Add three messages directly (skip the file walk — already tested)
+    now = datetime.now(UTC)
+    db_session.add_all(
+        [
+            MailIndexMessage(
+                account_id=acct.id,
+                message_id_hash=b"\x01" * 20,
+                message_id="<1@h>",
+                subject="fattura marzo",
+                from_addr="boss@ditta.it",
+                from_name="Boss",
+                date_sent=now - timedelta(days=2),
+                folder_path="INBOX",
+                maildir_filename="1.host:2,",
+            ),
+            MailIndexMessage(
+                account_id=acct.id,
+                message_id_hash=b"\x02" * 20,
+                message_id="<2@h>",
+                subject="hello world",
+                from_addr="bob@x",
+                from_name="Bob",
+                date_sent=now - timedelta(days=10),
+                folder_path="INBOX",
+                maildir_filename="2.host:2,",
+            ),
+            MailIndexMessage(
+                account_id=acct.id,
+                message_id_hash=b"\x03" * 20,
+                message_id="<3@h>",
+                subject="old fattura",
+                from_addr="boss@ditta.it",
+                from_name="Boss",
+                date_sent=now - timedelta(days=100),
+                folder_path="INBOX",
+                maildir_filename="3.host:2,",
+            ),
+        ]
+    )
+    db_session.commit()
+    return {"user": user, "account": acct}
+
+
+def test_search_returns_matching_subject(db_session, search_setup):
+    result = search_service.search_messages(
+        db_session,
+        user=search_setup["user"],
+        query="fattura",
+    )
+    subjects = [r["subject"] for r in result["results"]]
+    assert "fattura marzo" in subjects
+    assert "old fattura" in subjects
+    assert "hello world" not in subjects
+
+
+def test_search_filters_by_date_range(db_session, search_setup):
+    now = datetime.now(UTC)
+    result = search_service.search_messages(
+        db_session,
+        user=search_setup["user"],
+        query="fattura",
+        range_start=now - timedelta(days=7),
+        range_end=now,
+    )
+    subjects = [r["subject"] for r in result["results"]]
+    assert subjects == ["fattura marzo"]  # only the recent one
+
+
+def test_search_respects_account_visibility(db_session, search_setup, default_store):
+    # Create a separate account NOT owned by the user
+    other = Account(
+        name="o",
+        store=default_store,
+        maildir_path="/x",
+        imap_host="i",
+    )
+    db_session.add(other)
+    db_session.flush()
+    db_session.add(
+        MailIndexMessage(
+            account_id=other.id,
+            message_id_hash=b"\x09" * 20,
+            message_id="<9@h>",
+            subject="fattura nascosta",
+            folder_path="INBOX",
+            maildir_filename="9",
+        )
+    )
+    db_session.commit()
+
+    result = search_service.search_messages(
+        db_session,
+        user=search_setup["user"],
+        query="fattura",
+    )
+    assert "fattura nascosta" not in [r["subject"] for r in result["results"]]
+
+
+def test_search_pagination(db_session, search_setup):
+    page1 = search_service.search_messages(
+        db_session,
+        user=search_setup["user"],
+        query="",
+        page=1,
+        page_size=2,
+    )
+    assert len(page1["results"]) == 2
+    assert page1["total"] == 3
