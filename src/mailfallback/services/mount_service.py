@@ -35,6 +35,12 @@ def ensure_mounted(
 ) -> Recovery:
     """Idempotent mount. Returns existing Recovery (bumping last_accessed_at)
     or creates a new one via recovery_service.create_recovery.
+
+    Race note: the existence check is non-atomic. Two concurrent callers for
+    the same (account_id, snapshot_id) can both fall through to create_recovery
+    and trigger duplicate restic restores. In practice MFB is single-tenant
+    self-hosted and this is rare; if it bites, add a partial unique index on
+    (account_id, snapshot_id) WHERE status='ready' and catch IntegrityError.
     """
     existing = (
         db.query(Recovery)
