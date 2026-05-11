@@ -290,6 +290,83 @@ def test_workspace_restore_post_to_existing_engine(
     mock_submit.assert_called_once_with("j-1")
 
 
+def test_search_namespace_body_includes_body_criterion():
+    """Verify SEARCH includes BODY when search_body=True."""
+    conn = MagicMock()
+    conn.select.return_value = ("OK", [b"0"])
+    conn.uid.return_value = ("OK", [b""])
+
+    _search_namespace_for_query(conn, namespace="", query="alice", search_body=True)
+
+    call_args = conn.uid.call_args
+    serialised = " ".join(str(a) for a in call_args.args)
+    assert "BODY" in serialised
+    assert "SUBJECT" in serialised
+    assert "FROM" in serialised
+
+
+@patch("mailfallback.routers.restore.mount_service")
+@patch("mailfallback.routers.restore._connect_dovecot_for_account")
+@patch("mailfallback.routers.restore.restic_service")
+def test_workspace_search_passes_ttl_override(
+    mock_restic, mock_connect, mock_mount, client, db_session, default_store, login_user
+):
+    repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
+    db_session.add(repo)
+    acct = Account(
+        name="a",
+        store=default_store,
+        maildir_path="/data/mailboxes/a",
+        imap_host="imap.example.com",
+    )
+    db_session.add(acct)
+    db_session.flush()
+    acct.owners.append(login_user)
+    db_session.add(BackupPolicy(account_id=acct.id, destination_id=repo.id))
+    db_session.commit()
+
+    now = datetime.now(UTC)
+    mock_restic.list_snapshots.return_value = [
+        {"short_id": "snap1", "time": (now - timedelta(days=2)).isoformat()},
+    ]
+
+    fake_recovery = Recovery(
+        account_id=acct.id,
+        snapshot_id="snap1",
+        restore_path="/tmp/r",
+        status=RecoveryStatus.ready,
+        kind=RecoveryKind.ephemeral,
+    )
+    db_session.add(fake_recovery)
+    db_session.commit()
+    mock_mount.ensure_mounted.return_value = fake_recovery
+
+    fake_conn = MagicMock()
+    fake_conn.select.return_value = ("OK", [b"0"])
+    fake_conn.uid.return_value = ("OK", [b""])
+    mock_connect.return_value = (fake_conn, "_restore_test")
+
+    login_resp = client.post("/api/auth/login", json={"username": "koma", "password": "x"})
+    assert login_resp.status_code in (200, 303)
+
+    resp = client.post(
+        "/api/restore/workspace/search",
+        json={
+            "account_id": acct.id,
+            "query": "x",
+            "range_start": (now - timedelta(days=7)).isoformat(),
+            "range_end": now.isoformat(),
+            "include_live": True,
+            "include_snapshots": True,
+            "ttl_minutes": 60,
+        },
+    )
+    assert resp.status_code == 200
+    # ensure_mounted should have been called with ttl_minutes=60
+    call_kwargs = mock_mount.ensure_mounted.call_args.kwargs
+    assert call_kwargs.get("ttl_minutes") == 60
+
+
 @patch("mailfallback.routers.restore.restic_service")
 def test_workspace_snapshot_count(mock_restic, client, db_session, default_store, login_user):
     repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
