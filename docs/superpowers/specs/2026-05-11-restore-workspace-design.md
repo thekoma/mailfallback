@@ -178,6 +178,17 @@ If implemented later, switching backends is a single env var; no schema or UI ch
 - **Cross-account search** (search "fattura marzo" across all my mailboxes at once): out of scope, single-mailbox workspace only.
 - **`/restore/move` deprecation**: kept available; deprecation is a follow-up decision after the new workspace is validated in production.
 
+## Future Work — settings migration
+
+The three new env vars (`MAILFALLBACK_RECOVERY_*`) follow today's MFB convention but inherit its limitation: tuning them requires a container restart, and admins have no UI to inspect or change them.
+
+There is a separate planned initiative to introduce **DB-backed operational settings** with a clean tier split:
+
+- **Tier 1 — env-only (bootstrap)**: `database_url`, `secret_key`, `session_secret`, `db_*`, `confs_path`, `bootstrap_store_path` — values needed before the DB connection is alive or that encrypt other settings.
+- **Tier 2 — DB-backed with env seed**: everything else, including the recovery knobs introduced here. Env values seed the DB on first boot; from then on the DB is the source of truth and the admin UI edits live.
+
+This spec ships with env vars as the interim mechanism. When the settings-in-DB refactor lands, the recovery knobs migrate as part of that work — no spec change here required, just a one-shot reassignment in `config.py` consumers.
+
 ## Open Questions
 
 - **Default time range**: spec says "last 7 days" — confirm before implementation. Could be parameterised by `MAILFALLBACK_RECOVERY_DEFAULT_RANGE_DAYS`.
