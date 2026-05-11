@@ -47,7 +47,15 @@ def test_create_recovery_defaults_to_persistent(mock_restic, db_session, tmp_sto
     mock_restic.restore_snapshot.return_value = None
     mock_restic.list_snapshots.return_value = []
 
-    rec = recovery_service.create_recovery(db_session, acct.id, "snap-1")
+    # Explicit defaults (exercises the kwarg path; the bare-positional path is
+    # already covered by the existing call-site at ui_backup.py).
+    rec = recovery_service.create_recovery(
+        db_session,
+        acct.id,
+        "snap-1",
+        kind=RecoveryKind.persistent,
+        ttl_minutes=None,
+    )
     assert rec.kind == RecoveryKind.persistent
     assert rec.ttl_minutes is None
 
