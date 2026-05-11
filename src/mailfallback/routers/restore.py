@@ -455,9 +455,6 @@ def _search_namespace_for_query(
         folders = _list_namespace_folders(conn, namespace)
     if not criteria_fields:
         criteria_fields = ["SUBJECT"]
-    # Honour the legacy search_body kwarg if BODY wasn't already requested.
-    if search_body and "BODY" not in criteria_fields:
-        criteria_fields = [*criteria_fields, "BODY"]
 
     quoted = _sanitize_imap_string(query)
     # Wrap in IMAP quoted-string so multi-word queries are passed as a single
@@ -466,21 +463,32 @@ def _search_namespace_for_query(
     quoted_arg = f'"{quoted}"'
     type_map = {"unseen": "UNSEEN", "flagged": "FLAGGED", "unanswered": "UNANSWERED"}
 
+    # When body search is requested, use IMAP TEXT criterion which matches the
+    # whole message text (all headers + body). This is what Roundcube uses for
+    # "search in body": broader than `OR SUBJECT FROM TO BODY` (which misses
+    # X-* headers, Received, Reply-To, etc.) and FTS-friendly via fts_flatcurve.
+    use_text = search_body or "BODY" in criteria_fields
+
     all_hits: list[dict] = []
     for folder in folders:
         target = f"{namespace}{folder}" if namespace else folder
         typ, _ = conn.select(f'"{target}"', readonly=True)
         if typ != "OK":
             continue
-        # Build SEARCH args: [TYPE_MODIFIER?] [OR x (n-1)] [FIELD QUOTED]*
+        # Build SEARCH args: [TYPE_MODIFIER?] [criteria...]
         args: list[str] = []
         if type_filter in type_map:
             args.append(type_map[type_filter])
-        # IMAP4rev1 OR is binary; chain (n-1) OR tokens to OR n criteria together.
-        for _ in range(len(criteria_fields) - 1):
-            args.append("OR")
-        for field in criteria_fields:
-            args.extend([field, quoted_arg])
+        if use_text:
+            # TEXT covers all headers + body in one shot.
+            args.extend(["TEXT", quoted_arg])
+        else:
+            # Header-only search via OR chain on the explicit fields.
+            # IMAP4rev1 OR is binary; chain (n-1) OR tokens to OR n criteria.
+            for _ in range(len(criteria_fields) - 1):
+                args.append("OR")
+            for field in criteria_fields:
+                args.extend([field, quoted_arg])
 
         typ, data = conn.uid("SEARCH", *args)
         if typ != "OK" or not data or not data[0]:
