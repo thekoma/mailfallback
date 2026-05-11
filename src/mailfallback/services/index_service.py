@@ -199,3 +199,16 @@ def record_snapshot(db: Session, account_id: str, snapshot_id: str) -> int:
     result = db.execute(stmt)
     db.commit()
     return result.rowcount or 0
+
+
+def prune_snapshot(db: Session, snapshot_id: str) -> int:
+    """DELETE all snapshot_messages rows for the given snapshot_id. Returns count."""
+    from mailfallback.models import SnapshotMessage
+
+    deleted = (
+        db.query(SnapshotMessage)
+        .filter(SnapshotMessage.snapshot_id == snapshot_id)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return deleted

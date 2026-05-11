@@ -126,3 +126,23 @@ def test_record_snapshot_excludes_deleted_messages(db_session, maildir_account, 
         db_session.query(SnapshotMessage).filter(SnapshotMessage.snapshot_id == "snap00002").count()
     )
     assert bits == 1  # only the alive one
+
+
+def test_prune_snapshot_removes_only_target_snapshot_bits(db_session, maildir_account):
+    from mailfallback.models import SnapshotMessage
+
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    index_service.record_snapshot(db_session, maildir_account.id, "snapA")
+    index_service.record_snapshot(db_session, maildir_account.id, "snapB")
+    assert db_session.query(SnapshotMessage).count() == 4
+
+    n = index_service.prune_snapshot(db_session, "snapA")
+    assert n == 2
+
+    remaining = db_session.query(SnapshotMessage).all()
+    assert all(b.snapshot_id == "snapB" for b in remaining)
+
+
+def test_prune_snapshot_idempotent_for_unknown_id(db_session):
+    n = index_service.prune_snapshot(db_session, "nonexistent")
+    assert n == 0
