@@ -46,6 +46,17 @@ def _rebuild_account(account_id: str) -> int:
 
 
 def _backfill_snapshots(account_id: str) -> int:
-    # Implemented in T13.
-    print("Not yet implemented — see T13.")
-    return 1
+    from mailfallback.services import index_service
+
+    db = SessionLocal()
+    try:
+        for progress in index_service.backfill_snapshots(db, account_id):
+            print(
+                f"  snap {progress['snapshot_id']}: "
+                f"{progress['processed']}/{progress['total']}, "
+                f"+{progress['bits_inserted']} bits"
+            )
+        print("Done.")
+        return 0
+    finally:
+        db.close()

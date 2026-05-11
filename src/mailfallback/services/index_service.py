@@ -29,6 +29,7 @@ from mailfallback.models import (
     MailIndexMessage,
     MailIndexRebuildStatus,
 )
+from mailfallback.services import restic_service
 
 logger = logging.getLogger(__name__)
 
@@ -212,3 +213,104 @@ def prune_snapshot(db: Session, snapshot_id: str) -> int:
     )
     db.commit()
     return deleted
+
+
+def _filename_prefix(filename: str) -> str:
+    """Return the stable prefix of a Maildir filename (everything before the
+    flag suffix). E.g. '1234.M5.host:2,RS' -> '1234.M5.host:2,'.
+    """
+    if ":2," in filename:
+        return filename.split(":2,")[0] + ":2,"
+    return filename
+
+
+def backfill_snapshots(db: Session, account_id: str):
+    """For each restic snapshot, set snapshot_messages bits for messages
+    whose Maildir filename appears in the snapshot file list.
+
+    Yields progress dicts: {snapshot_id, total, processed, bits_inserted}.
+    """
+    from mailfallback.models import (
+        BackupPolicy,
+        MailIndexMessage,
+        MailIndexRebuildStatus,
+        SnapshotMessage,
+    )
+
+    backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
+    if not backup:
+        raise ValueError(f"Account {account_id} has no backup policy")
+
+    # Build a lookup: filename_prefix -> message_id_hash for all alive messages
+    alive = (
+        db.query(MailIndexMessage.message_id_hash, MailIndexMessage.maildir_filename)
+        .filter(
+            MailIndexMessage.account_id == account_id,
+            MailIndexMessage.deleted_at.is_(None),
+        )
+        .all()
+    )
+    prefix_to_hash = {_filename_prefix(fn): h for h, fn in alive}
+
+    snaps = restic_service.list_snapshots(backup.destination, account_id)
+
+    rs = (
+        db.query(MailIndexRebuildStatus)
+        .filter(MailIndexRebuildStatus.account_id == account_id)
+        .first()
+    )
+    if rs:
+        rs.state = "snap_backfilling"
+        rs.backfill_progress = 0
+        rs.backfill_total = len(snaps)
+        db.commit()
+
+    try:
+        for i, s in enumerate(snaps):
+            sid = s.get("short_id") or s.get("id", "")[:8]
+            if not sid:
+                continue
+            seen_hashes: set[bytes] = set()
+            for path in restic_service.list_files(backup.destination, account_id, sid):
+                if "/cur/" not in path and "/new/" not in path:
+                    continue
+                fn = path.rsplit("/", 1)[-1]
+                h = prefix_to_hash.get(_filename_prefix(fn))
+                if h:
+                    seen_hashes.add(h)
+            inserted = 0
+            if seen_hashes:
+                rows = [
+                    {"snapshot_id": sid, "account_id": account_id, "message_id_hash": h}
+                    for h in seen_hashes
+                ]
+                if db.bind.dialect.name == "postgresql":
+                    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+                    stmt = pg_insert(SnapshotMessage).values(rows).on_conflict_do_nothing()
+                else:
+                    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+                    stmt = sqlite_insert(SnapshotMessage).values(rows).on_conflict_do_nothing()
+                result = db.execute(stmt)
+                inserted = result.rowcount or 0
+                db.commit()
+            if rs:
+                rs.backfill_progress = i + 1
+                db.commit()
+            yield {
+                "snapshot_id": sid,
+                "total": len(snaps),
+                "processed": i + 1,
+                "bits_inserted": inserted,
+            }
+        if rs:
+            rs.state = "idle"
+            rs.last_error = None
+            db.commit()
+    except Exception as e:
+        if rs:
+            rs.state = "failed"
+            rs.last_error = str(e)
+            db.commit()
+        raise
