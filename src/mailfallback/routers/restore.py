@@ -382,7 +382,7 @@ def _fetch_message_header(conn, uid, folder_name: str = "") -> dict | None:
 def _search_namespace_for_query(
     conn, namespace: str, query: str, folder: str = "INBOX"
 ) -> list[dict]:
-    """Run a Dovecot SEARCH on `namespace + folder` for `query` (subject only).
+    """Run a Dovecot SEARCH on `namespace + folder` for `query` (subject OR from).
 
     Returns a list of dicts with: uid, subject, from, namespace, folder, message_id.
     Caller is responsible for the connection lifecycle.
@@ -392,7 +392,13 @@ def _search_namespace_for_query(
     if typ != "OK":
         return []
     quoted = _sanitize_imap_string(query)
-    typ, data = conn.uid("SEARCH", "SUBJECT", quoted)
+    # Wrap in IMAP quoted-string so multi-word queries are passed as a single
+    # token. _sanitize_imap_string strips ", \, and control chars, so the wrap
+    # is safe against injection.
+    quoted_arg = f'"{quoted}"'
+    # IMAP4rev1: `OR SUBJECT "x" FROM "x"` matches messages whose Subject or
+    # From header contains the query.
+    typ, data = conn.uid("SEARCH", "OR", "SUBJECT", quoted_arg, "FROM", quoted_arg)
     if typ != "OK" or not data or not data[0]:
         return []
     raw = data[0].decode() if isinstance(data[0], bytes) else str(data[0])
