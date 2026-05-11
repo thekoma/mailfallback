@@ -380,9 +380,17 @@ def _fetch_message_header(conn, uid, folder_name: str = "") -> dict | None:
 
 
 def _search_namespace_for_query(
-    conn, namespace: str, query: str, folder: str = "INBOX"
+    conn,
+    namespace: str,
+    query: str,
+    folder: str = "INBOX",
+    search_body: bool = False,
 ) -> list[dict]:
     """Run a Dovecot SEARCH on `namespace + folder` for `query` (subject OR from).
+
+    When `search_body=True`, the SEARCH also covers BODY. Without an FTS
+    plugin, BODY search grep-scans every message — slow. We accept the cost
+    when the user explicitly opts in via the workspace Advanced controls.
 
     Returns a list of dicts with: uid, subject, from, namespace, folder, message_id.
     Caller is responsible for the connection lifecycle.
@@ -396,9 +404,23 @@ def _search_namespace_for_query(
     # token. _sanitize_imap_string strips ", \, and control chars, so the wrap
     # is safe against injection.
     quoted_arg = f'"{quoted}"'
-    # IMAP4rev1: `OR SUBJECT "x" FROM "x"` matches messages whose Subject or
-    # From header contains the query.
-    typ, data = conn.uid("SEARCH", "OR", "SUBJECT", quoted_arg, "FROM", quoted_arg)
+    # IMAP4rev1:
+    #   without body: `OR SUBJECT "x" FROM "x"` (2-way OR)
+    #   with body:    `OR OR SUBJECT "x" FROM "x" BODY "x"` (3-way OR)
+    if search_body:
+        typ, data = conn.uid(
+            "SEARCH",
+            "OR",
+            "OR",
+            "SUBJECT",
+            quoted_arg,
+            "FROM",
+            quoted_arg,
+            "BODY",
+            quoted_arg,
+        )
+    else:
+        typ, data = conn.uid("SEARCH", "OR", "SUBJECT", quoted_arg, "FROM", quoted_arg)
     if typ != "OK" or not data or not data[0]:
         return []
     raw = data[0].decode() if isinstance(data[0], bytes) else str(data[0])
@@ -473,6 +495,8 @@ class WorkspaceSearchRequest(BaseModel):
     range_end: datetime
     include_live: bool = True
     include_snapshots: bool = True
+    search_body: bool = False
+    ttl_minutes: int | None = None  # override default ephemeral TTL
 
 
 @router.post("/workspace/search")
@@ -510,8 +534,11 @@ def workspace_search(
 
     # Mount each snapshot ephemeral (idempotent, capped).
     mounted: list[tuple[str, str]] = []  # (snapshot_id, namespace_prefix)
+    mount_kwargs: dict = {}
+    if req.ttl_minutes is not None:
+        mount_kwargs["ttl_minutes"] = req.ttl_minutes
     for snap_id in snapshot_ids[: settings.recovery_max_parallel_mounts]:
-        rec = mount_service.ensure_mounted(db, req.account_id, snap_id)
+        rec = mount_service.ensure_mounted(db, req.account_id, snap_id, **mount_kwargs)
         if rec.status != RecoveryStatus.ready:
             continue
         # Namespace label MUST match the prefix Dovecot publishes in
@@ -527,10 +554,14 @@ def workspace_search(
     conn, temp_username = _connect_dovecot_for_account(db, account)
     try:
         if req.include_live:
-            for hit in _search_namespace_for_query(conn, namespace="", query=req.query):
+            for hit in _search_namespace_for_query(
+                conn, namespace="", query=req.query, search_body=req.search_body
+            ):
                 _merge_hit(results_by_msgid, hit, source_label="live")
         for snap_id, ns in mounted:
-            for hit in _search_namespace_for_query(conn, namespace=ns, query=req.query):
+            for hit in _search_namespace_for_query(
+                conn, namespace=ns, query=req.query, search_body=req.search_body
+            ):
                 _merge_hit(results_by_msgid, hit, source_label=snap_id)
     finally:
         with contextlib.suppress(Exception):

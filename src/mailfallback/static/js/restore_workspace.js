@@ -31,6 +31,9 @@
     const rangeEnd = document.getElementById('ws-range-end').value;
     const includeLive = document.getElementById('ws-include-live').checked;
     const includeSnapshots = document.getElementById('ws-include-snapshots').checked;
+    const searchBody = document.getElementById('ws-search-body').checked;
+    const ttlOverrideRaw = document.getElementById('ws-ttl-override').value.trim();
+    const ttlOverride = ttlOverrideRaw ? parseInt(ttlOverrideRaw, 10) : null;
     if (!query) return;
 
     const resultsEl = document.getElementById('ws-results');
@@ -49,6 +52,8 @@
           range_end: new Date(rangeEnd + 'T23:59:59').toISOString(),
           include_live: includeLive,
           include_snapshots: includeSnapshots,
+          search_body: searchBody,
+          ttl_minutes: ttlOverride,
         }),
       });
       if (!resp.ok) {
