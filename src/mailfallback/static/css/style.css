@@ -1286,11 +1286,16 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   background: var(--card-bg, #1e293b);
   color: var(--text, #cbd5e1);
   border: 1px solid var(--border, #334155);
-  padding: .4rem .75rem;
+  padding: .35rem .75rem;
   border-radius: 999px;
   cursor: pointer;
-  font-size: .85rem;
+  font-size: .8rem;
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  transition: border-color .15s, background .15s;
 }
+.preset-chip:hover { border-color: #38bdf8; }
 .preset-chip.is-active {
   border-color: #38bdf8;
   color: #38bdf8;
@@ -1299,7 +1304,7 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 220px 1fr;
   gap: 1rem;
   align-items: start;
 }
@@ -1314,18 +1319,67 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   display: flex;
   flex-direction: column;
   gap: .5rem;
+  font-size: .85rem;
 }
-.workspace-sidebar label { display: block; font-size: .8rem; }
+.workspace-sidebar label {
+  display: block;
+  font-size: .75rem;
+  color: var(--text-muted, #94a3b8);
+  margin-bottom: .15rem;
+}
 .workspace-sidebar select,
 .workspace-sidebar input[type="date"],
-.workspace-sidebar input[type="number"] { width: 100%; }
+.workspace-sidebar input[type="number"] {
+  width: 100%;
+  padding: .35rem .5rem;
+  font-size: .85rem;
+  margin-bottom: .25rem;
+}
+.workspace-sidebar fieldset {
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+.workspace-sidebar fieldset legend {
+  font-size: .75rem;
+  color: var(--text-muted, #94a3b8);
+  padding: 0;
+  margin-bottom: .15rem;
+}
+.workspace-sidebar fieldset label {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  margin-right: .75rem;
+  margin-bottom: 0;
+  color: inherit;
+  font-size: .85rem;
+}
+.workspace-sidebar details summary {
+  cursor: pointer;
+  padding: .25rem 0;
+  color: var(--text-muted, #94a3b8);
+}
 
 .workspace-panel .search-row {
   display: flex;
   gap: .5rem;
   align-items: center;
 }
-.workspace-panel .search-row input { flex: 1; }
+.workspace-panel .search-row input {
+  flex: 1;
+  padding: .55rem .75rem;
+  font-size: .9rem;
+  margin: 0;  /* override Pico's default form input margin */
+}
+.workspace-panel .ws-search-btn {
+  flex: 0 0 auto;
+  padding: .5rem 1rem;
+  width: auto;
+  margin: 0;
+  font-size: .9rem;
+  white-space: nowrap;
+}
 
 .ws-result {
   background: var(--card-bg, #1e293b);
@@ -1333,9 +1387,22 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   padding: .5rem .75rem;
   margin-top: .35rem;
   border-left: 3px solid #38bdf8;
+  transition: background .15s;
 }
-.ws-result-row { display: flex; gap: .5rem; align-items: flex-start; cursor: pointer; }
-.ws-result-meta { flex: 1; }
+.ws-result:hover { background: rgba(56, 189, 248, 0.05); }
+.ws-result-row {
+  display: flex;
+  gap: .5rem;
+  align-items: flex-start;
+  cursor: pointer;
+}
+.ws-result-row input[type="checkbox"] { margin: .15rem 0 0 0; }
+.ws-result-meta { flex: 1; min-width: 0; }
+.ws-result-meta strong {
+  display: block;
+  font-size: .9rem;
+  font-weight: 500;
+}
 
 .ws-badges { margin-top: .25rem; display: flex; gap: .25rem; flex-wrap: wrap; }
 .ws-badge {
@@ -1349,13 +1416,19 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 .ws-badge-snap { background: #475569; color: #e2e8f0; }
 
 .ws-action-bar {
-  margin-top: .75rem;
+  margin-top: .5rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: .5rem .75rem;
   background: var(--card-bg, #1e293b);
   border-radius: .35rem;
+  font-size: .85rem;
+}
+.ws-action-bar button {
+  margin: 0;
+  padding: .4rem .9rem;
+  font-size: .85rem;
 }
 .ws-action-bar.hidden { display: none; }
 
