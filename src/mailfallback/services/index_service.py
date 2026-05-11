@@ -265,6 +265,16 @@ def backfill_snapshots(db: Session, account_id: str):
 
     snaps = restic_service.list_snapshots(backup.destination, account_id)
 
+    # Find already-processed snapshots so we can skip them on resume.
+    # The previous behavior re-issued restic ls for every snapshot; harmless
+    # for correctness (ON CONFLICT DO NOTHING) but expensive on remote repos.
+    already_done = {
+        sid
+        for (sid,) in db.query(SnapshotMessage.snapshot_id)
+        .filter(SnapshotMessage.account_id == account_id)
+        .distinct()
+    }
+
     rs = (
         db.query(MailIndexRebuildStatus)
         .filter(MailIndexRebuildStatus.account_id == account_id)
@@ -280,6 +290,19 @@ def backfill_snapshots(db: Session, account_id: str):
         for i, s in enumerate(snaps):
             sid = s.get("short_id") or s.get("id", "")[:8]
             if not sid:
+                continue
+            if sid in already_done:
+                # Already processed — skip the restic ls call entirely
+                if rs:
+                    rs.backfill_progress = i + 1
+                    db.commit()
+                yield {
+                    "snapshot_id": sid,
+                    "total": len(snaps),
+                    "processed": i + 1,
+                    "bits_inserted": 0,
+                    "skipped": True,
+                }
                 continue
             seen_hashes: set[bytes] = set()
             for path in restic_service.list_files(backup.destination, account_id, sid):
@@ -314,6 +337,7 @@ def backfill_snapshots(db: Session, account_id: str):
                 "total": len(snaps),
                 "processed": i + 1,
                 "bits_inserted": inserted,
+                "skipped": False,
             }
         if rs:
             rs.state = "idle"
