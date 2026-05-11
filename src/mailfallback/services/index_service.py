@@ -164,3 +164,38 @@ def upsert_message_set(db: Session, account_id: str) -> int:
     finally:
         db.commit()
     return touched
+
+
+def record_snapshot(db: Session, account_id: str, snapshot_id: str) -> int:
+    """Bulk INSERT a snapshot_messages row for every alive message in the
+    account. Idempotent via INSERT ... ON CONFLICT DO NOTHING.
+    Returns count of rows actually inserted.
+    """
+    from mailfallback.models import MailIndexMessage, SnapshotMessage
+
+    alive = (
+        db.query(MailIndexMessage.message_id_hash)
+        .filter(
+            MailIndexMessage.account_id == account_id,
+            MailIndexMessage.deleted_at.is_(None),
+        )
+        .all()
+    )
+    if not alive:
+        return 0
+
+    rows = [
+        {"snapshot_id": snapshot_id, "account_id": account_id, "message_id_hash": h[0]}
+        for h in alive
+    ]
+    if db.bind.dialect.name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        stmt = pg_insert(SnapshotMessage).values(rows).on_conflict_do_nothing()
+    else:
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        stmt = sqlite_insert(SnapshotMessage).values(rows).on_conflict_do_nothing()
+    result = db.execute(stmt)
+    db.commit()
+    return result.rowcount or 0
