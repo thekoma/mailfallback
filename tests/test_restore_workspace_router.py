@@ -495,3 +495,57 @@ def test_workspace_snapshot_count(mock_restic, client, db_session, default_store
     body = resp.json()
     assert body["count"] == 2  # mid + now within last 7 days
     assert body["size_bytes"] == 5_000_000  # 2_000_000 + 3_000_000
+
+
+@patch("mailfallback.routers.restore.mount_service")
+@patch("mailfallback.routers.restore._connect_dovecot_for_account")
+@patch("mailfallback.routers.restore.restic_service")
+def test_workspace_search_uses_account_namespace_for_live_select(
+    mock_restic, mock_connect, mock_mount, client, db_session, default_store, login_user
+):
+    """B5 regression: live SELECT must use the account's full namespace prefix,
+    not bare 'INBOX'. Otherwise the dovecot SELECT fails silently and search
+    returns 0 results even when matches exist."""
+    repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
+    db_session.add(repo)
+    acct = Account(
+        name="Andrea",
+        store=default_store,
+        maildir_path="/data/mailboxes/a",
+        imap_host="imap.example.com",
+        email_address="andrea@example.com",
+    )
+    db_session.add(acct)
+    db_session.flush()
+    acct.owners.append(login_user)
+    db_session.add(BackupPolicy(account_id=acct.id, destination_id=repo.id))
+    db_session.commit()
+
+    mock_restic.list_snapshots.return_value = []  # no snapshots — only live
+
+    fake_conn = MagicMock()
+    fake_conn.select.return_value = ("OK", [b"0"])
+    fake_conn.uid.return_value = ("OK", [b""])
+    mock_connect.return_value = (fake_conn, "_restore_test")
+
+    login_resp = client.post("/api/auth/login", json={"username": "koma", "password": "x"})
+    assert login_resp.status_code in (200, 303)
+
+    resp = client.post(
+        "/api/restore/workspace/search",
+        json={
+            "account_id": acct.id,
+            "query": "test",
+            "range_start": "2026-01-01T00:00:00Z",
+            "range_end": "2026-12-31T23:59:59Z",
+            "include_live": True,
+            "include_snapshots": False,
+        },
+    )
+    assert resp.status_code == 200
+
+    # The SELECT must target the prefixed live namespace, not bare "INBOX".
+    short_id = acct.id[-4:]
+    expected_target = f'"Andrea (andrea@example.com) [{short_id}]/INBOX"'
+    actual_targets = [call.args[0] for call in fake_conn.select.call_args_list]
+    assert expected_target in actual_targets, f"Expected {expected_target} in {actual_targets}"

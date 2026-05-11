@@ -58,8 +58,7 @@ def userdb_lookup(username: str, db: Session = Depends(get_db)):
     namespaces = []
     for i, account in enumerate(accounts):
         is_inbox = i == 0
-        short_id = account.id[-4:]
-        prefix = f"{account.name} ({account.email_address}) [{short_id}]/"
+        prefix = account_namespace_prefix(account)
 
         namespaces.append(
             {
@@ -118,3 +117,16 @@ def userdb_lookup(username: str, db: Session = Depends(get_db)):
         "home": home,
         "namespaces": namespaces,
     }
+
+
+def account_namespace_prefix(account) -> str:
+    """Build the Dovecot namespace prefix for an Account.
+
+    Single source of truth — used by both the userdb publisher (this module)
+    and the workspace search consumer (routers/restore.py). The format must
+    stay byte-for-byte identical to what Dovecot publishes; otherwise IMAP
+    SELECT against the live mailbox fails silently and search returns 0 hits
+    (B5 regression).
+    """
+    short_id = account.id[-4:]
+    return f"{account.name} ({account.email_address}) [{short_id}]/"

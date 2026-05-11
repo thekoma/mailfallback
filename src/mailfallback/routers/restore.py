@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from mailfallback.config import settings
 from mailfallback.dependencies import get_current_user, get_db
 from mailfallback.models import BackupPolicy, RecoveryStatus, User
+from mailfallback.routers.dovecot import account_namespace_prefix
 from mailfallback.services import account_service, mount_service, restic_service
 from mailfallback.services.audit_service import log_action
 from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
@@ -167,8 +168,9 @@ def cancel_restore(
 
 
 def _get_namespace_prefix(account):
-    short_id = account.id[-4:]
-    return f"{account.name} ({account.email_address}) [{short_id}]/"
+    # Delegate to the dovecot router's helper so the publisher and consumer
+    # never drift. See B5: any divergence makes IMAP SELECT silently fail.
+    return account_namespace_prefix(account)
 
 
 def _connect_dovecot_for_account(db, account):
@@ -583,9 +585,14 @@ def workspace_search(
     conn, temp_username = _connect_dovecot_for_account(db, account)
     try:
         if req.include_live:
+            # B5: Dovecot publishes the live mailbox under the account's
+            # full namespace prefix (e.g. "Andrea (andrea@x) [c260]/"); the
+            # temp restore IMAP user inherits the same namespaces. Selecting
+            # bare "INBOX" returns NO and the search silently yields 0 hits.
+            live_prefix = account_namespace_prefix(account)
             for hit in _search_namespace_for_query(
                 conn,
-                namespace="",
+                namespace=live_prefix,
                 query=req.query,
                 criteria_fields=criteria,
                 type_filter=req.type_filter,
