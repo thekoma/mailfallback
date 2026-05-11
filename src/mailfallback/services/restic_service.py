@@ -215,6 +215,37 @@ def apply_retention(
     return {"pruned": True, "removed_snapshot_ids": removed_ids, "output": result.stdout}
 
 
+def list_files(destination, account_id: str, snapshot_id: str):
+    """Yield file paths inside a snapshot. Uses restic ls --json --recursive.
+
+    Returns a generator of strings (paths inside the snapshot). Directory
+    entries are filtered out — only file paths are yielded.
+    """
+    env = build_env(destination, account_id)
+    result = _run_restic(
+        ["ls", "--json", "--recursive", snapshot_id],
+        env,
+        _is_insecure(destination),
+    )
+    if result.returncode != 0:
+        return
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if entry.get("type") != "node":
+            continue
+        if entry.get("node_type") != "file":
+            continue
+        path = entry.get("path")
+        if path:
+            yield path
+
+
 def forget_all(destination: Repository, account_id: str) -> bool:
     """Delete all snapshots from the repository."""
     env = build_env(destination, account_id)
