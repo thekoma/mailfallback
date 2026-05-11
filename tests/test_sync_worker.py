@@ -175,6 +175,86 @@ def test_get_sync_executor_creates_pool():
         sync_worker.shutdown_sync_executor()
 
 
+@patch("mailfallback.services.sync_worker.index_service")
+@patch("mailfallback.services.sync_worker.subprocess.run")
+def test_sync_worker_calls_index_service_after_success(
+    mock_run, mock_index, db_session, default_store
+):
+    """A successful mbsync run triggers an index update."""
+    from mailfallback.models import Account, AuthType, JobStatus, SyncJob
+    from mailfallback.services import sync_worker
+
+    acct = Account(
+        name="a",
+        store=default_store,
+        maildir_path="/tmp/test_index_hook_a",
+        imap_host="imap.example.com",
+        imap_user="u",
+        credentials=None,
+        auth_type=AuthType.app_password,
+    )
+    db_session.add(acct)
+    db_session.commit()
+    acct_id = acct.id
+
+    job = SyncJob(account_id=acct.id, source="manual", status=JobStatus.pending)
+    db_session.add(job)
+    db_session.commit()
+
+    mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = iter(["ok\n"])
+    mock_proc.returncode = 0
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"),
+    ):
+        sync_worker.execute_sync_job(db_session, job.id)
+
+    mock_index.upsert_message_set.assert_called_once_with(db_session, acct_id)
+
+
+@patch("mailfallback.services.sync_worker.index_service")
+@patch("mailfallback.services.sync_worker.subprocess.run")
+def test_sync_worker_index_failure_does_not_break_sync(
+    mock_run, mock_index, db_session, default_store
+):
+    """If index_service raises, the sync still reports success."""
+    from mailfallback.models import Account, AuthType, JobStatus, SyncJob
+    from mailfallback.services import sync_worker
+
+    acct = Account(
+        name="b",
+        store=default_store,
+        maildir_path="/tmp/test_index_hook_b",
+        imap_host="imap.example.com",
+        imap_user="u",
+        credentials=None,
+        auth_type=AuthType.app_password,
+    )
+    db_session.add(acct)
+    db_session.commit()
+
+    job = SyncJob(account_id=acct.id, source="manual", status=JobStatus.pending)
+    db_session.add(job)
+    db_session.commit()
+
+    mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    mock_index.upsert_message_set.side_effect = RuntimeError("indexer kaboom")
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = iter(["ok\n"])
+    mock_proc.returncode = 0
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"),
+    ):
+        sync_worker.execute_sync_job(db_session, job.id)
+    db_session.refresh(job)
+    assert job.status == JobStatus.completed  # NOT failed
+
+
 def test_sync_blocked_unauthenticated():
     db = MagicMock()
     job = MagicMock()

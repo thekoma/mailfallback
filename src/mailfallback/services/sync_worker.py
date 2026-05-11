@@ -13,6 +13,7 @@ from mailfallback.config import settings
 from mailfallback.db import SessionLocal
 from mailfallback.models import Account, JobStatus, SyncJob, SyncState
 from mailfallback.security import decrypt_credentials
+from mailfallback.services import index_service
 from mailfallback.services.mbsync_config import generate_mbsyncrc
 from mailfallback.services.sync_progress import parse_mbsync_lines
 
@@ -299,6 +300,10 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 cleanup_old_jobs(db, account.id)
             except Exception:
                 logger.warning("Failed to cleanup old jobs for %s", account.name, exc_info=True)
+            try:
+                index_service.upsert_message_set(db, account.id)
+            except Exception:
+                logger.warning("Mail index upsert failed for %s", account.name, exc_info=True)
         else:
             job.status = JobStatus.failed
             account.sync_state = SyncState.error
