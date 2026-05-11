@@ -47,12 +47,12 @@
             <div class="ws-range-fill"
                  :style="`left: ${fillLeft}%; width: ${fillWidth}%`"></div>
             <input type="range" min="0" max="365" step="1"
-                   x-model.number="startDays"
-                   @input="onRangeChange()"
+                   :value="365 - startDays"
+                   @input="startDays = 365 - parseInt($event.target.value, 10); onRangeChange()"
                    class="ws-range-input">
             <input type="range" min="0" max="365" step="1"
-                   x-model.number="endDays"
-                   @input="onRangeChange()"
+                   :value="365 - endDays"
+                   @input="endDays = 365 - parseInt($event.target.value, 10); onRangeChange()"
                    class="ws-range-input">
             <div class="ws-range-tooltip"
                  :style="`left: ${startThumbPct}%`"
