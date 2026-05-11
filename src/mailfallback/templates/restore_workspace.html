@@ -61,11 +61,31 @@
   <main class="workspace-panel">
     <form id="ws-search-form" onsubmit="event.preventDefault(); window.RestoreWorkspace.runSearch();">
       <div class="search-row" id="ws-search-row">
-        <input type="text" id="ws-query" placeholder="Search subject, sender…" autocomplete="off">
-        <button type="submit" class="primary">
+        <input type="text" id="ws-query" placeholder="Search…" autocomplete="off">
+        <button type="submit" class="primary ws-search-btn">
           <i data-lucide="search" class="icon-sm icon-inline"></i> Search
         </button>
       </div>
+      <details class="ws-filters">
+        <summary class="text-muted text-small">Filters</summary>
+        <div class="ws-filters-grid">
+          <fieldset>
+            <legend class="text-xsmall text-muted">Search in</legend>
+            <label class="text-small"><input type="checkbox" id="ws-sf-subject" checked> Subject</label>
+            <label class="text-small"><input type="checkbox" id="ws-sf-from"> From</label>
+            <label class="text-small"><input type="checkbox" id="ws-sf-to"> To</label>
+            <label class="text-small"><input type="checkbox" id="ws-sf-body"> Body</label>
+          </fieldset>
+          <label class="text-small">Type
+            <select id="ws-sf-type">
+              <option value="all">All</option>
+              <option value="unseen">Unread</option>
+              <option value="flagged">Flagged</option>
+              <option value="unanswered">Unanswered</option>
+            </select>
+          </label>
+        </div>
+      </details>
       <p class="text-muted text-xsmall" id="ws-mount-progress"></p>
     </form>
 

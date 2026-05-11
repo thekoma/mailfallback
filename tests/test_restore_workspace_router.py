@@ -92,12 +92,17 @@ def test_search_namespace_quotes_multi_word_query():
 
 
 def test_search_namespace_searches_subject_or_from():
-    """Verify SEARCH covers both Subject and From per spec."""
+    """Verify SEARCH covers both Subject and From when both are requested."""
     conn = MagicMock()
     conn.select.return_value = ("OK", [b"0"])
     conn.uid.return_value = ("OK", [b""])
 
-    _search_namespace_for_query(conn, namespace="", query="alice")
+    _search_namespace_for_query(
+        conn,
+        namespace="",
+        query="alice",
+        criteria_fields=["SUBJECT", "FROM"],
+    )
 
     call_args = conn.uid.call_args
     serialised = " ".join(str(a) for a in call_args.args)
@@ -296,18 +301,79 @@ def test_workspace_restore_post_to_existing_engine(
 
 
 def test_search_namespace_body_includes_body_criterion():
-    """Verify SEARCH includes BODY when search_body=True."""
+    """Verify SEARCH includes BODY when search_body=True (legacy compat path)."""
     conn = MagicMock()
     conn.select.return_value = ("OK", [b"0"])
     conn.uid.return_value = ("OK", [b""])
 
-    _search_namespace_for_query(conn, namespace="", query="alice", search_body=True)
+    _search_namespace_for_query(
+        conn,
+        namespace="",
+        query="alice",
+        criteria_fields=["SUBJECT", "FROM"],
+        search_body=True,
+    )
 
     call_args = conn.uid.call_args
     serialised = " ".join(str(a) for a in call_args.args)
     assert "BODY" in serialised
     assert "SUBJECT" in serialised
     assert "FROM" in serialised
+
+
+def test_search_namespace_uses_type_filter_and_multiple_criteria():
+    """Verify SEARCH builds the right OR chain with type prefix."""
+    conn = MagicMock()
+    conn.select.return_value = ("OK", [b"0"])
+    conn.uid.return_value = ("OK", [b""])
+
+    _search_namespace_for_query(
+        conn,
+        namespace="",
+        query="bob",
+        criteria_fields=["SUBJECT", "FROM", "TO"],
+        type_filter="unseen",
+    )
+
+    call_args = conn.uid.call_args
+    args = call_args.args
+    # Expected: SEARCH UNSEEN OR OR SUBJECT "bob" FROM "bob" TO "bob"
+    assert args[0] == "SEARCH"
+    assert args[1] == "UNSEEN"
+    assert args[2] == "OR"
+    assert args[3] == "OR"
+    assert "SUBJECT" in args
+    assert "FROM" in args
+    assert "TO" in args
+
+
+def test_search_namespace_single_field_no_or_chain():
+    """A single criterion should NOT produce any OR token."""
+    conn = MagicMock()
+    conn.select.return_value = ("OK", [b"0"])
+    conn.uid.return_value = ("OK", [b""])
+
+    _search_namespace_for_query(
+        conn,
+        namespace="",
+        query="hi",
+        criteria_fields=["SUBJECT"],
+    )
+
+    args = conn.uid.call_args.args
+    assert args == ("SEARCH", "SUBJECT", '"hi"')
+
+
+def test_search_namespace_default_is_subject_only():
+    """Calling without criteria_fields must default to SUBJECT only."""
+    conn = MagicMock()
+    conn.select.return_value = ("OK", [b"0"])
+    conn.uid.return_value = ("OK", [b""])
+
+    _search_namespace_for_query(conn, namespace="", query="hi")
+
+    args = conn.uid.call_args.args
+    assert args == ("SEARCH", "SUBJECT", '"hi"')
 
 
 @patch("mailfallback.routers.restore.mount_service")

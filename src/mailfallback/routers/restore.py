@@ -384,17 +384,33 @@ def _search_namespace_for_query(
     namespace: str,
     query: str,
     folder: str = "INBOX",
+    *,
+    criteria_fields: list[str] | None = None,
+    type_filter: str = "all",
     search_body: bool = False,
 ) -> list[dict]:
-    """Run a Dovecot SEARCH on `namespace + folder` for `query` (subject OR from).
+    """Run a Dovecot SEARCH on `namespace + folder` for `query`.
 
-    When `search_body=True`, the SEARCH also covers BODY. Without an FTS
-    plugin, BODY search grep-scans every message — slow. We accept the cost
-    when the user explicitly opts in via the workspace Advanced controls.
+    `criteria_fields`: subset of {"SUBJECT", "FROM", "TO", "BODY"} to search
+    across. The query is OR'd across the selected fields. Defaults to
+    ["SUBJECT"] when omitted.
+
+    `type_filter`: one of "all" | "unseen" | "flagged" | "unanswered". When
+    not "all", an IMAP type modifier is AND'd in front of the OR chain.
+
+    `search_body`: legacy compat flag. When True and BODY is not already in
+    `criteria_fields`, BODY is appended. Without an FTS plugin, BODY search
+    grep-scans every message — slow. The user opts in via UI.
 
     Returns a list of dicts with: uid, subject, from, namespace, folder, message_id.
     Caller is responsible for the connection lifecycle.
     """
+    if not criteria_fields:
+        criteria_fields = ["SUBJECT"]
+    # Honour the legacy search_body kwarg if BODY wasn't already requested.
+    if search_body and "BODY" not in criteria_fields:
+        criteria_fields = [*criteria_fields, "BODY"]
+
     target = f"{namespace}{folder}" if namespace else folder
     typ, _ = conn.select(f'"{target}"', readonly=True)
     if typ != "OK":
@@ -404,23 +420,19 @@ def _search_namespace_for_query(
     # token. _sanitize_imap_string strips ", \, and control chars, so the wrap
     # is safe against injection.
     quoted_arg = f'"{quoted}"'
-    # IMAP4rev1:
-    #   without body: `OR SUBJECT "x" FROM "x"` (2-way OR)
-    #   with body:    `OR OR SUBJECT "x" FROM "x" BODY "x"` (3-way OR)
-    if search_body:
-        typ, data = conn.uid(
-            "SEARCH",
-            "OR",
-            "OR",
-            "SUBJECT",
-            quoted_arg,
-            "FROM",
-            quoted_arg,
-            "BODY",
-            quoted_arg,
-        )
-    else:
-        typ, data = conn.uid("SEARCH", "OR", "SUBJECT", quoted_arg, "FROM", quoted_arg)
+
+    # Build SEARCH args: [TYPE_MODIFIER?] [OR x (n-1)] [FIELD QUOTED]*
+    args: list[str] = []
+    type_map = {"unseen": "UNSEEN", "flagged": "FLAGGED", "unanswered": "UNANSWERED"}
+    if type_filter in type_map:
+        args.append(type_map[type_filter])
+    # IMAP4rev1 OR is binary; chain (n-1) OR tokens to OR n criteria together.
+    for _ in range(len(criteria_fields) - 1):
+        args.append("OR")
+    for field in criteria_fields:
+        args.extend([field, quoted_arg])
+
+    typ, data = conn.uid("SEARCH", *args)
     if typ != "OK" or not data or not data[0]:
         return []
     raw = data[0].decode() if isinstance(data[0], bytes) else str(data[0])
@@ -495,7 +507,11 @@ class WorkspaceSearchRequest(BaseModel):
     range_end: datetime
     include_live: bool = True
     include_snapshots: bool = True
+    search_subject: bool = True
+    search_from: bool = False
+    search_to: bool = False
     search_body: bool = False
+    type_filter: str = "all"  # all|unseen|flagged|unanswered
     ttl_minutes: int | None = None  # override default ephemeral TTL
 
 
@@ -550,17 +566,39 @@ def workspace_search(
         ns_label = f"Recovery - {label} ({ts}) [{short}]/"
         mounted.append((snap_id, ns_label))
 
+    # Resolve which IMAP fields to search across. UI defaults to Subject only;
+    # if no flag is set we fall back to SUBJECT so the contract degrades safely.
+    criteria: list[str] = []
+    if req.search_subject:
+        criteria.append("SUBJECT")
+    if req.search_from:
+        criteria.append("FROM")
+    if req.search_to:
+        criteria.append("TO")
+    if req.search_body:
+        criteria.append("BODY")
+    if not criteria:
+        criteria = ["SUBJECT"]
+
     # Search live first, then each mounted snapshot.
     conn, temp_username = _connect_dovecot_for_account(db, account)
     try:
         if req.include_live:
             for hit in _search_namespace_for_query(
-                conn, namespace="", query=req.query, search_body=req.search_body
+                conn,
+                namespace="",
+                query=req.query,
+                criteria_fields=criteria,
+                type_filter=req.type_filter,
             ):
                 _merge_hit(results_by_msgid, hit, source_label="live")
         for snap_id, ns in mounted:
             for hit in _search_namespace_for_query(
-                conn, namespace=ns, query=req.query, search_body=req.search_body
+                conn,
+                namespace=ns,
+                query=req.query,
+                criteria_fields=criteria,
+                type_filter=req.type_filter,
             ):
                 _merge_hit(results_by_msgid, hit, source_label=snap_id)
     finally:

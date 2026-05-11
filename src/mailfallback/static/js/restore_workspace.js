@@ -100,7 +100,15 @@
     const rangeEnd = document.getElementById('ws-range-end').value;
     const includeLive = document.getElementById('ws-include-live').checked;
     const includeSnapshots = document.getElementById('ws-include-snapshots').checked;
-    const searchBody = document.getElementById('ws-search-body').checked;
+    // Multi-field filter panel — defaults to Subject ON when nothing else
+    // touched. The legacy "Search in body" switch in the sidebar Advanced
+    // section is OR'd with the new Body filter so neither path regresses.
+    const sfSubject = document.getElementById('ws-sf-subject').checked;
+    const sfFrom = document.getElementById('ws-sf-from').checked;
+    const sfTo = document.getElementById('ws-sf-to').checked;
+    const sfBody = document.getElementById('ws-sf-body').checked;
+    const sidebarSearchBody = document.getElementById('ws-search-body').checked;
+    const typeFilter = document.getElementById('ws-sf-type').value;
     const ttlOverrideRaw = document.getElementById('ws-ttl-override').value.trim();
     const ttlOverride = ttlOverrideRaw ? parseInt(ttlOverrideRaw, 10) : null;
     if (!query) return;
@@ -121,7 +129,11 @@
           range_end: new Date(rangeEnd + 'T23:59:59').toISOString(),
           include_live: includeLive,
           include_snapshots: includeSnapshots,
-          search_body: searchBody,
+          search_subject: sfSubject,
+          search_from: sfFrom,
+          search_to: sfTo,
+          search_body: sfBody || sidebarSearchBody,
+          type_filter: typeFilter,
           ttl_minutes: ttlOverride,
         }),
       });
