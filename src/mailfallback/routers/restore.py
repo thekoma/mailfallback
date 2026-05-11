@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_current_user, get_db
-from mailfallback.models import Account, BackupPolicy, RecoveryStatus, User
+from mailfallback.models import BackupPolicy, RecoveryStatus, User
 from mailfallback.services import account_service, mount_service, restic_service
 from mailfallback.services.audit_service import log_action
 from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
@@ -473,9 +473,10 @@ class WorkspaceSearchRequest(BaseModel):
 def workspace_search(
     req: WorkspaceSearchRequest,
     request: Request,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    account = db.query(Account).filter(Account.id == req.account_id).first()
+    account = account_service.get_account(db, req.account_id, user)
     if not account:
         raise HTTPException(404, "account not found")
 
@@ -512,7 +513,7 @@ def workspace_search(
         mounted.append((snap_id, ns_label))
 
     # Search live first, then each mounted snapshot.
-    conn = _connect_dovecot_for_account(db, account)
+    conn, temp_username = _connect_dovecot_for_account(db, account)
     try:
         if req.include_live:
             for hit in _search_namespace_for_query(conn, namespace="", query=req.query):
@@ -523,6 +524,7 @@ def workspace_search(
     finally:
         with contextlib.suppress(Exception):
             conn.logout()
+        delete_temp_imap_user(db, temp_username)
 
     return {
         "results": list(results_by_msgid.values()),
