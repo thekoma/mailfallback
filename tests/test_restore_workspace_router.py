@@ -153,3 +153,38 @@ def test_workspace_search_dedup_by_message_id(
     assert "live" in result["sources"]
     assert "snap1" in result["sources"]
     mock_delete_user.assert_called_once_with(db_session, "_restore_testuser")
+
+
+def test_restore_workspace_renders(client, db_session, default_store, login_user):
+    from mailfallback.models import Account, BackupPolicy, Repository
+
+    repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
+    db_session.add(repo)
+    acct = Account(
+        name="koma",
+        store=default_store,
+        maildir_path="/data/mailboxes/k",
+        imap_host="imap.example.com",
+    )
+    db_session.add(acct)
+    db_session.flush()
+    acct.owners.append(login_user)
+    db_session.add(BackupPolicy(account_id=acct.id, destination_id=repo.id))
+    db_session.commit()
+
+    # Authenticate (mirror the auth pattern from test_workspace_search_dedup_by_message_id).
+    login_resp = client.post(
+        "/api/auth/login",
+        json={"username": "koma", "password": "x"},
+    )
+    assert login_resp.status_code in (200, 303)
+
+    resp = client.get("/restore")
+    assert resp.status_code == 200
+    body = resp.content
+    # Preset chips visible
+    assert b'data-preset="single-mail"' in body
+    assert b'data-preset="folder"' in body
+    assert b'data-preset="full"' in body
+    # Workspace marker
+    assert b"workspace" in body.lower() or b"page-restore-workspace" in body
