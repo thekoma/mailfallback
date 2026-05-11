@@ -79,3 +79,50 @@ def test_upsert_message_set_updates_rebuild_status_watermark(db_session, maildir
     )
     assert rs.state == "idle"
     assert rs.last_indexed_at is not None
+
+
+def test_record_snapshot_inserts_bits_for_alive_messages(db_session, maildir_account):
+    from mailfallback.models import SnapshotMessage
+
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    n = index_service.record_snapshot(db_session, maildir_account.id, "snap00001")
+    assert n == 2
+
+    bits = (
+        db_session.query(SnapshotMessage)
+        .filter(
+            SnapshotMessage.snapshot_id == "snap00001",
+            SnapshotMessage.account_id == maildir_account.id,
+        )
+        .all()
+    )
+    assert len(bits) == 2
+
+
+def test_record_snapshot_idempotent(db_session, maildir_account):
+    from mailfallback.models import SnapshotMessage
+
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    index_service.record_snapshot(db_session, maildir_account.id, "snap00001")
+    n = index_service.record_snapshot(db_session, maildir_account.id, "snap00001")
+    assert n == 0  # nothing new
+
+    bits = (
+        db_session.query(SnapshotMessage).filter(SnapshotMessage.snapshot_id == "snap00001").count()
+    )
+    assert bits == 2  # still 2, not 4
+
+
+def test_record_snapshot_excludes_deleted_messages(db_session, maildir_account, tmp_path):
+    from mailfallback.models import SnapshotMessage
+
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    (tmp_path / "INBOX" / "cur" / "1234567891.M2.host:2,").unlink()
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    # Now one message is deleted_at-set
+
+    index_service.record_snapshot(db_session, maildir_account.id, "snap00002")
+    bits = (
+        db_session.query(SnapshotMessage).filter(SnapshotMessage.snapshot_id == "snap00002").count()
+    )
+    assert bits == 1  # only the alive one
