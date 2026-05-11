@@ -203,6 +203,18 @@ def test_restore_workspace_renders(client, db_session, default_store, login_user
     db_session.flush()
     acct.owners.append(login_user)
     db_session.add(BackupPolicy(account_id=acct.id, destination_id=repo.id))
+
+    # Second account WITHOUT a backup policy — should still appear in the
+    # Destination dropdown (e.g. a fresh mailbox being seeded from a snapshot).
+    acct2 = Account(
+        name="seed",
+        store=default_store,
+        maildir_path="/data/mailboxes/seed",
+        imap_host="imap.example.com",
+    )
+    db_session.add(acct2)
+    db_session.flush()
+    acct2.owners.append(login_user)
     db_session.commit()
 
     # Authenticate (mirror the auth pattern from test_workspace_search_dedup_by_message_id).
@@ -221,6 +233,9 @@ def test_restore_workspace_renders(client, db_session, default_store, login_user
     assert b'data-preset="full"' in body
     # Workspace marker
     assert b"workspace" in body.lower() or b"page-restore-workspace" in body
+    # Destination dropdown lists ALL owned accounts, including the one
+    # without a backup policy (Fix B).
+    assert acct2.id.encode() in body
 
 
 @patch("mailfallback.routers.restore.submit_restore_job")

@@ -73,6 +73,9 @@ def restore_page(request: Request, db: Session = Depends(get_db)):
     # Build the protected/unprotected lists used by the template.
     protected = [(a, by_account[a.id]) for a in accounts if a.id in by_account]
     unprotected = [a for a in accounts if a.id not in by_account]
+    # Destination dropdown lists every account the user owns — even ones
+    # without a backup policy (e.g. a fresh mailbox seeded from a snapshot).
+    all_accounts = sorted(accounts, key=lambda a: (a.name or "").lower())
 
     health = _compute_health(policies)
     total_snapshots = sum((p.last_snapshot_count or 0) for p in policies)
@@ -101,6 +104,7 @@ def restore_page(request: Request, db: Session = Depends(get_db)):
             "user": user,
             "protected": protected,
             "unprotected": unprotected,
+            "all_accounts": all_accounts,
             "health": health,
             "total_snapshots": total_snapshots,
             "most_recent_snapshot": most_recent,
