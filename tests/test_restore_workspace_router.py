@@ -770,3 +770,66 @@ def test_workspace_search_wrapper_uses_new_search_when_flag_on(
     assert "results" in body
     assert "mounted_snapshots" in body
     assert any(r["subject"] == "alpha keyword" for r in body["results"])
+
+
+@patch("mailfallback.routers.restore.delete_temp_imap_user")
+@patch("mailfallback.routers.restore._connect_dovecot_for_account")
+def test_workspace_wrapper_populates_uid_from_dovecot(
+    mock_connect,
+    mock_delete_user,
+    client,
+    db_session,
+    default_store,
+    login_user,
+    monkeypatch,
+):
+    """The deprecated wrapper must populate locations[0].uid by looking up
+    the Message-Id in Dovecot — the cycle-1 UI's Restore Selected depends
+    on having a real UID to pass back to /api/restore.
+    """
+    from mailfallback.config import settings
+    from mailfallback.models import Account, MailIndexMessage
+
+    monkeypatch.setattr(settings, "use_index_search", True)
+
+    acct = Account(name="a", store=default_store, maildir_path="/x", imap_host="i")
+    db_session.add(acct)
+    db_session.flush()
+    acct.owners.append(login_user)
+    db_session.add(
+        MailIndexMessage(
+            account_id=acct.id,
+            message_id_hash=b"\x42" * 20,
+            message_id="<msg42@h>",
+            subject="payload",
+            folder_path="INBOX",
+            maildir_filename="42.host:2,",
+        )
+    )
+    db_session.commit()
+
+    # Mock Dovecot to return UID 17 for the Message-Id query
+    fake_conn = MagicMock()
+    fake_conn.select.return_value = ("OK", [b"1"])
+    fake_conn.uid.return_value = ("OK", [b"17"])
+    mock_connect.return_value = (fake_conn, "_restore_test")
+
+    login = client.post("/api/auth/login", json={"username": "koma", "password": "x"})
+    assert login.status_code in (200, 303)
+
+    resp = client.post(
+        "/api/restore/workspace/search",
+        json={
+            "account_id": acct.id,
+            "query": "payload",
+            "range_start": "2026-01-01T00:00:00Z",
+            "range_end": "2026-12-31T23:59:59Z",
+            "include_live": True,
+            "include_snapshots": True,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["results"]) == 1
+    locations = body["results"][0]["locations"]
+    assert locations[0]["uid"] == "17"  # populated, not None
