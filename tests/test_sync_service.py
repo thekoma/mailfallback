@@ -8,7 +8,18 @@ from mailfallback.services.sync_service import create_sync_job, get_job, list_jo
 
 
 def make_session():
+    from sqlalchemy import event
+
     engine = create_engine("sqlite:///:memory:")
+
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        # mail_index schema needs an attached DB on SQLite (no native schemas)
+        cursor.execute("ATTACH DATABASE ':memory:' AS mail_index")
+        cursor.close()
+
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)()
 

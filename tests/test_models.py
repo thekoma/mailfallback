@@ -17,7 +17,18 @@ from mailfallback.models import (
 
 
 def make_session():
+    from sqlalchemy import event
+
     engine = create_engine("sqlite:///:memory:")
+
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        # mail_index schema needs an attached DB on SQLite (no native schemas)
+        cursor.execute("ATTACH DATABASE ':memory:' AS mail_index")
+        cursor.close()
+
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)()
 
@@ -376,3 +387,95 @@ def test_recovery_can_be_ephemeral_with_ttl(db_session, default_store):
 
     assert r.kind == RecoveryKind.ephemeral
     assert r.ttl_minutes == 30
+
+
+def test_mail_index_message_round_trip(db_session, default_store):
+    from datetime import UTC, datetime
+
+    from mailfallback.models import Account, MailIndexMessage
+
+    acct = Account(
+        name="a",
+        store=default_store,
+        maildir_path="/data/mailboxes/a",
+        imap_host="imap.example.com",
+    )
+    db_session.add(acct)
+    db_session.commit()
+
+    msg = MailIndexMessage(
+        account_id=acct.id,
+        message_id_hash=b"\x00" * 20,
+        message_id="<abc@host>",
+        date_sent=datetime(2026, 5, 11, 12, 0, tzinfo=UTC),
+        from_addr="alice@example.com",
+        from_name="Alice",
+        subject="Hello",
+        to_addrs=["bob@example.com"],
+        folder_path="INBOX",
+        maildir_filename="1234.M567.host:2,S",
+        size_bytes=1024,
+    )
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    assert msg.deleted_at is None
+    assert msg.first_seen_at is not None
+    assert msg.last_seen_at is not None
+    assert msg.to_addrs == ["bob@example.com"]
+
+
+def test_snapshot_message_round_trip(db_session, default_store):
+    from mailfallback.models import Account, MailIndexMessage, SnapshotMessage
+
+    acct = Account(
+        name="a",
+        store=default_store,
+        maildir_path="/data/mailboxes/a",
+        imap_host="imap.example.com",
+    )
+    db_session.add(acct)
+    db_session.commit()
+
+    msg = MailIndexMessage(
+        account_id=acct.id,
+        message_id_hash=b"\x01" * 20,
+        message_id="<def@host>",
+        folder_path="INBOX",
+        maildir_filename="2345.host:2,",
+    )
+    db_session.add(msg)
+    db_session.commit()
+
+    snap = SnapshotMessage(
+        snapshot_id="abc12345",
+        account_id=acct.id,
+        message_id_hash=b"\x01" * 20,
+    )
+    db_session.add(snap)
+    db_session.commit()
+    db_session.refresh(snap)
+
+    assert snap.snapshot_id == "abc12345"
+
+
+def test_rebuild_status_defaults(db_session, default_store):
+    from mailfallback.models import Account, MailIndexRebuildStatus
+
+    acct = Account(
+        name="a",
+        store=default_store,
+        maildir_path="/data/mailboxes/a",
+        imap_host="imap.example.com",
+    )
+    db_session.add(acct)
+    db_session.commit()
+
+    rs = MailIndexRebuildStatus(account_id=acct.id, state="idle")
+    db_session.add(rs)
+    db_session.commit()
+    db_session.refresh(rs)
+
+    assert rs.state == "idle"
+    assert rs.last_indexed_at is None
