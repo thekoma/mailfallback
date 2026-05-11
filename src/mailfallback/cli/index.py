@@ -50,12 +50,18 @@ def _backfill_snapshots(account_id: str) -> int:
 
     db = SessionLocal()
     try:
+        skipped = 0
         for progress in index_service.backfill_snapshots(db, account_id):
+            if progress.get("skipped"):
+                skipped += 1
+                continue
             print(
                 f"  snap {progress['snapshot_id']}: "
                 f"{progress['processed']}/{progress['total']}, "
                 f"+{progress['bits_inserted']} bits"
             )
+        if skipped:
+            print(f"Skipped {skipped} already-processed snapshot(s).")
         print("Done.")
         return 0
     finally:

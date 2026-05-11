@@ -228,3 +228,39 @@ def test_upsert_message_set_batched_commits(db_session, default_store, tmp_path,
     # 5 messages / 2 per batch = 3 batches → at least 3 mid-walk commits
     # plus the final commits in the success path. We just assert >2.
     assert commit_count[0] >= 3
+
+
+@patch("mailfallback.services.index_service.restic_service")
+def test_backfill_snapshots_skips_already_processed(mock_restic, db_session, maildir_account):
+    """Snapshots that already have rows in snapshot_messages should be skipped."""
+    from mailfallback.models import BackupPolicy, Repository
+
+    repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
+    db_session.add(repo)
+    db_session.flush()
+    db_session.add(BackupPolicy(account_id=maildir_account.id, destination_id=repo.id))
+    db_session.commit()
+
+    # Walk live + record an existing snapshot manually (simulating prior backfill)
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    index_service.record_snapshot(db_session, maildir_account.id, "snapDONE")
+
+    # Now restic reports two snapshots: one already done, one new
+    mock_restic.list_snapshots.return_value = [
+        {"short_id": "snapDONE", "time": "2026-05-01T10:00:00Z"},
+        {"short_id": "snapNEW", "time": "2026-05-02T10:00:00Z"},
+    ]
+
+    list_files_call_args = []
+
+    def fake_list_files(dest, account_id, sid):
+        list_files_call_args.append(sid)
+        return iter([])
+
+    mock_restic.list_files.side_effect = fake_list_files
+
+    list(index_service.backfill_snapshots(db_session, maildir_account.id))
+
+    # snapDONE should be SKIPPED — list_files only called for snapNEW
+    assert "snapDONE" not in list_files_call_args
+    assert "snapNEW" in list_files_call_args
