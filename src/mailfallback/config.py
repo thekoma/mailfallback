@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     confs_path: str = "/confs"
 
     search_body_candidate_cap: int = 500
+    use_index_search: bool = True
 
     db_host: str = "db"
     db_port: int = 5432
