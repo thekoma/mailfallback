@@ -1,4 +1,5 @@
 # src/mailfallback/routers/restore.py
+import email
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -345,6 +346,63 @@ def list_messages(
     finally:
         conn.logout()
         delete_temp_imap_user(db, temp_username)
+
+
+def _fetch_message_header(conn, uid, folder_name: str = "") -> dict | None:
+    """Fetch RFC822 headers for one UID and return a small envelope dict.
+
+    Used by `_search_namespace_for_query`. Returns None on failure.
+    """
+    try:
+        typ, data = conn.uid("FETCH", uid, "(BODY.PEEK[HEADER])")
+    except Exception:
+        return None
+    if typ != "OK" or not data:
+        return None
+    raw_header = b""
+    for item in data:
+        if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], (bytes, bytearray)):
+            raw_header = bytes(item[1])
+            break
+    if not raw_header:
+        return None
+    msg = email.message_from_bytes(raw_header)
+    env = {
+        "uid": str(uid) if not isinstance(uid, str) else uid,
+        "subject": (msg.get("Subject") or "").strip(),
+        "from": (msg.get("From") or "").strip(),
+        "folder": folder_name,
+        "message_id": (msg.get("Message-Id") or "").strip("<>").strip(),
+    }
+    return env
+
+
+def _search_namespace_for_query(
+    conn, namespace: str, query: str, folder: str = "INBOX"
+) -> list[dict]:
+    """Run a Dovecot SEARCH on `namespace + folder` for `query` (subject only).
+
+    Returns a list of dicts with: uid, subject, from, namespace, folder, message_id.
+    Caller is responsible for the connection lifecycle.
+    """
+    target = f"{namespace}{folder}" if namespace else folder
+    typ, _ = conn.select(f'"{target}"', readonly=True)
+    if typ != "OK":
+        return []
+    quoted = _sanitize_imap_string(query)
+    typ, data = conn.uid("SEARCH", "SUBJECT", quoted)
+    if typ != "OK" or not data or not data[0]:
+        return []
+    raw = data[0].decode() if isinstance(data[0], bytes) else str(data[0])
+    uids = raw.split()
+    hits: list[dict] = []
+    for uid in uids:
+        env = _fetch_message_header(conn, uid, folder_name=target)
+        if env:
+            env["namespace"] = namespace
+            env["folder"] = folder
+            hits.append(env)
+    return hits
 
 
 @browse_router.get("/accounts/{account_id}/mailboxes/{folder:path}/search")
