@@ -1,5 +1,8 @@
 # src/mailfallback/routers/restore.py
+import contextlib
+import email
 import re
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -7,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_current_user, get_db
-from mailfallback.models import User
-from mailfallback.services import account_service
+from mailfallback.models import BackupPolicy, RecoveryStatus, User
+from mailfallback.services import account_service, mount_service, restic_service
 from mailfallback.services.audit_service import log_action
 from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
 from mailfallback.services.imap_check import connect_imap
@@ -347,6 +350,91 @@ def list_messages(
         delete_temp_imap_user(db, temp_username)
 
 
+def _fetch_message_header(conn, uid, folder_name: str = "") -> dict | None:
+    """Fetch RFC822 headers for one UID and return a small envelope dict.
+
+    Used by `_search_namespace_for_query`. Returns None on failure.
+    """
+    try:
+        typ, data = conn.uid("FETCH", uid, "(BODY.PEEK[HEADER])")
+    except Exception:
+        return None
+    if typ != "OK" or not data:
+        return None
+    raw_header = b""
+    for item in data:
+        if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], (bytes, bytearray)):
+            raw_header = bytes(item[1])
+            break
+    if not raw_header:
+        return None
+    msg = email.message_from_bytes(raw_header)
+    env = {
+        "uid": str(uid) if not isinstance(uid, str) else uid,
+        "subject": (msg.get("Subject") or "").strip(),
+        "from": (msg.get("From") or "").strip(),
+        "folder": folder_name,
+        "message_id": (msg.get("Message-Id") or "").strip("<>").strip(),
+    }
+    return env
+
+
+def _search_namespace_for_query(
+    conn,
+    namespace: str,
+    query: str,
+    folder: str = "INBOX",
+    search_body: bool = False,
+) -> list[dict]:
+    """Run a Dovecot SEARCH on `namespace + folder` for `query` (subject OR from).
+
+    When `search_body=True`, the SEARCH also covers BODY. Without an FTS
+    plugin, BODY search grep-scans every message — slow. We accept the cost
+    when the user explicitly opts in via the workspace Advanced controls.
+
+    Returns a list of dicts with: uid, subject, from, namespace, folder, message_id.
+    Caller is responsible for the connection lifecycle.
+    """
+    target = f"{namespace}{folder}" if namespace else folder
+    typ, _ = conn.select(f'"{target}"', readonly=True)
+    if typ != "OK":
+        return []
+    quoted = _sanitize_imap_string(query)
+    # Wrap in IMAP quoted-string so multi-word queries are passed as a single
+    # token. _sanitize_imap_string strips ", \, and control chars, so the wrap
+    # is safe against injection.
+    quoted_arg = f'"{quoted}"'
+    # IMAP4rev1:
+    #   without body: `OR SUBJECT "x" FROM "x"` (2-way OR)
+    #   with body:    `OR OR SUBJECT "x" FROM "x" BODY "x"` (3-way OR)
+    if search_body:
+        typ, data = conn.uid(
+            "SEARCH",
+            "OR",
+            "OR",
+            "SUBJECT",
+            quoted_arg,
+            "FROM",
+            quoted_arg,
+            "BODY",
+            quoted_arg,
+        )
+    else:
+        typ, data = conn.uid("SEARCH", "OR", "SUBJECT", quoted_arg, "FROM", quoted_arg)
+    if typ != "OK" or not data or not data[0]:
+        return []
+    raw = data[0].decode() if isinstance(data[0], bytes) else str(data[0])
+    uids = raw.split()
+    hits: list[dict] = []
+    for uid in uids:
+        env = _fetch_message_header(conn, uid, folder_name=target)
+        if env:
+            env["namespace"] = namespace
+            env["folder"] = folder
+            hits.append(env)
+    return hits
+
+
 @browse_router.get("/accounts/{account_id}/mailboxes/{folder:path}/search")
 def search_messages(
     account_id: str,
@@ -393,3 +481,178 @@ def search_messages(
     finally:
         conn.logout()
         delete_temp_imap_user(db, temp_username)
+
+
+# ---------------------------------------------------------------------------
+# Workspace search endpoint — live + mounted snapshots, deduped by Message-Id
+# ---------------------------------------------------------------------------
+
+
+class WorkspaceSearchRequest(BaseModel):
+    account_id: str
+    query: str
+    range_start: datetime
+    range_end: datetime
+    include_live: bool = True
+    include_snapshots: bool = True
+    search_body: bool = False
+    ttl_minutes: int | None = None  # override default ephemeral TTL
+
+
+@router.post("/workspace/search")
+def workspace_search(
+    req: WorkspaceSearchRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account = account_service.get_account(db, req.account_id, user)
+    if not account:
+        raise HTTPException(404, "account not found")
+
+    results_by_msgid: dict[str, dict] = {}
+
+    # Find in-range snapshots (by snapshot time).
+    snapshot_ids: list[str] = []
+    if req.include_snapshots:
+        backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == req.account_id).first()
+        if backup:
+            try:
+                snaps = restic_service.list_snapshots(backup.destination, account.id)
+            except Exception:
+                snaps = []
+            for s in snaps:
+                ts_raw = s.get("time", "").replace("Z", "+00:00")
+                if not ts_raw:
+                    continue
+                try:
+                    ts = datetime.fromisoformat(ts_raw)
+                except ValueError:
+                    continue
+                if req.range_start <= ts <= req.range_end:
+                    snapshot_ids.append(s.get("short_id") or s.get("id", "")[:8])
+
+    # Mount each snapshot ephemeral (idempotent, capped).
+    mounted: list[tuple[str, str]] = []  # (snapshot_id, namespace_prefix)
+    mount_kwargs: dict = {}
+    if req.ttl_minutes is not None:
+        mount_kwargs["ttl_minutes"] = req.ttl_minutes
+    for snap_id in snapshot_ids[: settings.recovery_max_parallel_mounts]:
+        rec = mount_service.ensure_mounted(db, req.account_id, snap_id, **mount_kwargs)
+        if rec.status != RecoveryStatus.ready:
+            continue
+        # Namespace label MUST match the prefix Dovecot publishes in
+        # routers/dovecot.py for this Recovery — otherwise SELECT fails on
+        # the temp IMAP user. Keep the two formatters in sync.
+        short = (rec.snapshot_id or rec.id)[:8]
+        label = account.name
+        ts = rec.restored_at.strftime("%Y-%m-%d") if rec.restored_at else "snapshot"
+        ns_label = f"Recovery — {label} ({ts}) [{short}]/"
+        mounted.append((snap_id, ns_label))
+
+    # Search live first, then each mounted snapshot.
+    conn, temp_username = _connect_dovecot_for_account(db, account)
+    try:
+        if req.include_live:
+            for hit in _search_namespace_for_query(
+                conn, namespace="", query=req.query, search_body=req.search_body
+            ):
+                _merge_hit(results_by_msgid, hit, source_label="live")
+        for snap_id, ns in mounted:
+            for hit in _search_namespace_for_query(
+                conn, namespace=ns, query=req.query, search_body=req.search_body
+            ):
+                _merge_hit(results_by_msgid, hit, source_label=snap_id)
+    finally:
+        with contextlib.suppress(Exception):
+            conn.logout()
+        delete_temp_imap_user(db, temp_username)
+
+    return {
+        "results": list(results_by_msgid.values()),
+        "mounted_snapshots": [s for s, _ in mounted],
+    }
+
+
+class WorkspaceSnapshotCountRequest(BaseModel):
+    account_id: str
+    range_start: datetime
+    range_end: datetime
+
+
+@router.post("/workspace/snapshot-count")
+def workspace_snapshot_count(
+    req: WorkspaceSnapshotCountRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Count snapshots in the requested range and sum their sizes.
+
+    Cheap operation: just lists snapshots from restic and filters by time;
+    no mount happens. Used by the workspace UI to show the cost of widening
+    the time range.
+    """
+    account = account_service.get_account(db, req.account_id, user)
+    if not account:
+        raise HTTPException(404, "account not found")
+
+    backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == req.account_id).first()
+    if not backup:
+        return {"count": 0, "size_bytes": 0}
+
+    try:
+        snaps = restic_service.list_snapshots(backup.destination, account.id)
+    except Exception:
+        return {"count": 0, "size_bytes": 0}
+
+    count = 0
+    size_bytes = 0
+    for s in snaps:
+        ts_raw = s.get("time", "").replace("Z", "+00:00")
+        if not ts_raw:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_raw)
+        except ValueError:
+            continue
+        if req.range_start <= ts <= req.range_end:
+            count += 1
+            # restic snapshot dicts may have "summary" with "total_bytes_processed"
+            summary = s.get("summary") or {}
+            size_bytes += summary.get("total_bytes_processed") or 0
+
+    return {"count": count, "size_bytes": size_bytes}
+
+
+def _merge_hit(dedup: dict[str, dict], hit: dict, source_label: str) -> None:
+    """Merge a hit into the dedup map keyed by Message-Id, preserving per-source location.
+
+    Each entry has:
+      message_id, subject, from, folder (top-level for display),
+      sources: [labels...],
+      locations: [ {source, namespace, folder, uid}, ... ]
+    """
+    msgid = hit.get("message_id") or f"_no_msgid_{source_label}_{hit.get('uid')}"
+    location = {
+        "source": source_label,
+        "namespace": hit.get("namespace", ""),
+        "folder": hit.get("folder", ""),
+        "uid": hit.get("uid"),
+    }
+    if msgid in dedup:
+        if source_label not in dedup[msgid]["sources"]:
+            dedup[msgid]["sources"].append(source_label)
+            dedup[msgid]["locations"].append(location)
+    else:
+        # Top-level subject/from/folder are kept for display; locations holds
+        # the per-source (namespace, folder, uid) used by Restore Selected.
+        entry = {
+            "message_id": msgid,
+            "subject": hit.get("subject"),
+            "from": hit.get("from"),
+            "folder": hit.get("folder", ""),
+            "sources": [source_label],
+            "locations": [location],
+        }
+        dedup[msgid] = entry

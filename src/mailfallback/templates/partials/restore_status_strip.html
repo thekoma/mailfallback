@@ -1,0 +1,33 @@
+{# Demoted health/calendar — moved out of the primary surface. #}
+<details class="restore-status-strip">
+  <summary class="text-muted text-small">
+    <i data-lucide="activity" class="icon-sm icon-inline"></i> Off-site policy status & calendar
+  </summary>
+  <div class="restore-status-body">
+    {# Health line — short, colored. #}
+    <p class="status-line {{ health|default('unknown') }}">
+      {% if health == "all_clear" %}
+      ● All clear · {{ protected|length }} mailbox(es) safe · last snapshot {{ most_recent_snapshot|time_ago if most_recent_snapshot else "—" }}
+      {% elif health == "attention" %}
+      ● Check your backups — at least one missed run.
+      {% elif health == "critical" %}
+      ● No successful off-site copy in 7+ days for at least one mailbox.
+      {% else %}
+      ○ No safety net configured yet — <a href="/admin/backup">add a Repository →</a>
+      {% endif %}
+    </p>
+    {# Compact per-account snapshot strip (reuses calendar-row partials lazily). #}
+    {% for account, _policy in protected %}
+    <div class="calendar-row compact"
+         id="status-row-{{ account.id }}"
+         hx-get="/restore/partials/calendar/{{ account.id }}"
+         hx-trigger="revealed"
+         hx-swap="outerHTML">
+      <div class="cal-mailbox"><strong>{{ account.name }}</strong></div>
+      <div class="cal-strip is-loading">
+        {% for _ in range(20) %}<span class="snap-dot-skeleton"></span>{% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</details>

@@ -2,7 +2,7 @@
 <table>
     <thead>
         <tr>
-            <th>Account</th>
+            <th class="cell-wrap">Account</th>
             {% if user and user.role.value == "admin" %}<th>Owner</th>{% endif %}
             <th>Auth</th>
             <th>Stats</th>
@@ -15,7 +15,7 @@
     <tbody>
         {% for account in accounts %}
         <tr>
-            <td>
+            <td class="cell-wrap">
                 <a href="/accounts/{{ account.id }}"><strong>{{ account.name }}</strong></a>
                 {% if account.email_address %}
                 <br><span class="email-text">{{ account.email_address }}</span>
@@ -41,16 +41,10 @@
                 </span>
                 {% endif %}
             </td>
-            <td>
+            <td class="cell-stats">
                 {% if account.folder_stats %}
                 <span class="text-small">
-                    <i data-lucide="mail" class="icon-sm icon-inline"></i>{{ account.total_messages }}
-                    {% if account.unread_messages %}
-                    <span class="text-muted">({{ account.unread_messages }} unread)</span>
-                    {% endif %}
-                    {% if account.maildir_size_bytes %}
-                    <br><span class="text-muted">{{ account.maildir_size_bytes|filesizeformat }}</span>
-                    {% endif %}
+                    <i data-lucide="mail" class="icon-sm icon-inline"></i>{{ account.total_messages }}{% if account.unread_messages %} <span class="text-muted">· {{ account.unread_messages }} unread</span>{% endif %}{% if account.maildir_size_bytes %} <span class="text-muted">· {{ account.maildir_size_bytes|filesizeformat }}</span>{% endif %}
                 </span>
                 {% else %}
                 <span class="text-muted">—</span>
@@ -65,9 +59,7 @@
                 {% if not account.enabled %}
                 <span class="badge badge-disabled"><i data-lucide="eye-off" class="icon-sm"></i> Hidden</span>
                 {% endif %}
-                {% if account.suspended and account.name.startswith("Recovered ") %}
-                <span class="badge badge-syncing"><i data-lucide="cloud-download" class="icon-sm"></i> Recovered</span>
-                {% elif account.suspended %}
+                {% if account.suspended %}
                 <span class="badge badge-disabled"><i data-lucide="pause-circle" class="icon-sm"></i> Suspended</span>
                 {% elif account.sync_state.value == 'syncing' %}
                 <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm"></i> syncing</span>
@@ -164,6 +156,52 @@
                 </div>
             </td>
         </tr>
+        {% for r in account.recoveries|sort(attribute='restored_at', reverse=True) %}
+        <tr class="recovery-row">
+            <td class="cell-wrap">
+                └ Recovery <code>{{ r.snapshot_id[:8] }}</code>
+                {% if r.snapshot_time %}
+                <br><span class="email-text">{{ r.snapshot_time.strftime('%Y-%m-%d %H:%M') }}</span>
+                {% endif %}
+            </td>
+            {% if user and user.role.value == "admin" %}<td><span class="text-muted">—</span></td>{% endif %}
+            <td><span class="text-muted">—</span></td>
+            <td class="cell-stats">
+                {% if r.size_bytes %}
+                <span class="text-small text-muted">{{ r.size_bytes|filesizeformat }}</span>
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if r.status.value == "ready" %}
+                <span class="stats-pill"><span class="stats-dot stats-dot-ok"></span> Ready</span>
+                {% elif r.status.value == "restoring" %}
+                <span class="stats-pill"><span class="stats-dot stats-dot-syncing"></span> Restoring</span>
+                {% elif r.status.value == "deleting" %}
+                <span class="stats-pill"><span class="stats-dot stats-dot-syncing"></span> Deleting</span>
+                {% elif r.status.value == "failed" %}
+                <span class="stats-pill" title="{{ r.error or '' }}"><span class="stats-dot stats-dot-error"></span> Failed</span>
+                {% endif %}
+            </td>
+            <td>
+                <span class="text-muted text-small">restored {{ r.restored_at | time_ago }}</span>
+            </td>
+            <td><span class="text-muted">—</span></td>
+            <td>
+                <div class="actions flex-end">
+                    <form method="post" action="/accounts/{{ account.id }}/recoveries/{{ r.id }}/delete"
+                          data-confirm="Delete this recovery? The on-disk Maildir will be removed permanently."
+                          onsubmit="return confirm(this.dataset.confirm)" style="display:inline">
+                        <button type="submit" class="icon-btn danger" title="Delete recovery"
+                                {% if r.status.value == "restoring" %}disabled{% endif %}>
+                            <i data-lucide="trash-2" class="icon-sm"></i>
+                        </button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
         {% endfor %}
     </tbody>
 </table>

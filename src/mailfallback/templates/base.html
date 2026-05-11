@@ -10,7 +10,7 @@
     <script src="/static/vendor/htmx.min.js"></script>
     <script src="/static/vendor/lucide.min.js"></script>
 </head>
-<body{% if not user %} class="login-page"{% endif %}>
+<body class="{% block body_class %}{% endblock %}{% if not user %} login-page{% endif %}">
     <header class="topbar" id="topbar">
         <button id="menu-toggle" aria-label="Menu">
             <i data-lucide="menu" class="icon-xl"></i>

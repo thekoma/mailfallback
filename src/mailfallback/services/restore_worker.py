@@ -224,6 +224,15 @@ def execute_restore_job(db: Session, job_id: str) -> None:
 
 
 def _resolve_folders(src_conn, source, job):
+    # When selected_uids was passed (e.g. by the Restore Workspace), trust the
+    # keys verbatim — they may include alternative namespaces such as mounted
+    # Recovery snapshots ("Recovery — name (snap-X)/INBOX") that don't live
+    # under the source account's own namespace prefix. We pass each key as
+    # both the full IMAP path and the short folder key so the per-folder
+    # uid_filter lookup later in _execute_restore matches by the same key.
+    if job.selected_uids:
+        return [(folder, folder) for folder in job.selected_uids]
+
     namespace_prefix = _get_namespace_prefix(source)
     status, folder_data = src_conn.list(f'"{namespace_prefix}"', "*")
     if status != "OK" or not folder_data:
@@ -245,8 +254,6 @@ def _resolve_folders(src_conn, source, job):
 
     if job.selected_folders:
         return [(full, short) for full, short in all_folders if short in job.selected_folders]
-    if job.selected_uids:
-        return [(full, short) for full, short in all_folders if short in job.selected_uids]
     return all_folders
 
 
@@ -458,6 +465,12 @@ def _get_hierarchy_separator(conn):
 
 
 def _map_folder(folder_name, folder_mapping, separator="/", escape_char="_"):
+    # Strip the Dovecot Recovery namespace prefix when restoring from a
+    # snapshot mount. The destination user expects the message in their
+    # native folder (e.g., INBOX), not in a synthetic Recovery-prefixed
+    # one. Dovecot publishes these as "Recovery — <label> (<ts>) [<id>]/".
+    if folder_name.startswith("Recovery — ") and "/" in folder_name:
+        folder_name = folder_name.split("/", 1)[1]
     if separator != "/" and separator in folder_name:
         original = folder_name
         folder_name = folder_name.replace(separator, escape_char)

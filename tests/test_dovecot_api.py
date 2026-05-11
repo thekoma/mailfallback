@@ -1,7 +1,7 @@
 # tests/test_dovecot_api.py
 from datetime import UTC, datetime, timedelta
 
-from mailfallback.models import Account, User, UserRole
+from mailfallback.models import Account, Recovery, RecoveryStatus, User, UserRole
 from mailfallback.security import hash_password
 
 API_KEY = "test-key"
@@ -204,3 +204,45 @@ def test_userdb_filters_suspended_accounts(client, db_session, default_store):
     # Only the live account is exposed; the suspended placeholder is hidden
     assert len(namespaces) == 1
     assert namespaces[0]["mail_path"] == "/data/mailboxes/uuid-live"
+
+
+def test_userdb_includes_ready_recoveries_as_namespaces(client, db_session, default_store):
+    """Each ready Recovery becomes an extra read-only namespace."""
+    user = _create_user(db_session, default_store)
+    acc = _create_account(
+        db_session,
+        default_store,
+        name="Gmail",
+        email="alice@gmail.com",
+        maildir_path="/data/mailboxes/uuid-gmail",
+    )
+    acc.owners.append(user)
+
+    ready = Recovery(
+        account_id=acc.id,
+        snapshot_id="abcd1234",
+        restore_path="/data/mailboxes/.offsite-restore/uuid-gmail-20260510/data/mailboxes/uuid-gmail",
+        status=RecoveryStatus.ready,
+        restored_at=datetime.now(UTC),
+    )
+    pending = Recovery(
+        account_id=acc.id,
+        snapshot_id="ef567890",
+        restore_path="/data/mailboxes/.offsite-restore/uuid-gmail-pending",
+        status=RecoveryStatus.restoring,
+        restored_at=datetime.now(UTC),
+    )
+    db_session.add_all([ready, pending])
+    db_session.commit()
+
+    resp = client.get("/api/internal/dovecot/userdb/alice", headers=HEADERS)
+    assert resp.status_code == 200
+    namespaces = resp.json()["namespaces"]
+
+    # 1 account + 1 ready recovery (the restoring one is excluded)
+    assert len(namespaces) == 2
+    rec_ns = [n for n in namespaces if n["name"].startswith("rec_")]
+    assert len(rec_ns) == 1
+    assert rec_ns[0]["mail_path"] == ready.restore_path
+    assert rec_ns[0]["inbox"] is False
+    assert "Recovery" in rec_ns[0]["prefix"]
