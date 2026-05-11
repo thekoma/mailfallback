@@ -1,6 +1,7 @@
 # src/mailfallback/routers/restore.py
 import contextlib
 import email
+import logging
 import re
 from datetime import datetime
 
@@ -23,6 +24,8 @@ from mailfallback.services.restore_service import (
     get_restore_job,
 )
 from mailfallback.services.restore_worker import request_cancel, submit_restore_job
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/restore", tags=["restore"])
 browse_router = APIRouter(prefix="/api", tags=["browse"])
@@ -613,6 +616,59 @@ def workspace_search(
         page=1,
         page_size=200,
     )
+
+    # Resolve IMAP UIDs by Message-Id so cycle-1 UI's Restore Selected works.
+    # The pre-cycle-2 UI passes location.uid back to /api/restore — without
+    # this lookup the wrapper would return null UIDs and the restore fails.
+    # Group by (account, folder) so we share the SELECT across messages in
+    # the same folder. Cap is page_size=200 above.
+    msgids_by_account_folder: dict[tuple[str, str], list[str]] = {}
+    for r in new_result["results"]:
+        if not r["alive_in_live"]:
+            continue
+        key = (r["account_id"], r["folder_path"])
+        msgids_by_account_folder.setdefault(key, []).append(r["message_id"])
+
+    uid_by_msgid: dict[str, str | None] = {}
+    if msgids_by_account_folder:
+        accounts_seen = {acct_id for acct_id, _ in msgids_by_account_folder}
+        for acct_id in accounts_seen:
+            account = account_service.get_account(db, acct_id, user)
+            if not account:
+                continue
+            try:
+                conn, temp_user = _connect_dovecot_for_account(db, account)
+            except Exception:
+                logger.warning(
+                    "UID resolution: Dovecot connect failed for %s",
+                    acct_id,
+                    exc_info=True,
+                )
+                continue
+            try:
+                ns = account_namespace_prefix(account)
+                folders_for_account = {
+                    folder for (a, folder), _ in msgids_by_account_folder.items() if a == acct_id
+                }
+                for folder in folders_for_account:
+                    target = f'"{ns}{_sanitize_imap_string(folder)}"'
+                    typ, _ = conn.select(target, readonly=True)
+                    if typ != "OK":
+                        continue
+                    msgids = msgids_by_account_folder[(acct_id, folder)]
+                    for msgid in msgids:
+                        quoted = _sanitize_imap_string(msgid)
+                        typ, data = conn.uid("SEARCH", "HEADER", "Message-Id", f'"{quoted}"')
+                        if typ == "OK" and data and data[0]:
+                            uids = data[0].decode().split()
+                            if uids:
+                                uid_by_msgid[msgid] = uids[0]
+            finally:
+                with contextlib.suppress(Exception):
+                    conn.logout()
+                with contextlib.suppress(Exception):
+                    delete_temp_imap_user(db, temp_user)
+
     legacy_results = []
     for r in new_result["results"]:
         if r["alive_in_live"]:
@@ -633,7 +689,7 @@ def workspace_search(
                         "source": primary_source,
                         "namespace": "",
                         "folder": r["folder_path"],
-                        "uid": None,  # legacy uid not available from index — restore via Message-Id
+                        "uid": uid_by_msgid.get(r["message_id"]),
                     }
                 ],
             }
