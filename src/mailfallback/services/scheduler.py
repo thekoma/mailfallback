@@ -45,6 +45,18 @@ def _run_scheduled_sync(account_id: str) -> None:
         db.close()
 
 
+def _run_mount_cleanup() -> None:
+    db = SessionLocal()
+    try:
+        from mailfallback.services import mount_service
+
+        mount_service.cleanup_idle_mounts(db)
+    except Exception:
+        logger.exception("mount cleanup failed")
+    finally:
+        db.close()
+
+
 def sync_scheduler_jobs(db: Session) -> None:
     existing_job_ids = {j.id for j in scheduler.get_jobs()}
 
@@ -129,6 +141,13 @@ def backup_scheduler_jobs(db: Session) -> None:
 def start_scheduler(db: Session) -> None:
     sync_scheduler_jobs(db)
     backup_scheduler_jobs(db)
+    if not any(j.id == "mount-cleanup" for j in scheduler.get_jobs()):
+        scheduler.add_job(
+            _run_mount_cleanup,
+            CronTrigger(minute=0),  # every hour at :00
+            id="mount-cleanup",
+            replace_existing=True,
+        )
     if not scheduler.running:
         scheduler.start()
 
