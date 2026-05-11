@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from mailfallback.models import Account, BackupPolicy, Recovery, RecoveryStatus
+from mailfallback.models import Account, BackupPolicy, Recovery, RecoveryKind, RecoveryStatus
 from mailfallback.services import restic_service
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,14 @@ def _compute_size(path: str) -> int | None:
         return None
 
 
-def create_recovery(db: Session, account_id: str, snapshot_id: str) -> Recovery:
+def create_recovery(
+    db: Session,
+    account_id: str,
+    snapshot_id: str,
+    *,
+    kind: RecoveryKind = RecoveryKind.persistent,
+    ttl_minutes: int | None = None,
+) -> Recovery:
     """Restore a snapshot to disk and create a Recovery row.
 
     Returns the Recovery (status=ready on success, status=failed on error).
@@ -95,6 +102,8 @@ def create_recovery(db: Session, account_id: str, snapshot_id: str) -> Recovery:
         snapshot_id=snapshot_id,
         restore_path=restore_root,  # placeholder; updated after extract
         status=RecoveryStatus.restoring,
+        kind=kind,
+        ttl_minutes=ttl_minutes,
     )
     db.add(recovery)
     db.commit()
