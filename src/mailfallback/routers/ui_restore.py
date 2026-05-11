@@ -227,6 +227,15 @@ def restore_jump(account_id: str, request: Request, db: Session = Depends(get_db
     """Form target for the /restore "Pick a snapshot" button — bounces the
     user to the chosen mailbox's off-site admin section, where the snapshot
     picker is live.
+
+    /restore/jump is the entry point for the "lost everything" case where the
+    user needs the snapshot mounted for hours or days. Snapshots picked from
+    that page create persistent Recoveries (kind=persistent, no TTL) — distinct
+    from the new /restore workspace, which creates ephemeral Recoveries
+    (kind=ephemeral, TTL-driven, auto-cleanup).
+
+    Default behavior of recovery_service.create_recovery is kind=persistent,
+    so no kwargs are needed at the call-site.
     """
     user = _get_session_user(request, db)
     if not user:
