@@ -175,15 +175,44 @@ def apply_retention(
     keep_weekly: int | None = None,
     keep_monthly: int | None = None,
 ) -> dict:
-    """Apply retention policy using restic forget --prune."""
+    """Apply retention policy using restic forget --prune.
+
+    Returns dict with at least:
+        pruned (bool): True when forget --prune ran successfully.
+        removed_snapshot_ids (list[str]): short_ids of snapshots removed by this run.
+        output (str): raw stdout from restic.
+    """
     env = build_env(destination, account_id)
     retention_args = get_retention_args(preset, keep_daily, keep_weekly, keep_monthly)
     if not retention_args:
-        return {"pruned": False, "reason": "no retention args"}
-    result = _run_restic(["forget", "--prune", *retention_args], env, _is_insecure(destination))
+        return {"pruned": False, "removed_snapshot_ids": [], "reason": "no retention args"}
+    result = _run_restic(
+        ["forget", "--prune", "--json", *retention_args], env, _is_insecure(destination)
+    )
     if result.returncode != 0:
         raise RuntimeError(f"Restic forget failed: {result.stderr}")
-    return {"pruned": True, "output": result.stdout}
+
+    removed_ids: list[str] = []
+    if result.stdout:
+        for raw_line in result.stdout.splitlines():
+            line = raw_line.strip()
+            if not (line.startswith("[") or line.startswith("{")):
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            entries = payload if isinstance(payload, list) else [payload]
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                for snap in entry.get("remove", []) or []:
+                    if not isinstance(snap, dict):
+                        continue
+                    sid = snap.get("short_id") or (snap.get("id") or "")[:8]
+                    if sid:
+                        removed_ids.append(sid)
+    return {"pruned": True, "removed_snapshot_ids": removed_ids, "output": result.stdout}
 
 
 def forget_all(destination: Repository, account_id: str) -> bool:

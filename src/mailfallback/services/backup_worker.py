@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from mailfallback.db import SessionLocal
 from mailfallback.models import Account, BackupPolicy, BackupStatus
-from mailfallback.services import restic_service
+from mailfallback.services import index_service, restic_service
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +76,22 @@ def execute_backup(db: Session, account_backup_id: str) -> None:
         summary = restic_service.run_backup(backup.destination, account.id, account.maildir_path)
         _backup_progress[account_backup_id] = {"phase": "backup", "summary": summary}
 
+        # Index hook: record_snapshot for the freshly-created snapshot.
+        snapshot_id = summary.get("snapshot_id") if isinstance(summary, dict) else None
+        if snapshot_id:
+            try:
+                index_service.record_snapshot(db, backup.account_id, snapshot_id)
+            except Exception:
+                logger.warning(
+                    "record_snapshot failed for %s/%s",
+                    backup.account_id,
+                    snapshot_id,
+                    exc_info=True,
+                )
+
         # Phase 3: apply retention
         _backup_progress[account_backup_id] = {"phase": "retention"}
-        restic_service.apply_retention(
+        retention_result = restic_service.apply_retention(
             backup.destination,
             account.id,
             backup.retention_preset.value,
@@ -86,6 +99,13 @@ def execute_backup(db: Session, account_backup_id: str) -> None:
             backup.keep_weekly,
             backup.keep_monthly,
         )
+
+        # Index hook: prune_snapshot for each snapshot restic forget removed.
+        for removed_id in retention_result.get("removed_snapshot_ids", []) or []:
+            try:
+                index_service.prune_snapshot(db, removed_id)
+            except Exception:
+                logger.warning("prune_snapshot failed for %s", removed_id, exc_info=True)
 
         # Success — also cache snapshot count + most-recent snapshot timestamp so the
         # chain widget (Wave 4) can render without shelling restic on every page load.
