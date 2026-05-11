@@ -533,12 +533,33 @@ def workspace_search(
 
 
 def _merge_hit(dedup: dict[str, dict], hit: dict, source_label: str) -> None:
-    """Merge a search hit into the dedup map keyed by Message-Id."""
+    """Merge a hit into the dedup map keyed by Message-Id, preserving per-source location.
+
+    Each entry has:
+      message_id, subject, from, folder (top-level for display),
+      sources: [labels...],
+      locations: [ {source, namespace, folder, uid}, ... ]
+    """
     msgid = hit.get("message_id") or f"_no_msgid_{source_label}_{hit.get('uid')}"
+    location = {
+        "source": source_label,
+        "namespace": hit.get("namespace", ""),
+        "folder": hit.get("folder", ""),
+        "uid": hit.get("uid"),
+    }
     if msgid in dedup:
         if source_label not in dedup[msgid]["sources"]:
             dedup[msgid]["sources"].append(source_label)
+            dedup[msgid]["locations"].append(location)
     else:
-        entry = dict(hit)
-        entry["sources"] = [source_label]
+        # Top-level subject/from/folder are kept for display; locations holds
+        # the per-source (namespace, folder, uid) used by Restore Selected.
+        entry = {
+            "message_id": msgid,
+            "subject": hit.get("subject"),
+            "from": hit.get("from"),
+            "folder": hit.get("folder", ""),
+            "sources": [source_label],
+            "locations": [location],
+        }
         dedup[msgid] = entry

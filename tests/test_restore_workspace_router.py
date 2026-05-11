@@ -150,8 +150,10 @@ def test_workspace_search_dedup_by_message_id(
     body = resp.json()
     assert len(body["results"]) == 1
     result = body["results"][0]
-    assert "live" in result["sources"]
-    assert "snap1" in result["sources"]
+    locs = {loc["source"]: loc for loc in result["locations"]}
+    assert "live" in locs and "snap1" in locs
+    assert locs["live"]["uid"] == "10"
+    assert locs["snap1"]["uid"] == "99"
     mock_delete_user.assert_called_once_with(db_session, "_restore_testuser")
 
 
