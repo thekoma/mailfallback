@@ -1346,7 +1346,7 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 
 .ws-grid {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 320px 1fr;
   gap: 1.25rem;
   align-items: start;
 }
