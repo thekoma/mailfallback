@@ -198,6 +198,7 @@ def _dovecot_filter_body(
     from mailfallback.models import Account
     from mailfallback.routers.restore import (
         _connect_dovecot_for_account,
+        _sanitize_imap_string,
         account_namespace_prefix,
     )
     from mailfallback.services.dovecot_auth import delete_temp_imap_user
@@ -227,7 +228,7 @@ def _dovecot_filter_body(
                 msgid = msgid_by_hash.get(h)
                 if not msgid:
                     continue
-                quoted_id = msgid.replace('"', "").replace("\\", "")
+                quoted_id = _sanitize_imap_string(msgid)
                 typ, data = conn.uid("SEARCH", "HEADER", "Message-Id", f'"{quoted_id}"')
                 if typ != "OK" or not data or not data[0]:
                     continue
@@ -235,7 +236,7 @@ def _dovecot_filter_body(
                 if not uids:
                     continue
                 uid = uids[0]
-                quoted_kw = keyword.replace('"', "").replace("\\", "")
+                quoted_kw = _sanitize_imap_string(keyword)
                 typ, data = conn.uid("SEARCH", "UID", uid, "BODY", f'"{quoted_kw}"')
                 if typ == "OK" and data and data[0] and uid in data[0].decode().split():
                     matched.add(h)
