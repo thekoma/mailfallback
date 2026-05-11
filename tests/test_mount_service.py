@@ -82,3 +82,41 @@ def test_ensure_mounted_returns_existing_and_bumps_last_accessed(
     # SQLite drops tzinfo on round-trip; compare naive.
     assert rec.last_accessed_at.replace(tzinfo=None) > old.replace(tzinfo=None)
     mock_recovery.create_recovery.assert_not_called()
+
+
+def test_touch_mount_updates_last_accessed_at(db_session, account_with_backup):
+    old = datetime.now(UTC) - timedelta(minutes=20)
+    rec = Recovery(
+        account_id=account_with_backup.id,
+        snapshot_id="snap-1",
+        restore_path="/tmp/r",
+        status=RecoveryStatus.ready,
+        kind=RecoveryKind.ephemeral,
+        ttl_minutes=30,
+        last_accessed_at=old,
+    )
+    db_session.add(rec)
+    db_session.commit()
+
+    mount_service.touch_mount(db_session, rec.id)
+
+    db_session.refresh(rec)
+    # SQLite drops tzinfo on DateTime(timezone=True) round-trips; normalise.
+    assert rec.last_accessed_at.replace(tzinfo=None) > old.replace(tzinfo=None)
+
+
+@patch("mailfallback.services.mount_service.recovery_service")
+def test_force_unmount_delegates_to_delete_recovery(mock_recovery, db_session, account_with_backup):
+    rec = Recovery(
+        account_id=account_with_backup.id,
+        snapshot_id="snap-1",
+        restore_path="/tmp/r",
+        status=RecoveryStatus.ready,
+        kind=RecoveryKind.ephemeral,
+    )
+    db_session.add(rec)
+    db_session.commit()
+
+    mount_service.force_unmount(db_session, rec.id)
+
+    mock_recovery.delete_recovery.assert_called_once_with(db_session, rec.id)
