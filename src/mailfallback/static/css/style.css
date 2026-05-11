@@ -1558,8 +1558,8 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   box-shadow: 0 2px 6px rgba(0,0,0,0.3);
 }
 /* Start tooltip above the slider */
-.ws-range-tooltip:nth-of-type(1) { top: -22px; }
-.ws-range-tooltip:nth-of-type(1)::before {
+.ws-range-tooltip-start { top: -22px; }
+.ws-range-tooltip-start::before {
   content: '';
   position: absolute;
   bottom: -5px;
@@ -1572,8 +1572,8 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   border-right: 1px solid var(--ws-cyan);
 }
 /* End tooltip below the slider */
-.ws-range-tooltip:nth-of-type(2) { bottom: -28px; }
-.ws-range-tooltip:nth-of-type(2)::before {
+.ws-range-tooltip-end { bottom: -28px; }
+.ws-range-tooltip-end::before {
   content: '';
   position: absolute;
   top: -5px;
