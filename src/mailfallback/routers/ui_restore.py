@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
+from mailfallback.config import settings
 from mailfallback.dependencies import get_db
 from mailfallback.models import BackupPolicy, BackupStatus, JobStatus, UserRole
 from mailfallback.routers.ui import _get_session_user, templates
@@ -106,6 +107,7 @@ def restore_page(request: Request, db: Session = Depends(get_db)):
             "new_snapshot_mailboxes": new_snapshot_mailboxes,
             "recoveries": recoveries,
             "calendar_days": CALENDAR_DAYS,
+            "settings": settings,
         },
     )
 

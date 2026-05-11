@@ -1,0 +1,83 @@
+<div class="flex-between">
+  <div>
+    <h2><i data-lucide="archive-restore" class="icon-xl icon-inline"></i>Restore</h2>
+    <p class="text-muted text-small mt-0">What are you looking for?</p>
+  </div>
+</div>
+
+{# Preset chips #}
+<div class="restore-presets" role="tablist">
+  <button type="button" class="preset-chip is-active" data-preset="single-mail">
+    <i data-lucide="mail" class="icon-sm icon-inline"></i> A single mail
+  </button>
+  <button type="button" class="preset-chip" data-preset="folder">
+    <i data-lucide="folder" class="icon-sm icon-inline"></i> A folder / subset
+  </button>
+  <button type="button" class="preset-chip" data-preset="full">
+    <i data-lucide="alert-triangle" class="icon-sm icon-inline"></i> The whole mailbox
+  </button>
+</div>
+
+<div class="workspace-grid">
+  <aside class="workspace-sidebar">
+    <label>Mailbox
+      <select name="account_id" id="ws-account">
+        {% for acct, _ in protected %}
+        <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address }})</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>Time range
+      <input type="date" id="ws-range-start" name="range_start">
+      <input type="date" id="ws-range-end" name="range_end">
+    </label>
+    <p class="text-muted text-xsmall" id="ws-range-cost">— snapshots in range</p>
+
+    <fieldset>
+      <legend>Sources</legend>
+      <label><input type="checkbox" id="ws-include-live" checked> Live</label>
+      <label><input type="checkbox" id="ws-include-snapshots" checked> Snapshots</label>
+    </fieldset>
+
+    <details class="advanced">
+      <summary>Advanced</summary>
+      <label><input type="checkbox" id="ws-search-body"> Search in body</label>
+      <label>TTL ephemeral mounts (min)
+        <input type="number" id="ws-ttl-override" min="5" max="240"
+               placeholder="default {{ settings.recovery_ephemeral_ttl_minutes }}">
+      </label>
+    </details>
+
+    <label>Destination
+      <select name="destination_id" id="ws-destination">
+        {% for acct, _ in protected %}
+        <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address }})</option>
+        {% endfor %}
+      </select>
+    </label>
+  </aside>
+
+  <main class="workspace-panel">
+    <form id="ws-search-form" onsubmit="event.preventDefault(); window.RestoreWorkspace.runSearch();">
+      <div class="search-row">
+        <input type="text" id="ws-query" placeholder="Search subject, sender…" autocomplete="off">
+        <button type="submit" class="primary">
+          <i data-lucide="search" class="icon-sm icon-inline"></i> Search
+        </button>
+      </div>
+      <p class="text-muted text-xsmall" id="ws-mount-progress"></p>
+    </form>
+
+    <div id="ws-results"></div>
+
+    <div id="ws-action-bar" class="ws-action-bar hidden">
+      <label><input type="checkbox" id="ws-select-all"> Select all</label>
+      <button type="button" id="ws-restore-selected" class="primary">
+        <i data-lucide="play" class="icon-sm icon-inline"></i> Restore selected →
+      </button>
+    </div>
+  </main>
+</div>
+
+{% include "partials/restore_status_strip.html" ignore missing %}

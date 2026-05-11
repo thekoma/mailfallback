@@ -68,10 +68,11 @@ def test_restore_renders_calendar_page(client, db_session, default_store):
     resp = client.get("/restore")
     assert resp.status_code == 200
     body = resp.text
-    # Calendar of Safety landmarks
-    assert "Your safety net" in body
-    assert "Move mail between mailboxes" in body
-    assert "/restore/move" in body
+    # Workspace landmarks (Calendar of Safety demoted into the status strip)
+    assert "page-restore-workspace" in body
+    assert 'data-preset="single-mail"' in body
+    assert 'data-preset="folder"' in body
+    assert 'data-preset="full"' in body
     # The old chooser copy is gone
     assert "Recover from a snapshot" not in body
 
@@ -102,8 +103,8 @@ def test_restore_unprotected_state(client, db_session, default_store):
     _login(client, "admin", "pass")
     resp = client.get("/restore")
     assert resp.status_code == 200
-    # No backup policies → unprotected banner
-    assert "No safety net yet" in resp.text
+    # No backup policies → unprotected line in the demoted status strip
+    assert "No safety net configured yet" in resp.text
 
 
 def test_restore_lists_mailboxes_with_snapshots(client, db_session, default_store):
