@@ -54,10 +54,10 @@
                    :value="365 - endDays"
                    @input="endDays = 365 - parseInt($event.target.value, 10); onRangeChange()"
                    class="ws-range-input">
-            <div class="ws-range-tooltip"
+            <div class="ws-range-tooltip ws-range-tooltip-start"
                  :style="`left: ${startThumbPct}%`"
                  x-text="startDateLabel"></div>
-            <div class="ws-range-tooltip"
+            <div class="ws-range-tooltip ws-range-tooltip-end"
                  :style="`left: ${endThumbPct}%`"
                  x-text="endDateLabel"></div>
           </div>
