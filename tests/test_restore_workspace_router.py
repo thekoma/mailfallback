@@ -307,8 +307,13 @@ def test_workspace_restore_post_to_existing_engine(
     mock_submit.assert_called_once_with("j-1")
 
 
-def test_search_namespace_body_includes_body_criterion():
-    """Verify SEARCH includes BODY when search_body=True (legacy compat path)."""
+def test_search_namespace_uses_text_when_body_requested():
+    """Verify SEARCH uses TEXT criterion when search_body=True.
+
+    TEXT matches the whole message (all headers + body) — broader than the
+    explicit OR chain over SUBJECT/FROM/TO/BODY which would miss X-* headers,
+    Received, Reply-To, etc. Roundcube uses TEXT for its body search.
+    """
     conn = MagicMock()
     conn.select.return_value = ("OK", [b"0"])
     conn.uid.return_value = ("OK", [b""])
@@ -323,10 +328,13 @@ def test_search_namespace_body_includes_body_criterion():
     )
 
     call_args = conn.uid.call_args
-    serialised = " ".join(str(a) for a in call_args.args)
-    assert "BODY" in serialised
-    assert "SUBJECT" in serialised
-    assert "FROM" in serialised
+    args = call_args.args
+    assert args[0] == "SEARCH"
+    assert "TEXT" in args
+    assert '"alice"' in args
+    # When TEXT is used, individual field criteria are skipped (TEXT covers all)
+    assert "SUBJECT" not in args
+    assert "FROM" not in args
 
 
 def test_search_namespace_uses_type_filter_and_multiple_criteria():
