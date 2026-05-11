@@ -1,5 +1,7 @@
 """Tests for index_service — Mail Index lifecycle."""
 
+from unittest.mock import patch
+
 import pytest
 
 from mailfallback.models import Account, MailIndexMessage, MailIndexRebuildStatus
@@ -146,3 +148,38 @@ def test_prune_snapshot_removes_only_target_snapshot_bits(db_session, maildir_ac
 def test_prune_snapshot_idempotent_for_unknown_id(db_session):
     n = index_service.prune_snapshot(db_session, "nonexistent")
     assert n == 0
+
+
+@patch("mailfallback.services.index_service.restic_service")
+def test_backfill_snapshots_sets_bits_for_matched_filenames(
+    mock_restic, db_session, maildir_account
+):
+    """For each existing restic snapshot, list files, match Maildir filenames
+    against alive messages, bulk INSERT snapshot_messages."""
+    from mailfallback.models import BackupPolicy, Repository, SnapshotMessage
+
+    # Create a backup policy so the service can find the destination
+    repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
+    db_session.add(repo)
+    db_session.flush()
+    db_session.add(BackupPolicy(account_id=maildir_account.id, destination_id=repo.id))
+    db_session.commit()
+
+    # Walk live first so we have alive messages
+    index_service.upsert_message_set(db_session, maildir_account.id)
+
+    mock_restic.list_snapshots.return_value = [
+        {"short_id": "snapXXXX", "time": "2026-05-01T10:00:00Z"},
+    ]
+    # Snapshot lists files matching one of the live filenames (the first mail
+    # in maildir_account fixture)
+    mock_restic.list_files.return_value = iter(
+        [
+            "/data/mailboxes/abc/INBOX/cur/1234567890.M1.host:2,S",  # matches first mail in fixture
+        ]
+    )
+
+    list(index_service.backfill_snapshots(db_session, maildir_account.id))
+
+    bits = db_session.query(SnapshotMessage).filter(SnapshotMessage.snapshot_id == "snapXXXX").all()
+    assert len(bits) == 1
