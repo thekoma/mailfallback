@@ -162,3 +162,48 @@ def test_phase2_body_filter_marks_survivors(mock_filter, db_session, search_setu
     by_subject = {r["subject"]: r for r in result["results"]}
     assert by_subject["fattura marzo"]["body_matched"] is True
     assert by_subject["old fattura"]["body_matched"] is False
+
+
+def test_phase2_sanitises_crlf_in_keyword(db_session, search_setup, monkeypatch):
+    """Phase 2 keyword/Message-Id sanitisation strips control chars (CRLF)
+    so a malicious input can't break out of the IMAP quoted string."""
+    captured_searches: list[tuple] = []
+
+    class FakeConn:
+        def select(self, *args, **kwargs):
+            return ("OK", [b"0"])
+
+        def uid(self, *args):
+            captured_searches.append(args)
+            # Reply with no UIDs so the inner loop is skipped
+            return ("OK", [b""])
+
+        def logout(self):
+            pass
+
+    def fake_connect(db, account):
+        return FakeConn(), "_restore_test"
+
+    def fake_delete_temp(db, username):
+        pass
+
+    monkeypatch.setattr("mailfallback.routers.restore._connect_dovecot_for_account", fake_connect)
+    monkeypatch.setattr(
+        "mailfallback.services.dovecot_auth.delete_temp_imap_user", fake_delete_temp
+    )
+
+    # Inject CRLF + quote into the keyword. After sanitisation the IMAP
+    # SEARCH should NOT contain those bytes.
+    result = search_service.search_messages(
+        db_session,
+        user=search_setup["user"],
+        query='evil"\r\nLOGOUT',
+        body=True,
+    )
+    assert result["total"] >= 0  # search ran without raising
+    # Verify no captured SEARCH arg contains the unsanitised payload
+    for args in captured_searches:
+        joined = " ".join(str(a) for a in args)
+        assert "\r" not in joined
+        assert "\n" not in joined
+        assert '"\r\n' not in joined
