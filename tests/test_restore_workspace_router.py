@@ -655,3 +655,37 @@ def test_workspace_snapshot_dates(mock_restic, client, db_session, default_store
     assert resp.status_code == 200
     body = resp.json()
     assert body["dates"] == ["2026-05-01", "2026-05-08"]  # sorted, deduped
+
+
+def test_api_restore_search_endpoint(client, db_session, default_store, login_user):
+    from mailfallback.models import Account, MailIndexMessage
+
+    acct = Account(
+        name="a",
+        store=default_store,
+        maildir_path="/x",
+        imap_host="i",
+    )
+    db_session.add(acct)
+    db_session.flush()
+    acct.owners.append(login_user)
+    db_session.add(
+        MailIndexMessage(
+            account_id=acct.id,
+            message_id_hash=b"\x10" * 20,
+            message_id="<10@h>",
+            subject="invoice from acme",
+            folder_path="INBOX",
+            maildir_filename="1",
+        )
+    )
+    db_session.commit()
+
+    login = client.post("/api/auth/login", json={"username": "koma", "password": "x"})
+    assert login.status_code in (200, 303)
+
+    resp = client.post("/api/restore/search", json={"query": "invoice"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["results"][0]["subject"] == "invoice from acme"

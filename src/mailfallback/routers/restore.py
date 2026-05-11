@@ -12,7 +12,7 @@ from mailfallback.config import settings
 from mailfallback.dependencies import get_current_user, get_db
 from mailfallback.models import BackupPolicy, RecoveryStatus, User
 from mailfallback.routers.dovecot import account_namespace_prefix
-from mailfallback.services import account_service, mount_service, restic_service
+from mailfallback.services import account_service, mount_service, restic_service, search_service
 from mailfallback.services.audit_service import log_action
 from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
 from mailfallback.services.imap_check import connect_imap
@@ -672,6 +672,40 @@ def workspace_search(
         "results": list(results_by_msgid.values()),
         "mounted_snapshots": [s for s, _ in mounted],
     }
+
+
+class RestoreSearchRequest(BaseModel):
+    query: str = ""
+    account_ids: list[str] | None = None
+    range_start: datetime | None = None
+    range_end: datetime | None = None
+    include_deleted: bool = True
+    snapshot_id: str | None = None
+    body: bool = False
+    page: int = 1
+    page_size: int = 50
+
+
+@router.post("/search")
+def api_restore_search(
+    req: RestoreSearchRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return search_service.search_messages(
+        db,
+        user=user,
+        query=req.query,
+        account_ids=req.account_ids,
+        range_start=req.range_start,
+        range_end=req.range_end,
+        include_deleted=req.include_deleted,
+        snapshot_id=req.snapshot_id,
+        body=req.body,
+        page=req.page,
+        page_size=req.page_size,
+    )
 
 
 class WorkspaceSnapshotCountRequest(BaseModel):
