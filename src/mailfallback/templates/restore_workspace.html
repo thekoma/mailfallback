@@ -60,7 +60,7 @@
 
   <main class="workspace-panel">
     <form id="ws-search-form" onsubmit="event.preventDefault(); window.RestoreWorkspace.runSearch();">
-      <div class="search-row">
+      <div class="search-row" id="ws-search-row">
         <input type="text" id="ws-query" placeholder="Search subject, sender…" autocomplete="off">
         <button type="submit" class="primary">
           <i data-lucide="search" class="icon-sm icon-inline"></i> Search
@@ -68,6 +68,28 @@
       </div>
       <p class="text-muted text-xsmall" id="ws-mount-progress"></p>
     </form>
+
+    {# Folder picker (folder preset) — initially hidden #}
+    <div id="ws-folder-picker" class="hidden">
+      <label>Folder
+        <select id="ws-folder-select"></select>
+      </label>
+      <button type="button" class="primary" id="ws-restore-folder-btn">
+        <i data-lucide="play" class="icon-sm icon-inline"></i> Restore folder →
+      </button>
+      <p class="text-muted text-xsmall" id="ws-folder-progress"></p>
+    </div>
+
+    {# Snapshot picker (full preset) — initially hidden #}
+    <div id="ws-snapshot-picker" class="hidden">
+      <label>Snapshot
+        <select id="ws-snapshot-select"></select>
+      </label>
+      <button type="button" class="primary" id="ws-restore-full-btn">
+        <i data-lucide="play" class="icon-sm icon-inline"></i> Full restore →
+      </button>
+      <p class="text-muted text-xsmall" id="ws-full-progress"></p>
+    </div>
 
     <div id="ws-results"></div>
 

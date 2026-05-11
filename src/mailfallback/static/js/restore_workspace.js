@@ -10,18 +10,87 @@
     document.getElementById('ws-range-end').valueAsDate = end;
   }
 
+  // Hoisted so applyPreset can call them — actual fetches happen at click time.
+  async function populateFolderPicker() {
+    const accountId = document.getElementById('ws-account').value;
+    const select = document.getElementById('ws-folder-select');
+    if (!accountId) {
+      select.innerHTML = '<option value="">(select a mailbox first)</option>';
+      return;
+    }
+    select.innerHTML = '<option value="">loading…</option>';
+    try {
+      const resp = await fetch(`/api/accounts/${accountId}/mailboxes`);
+      if (!resp.ok) {
+        select.innerHTML = '<option value="">— failed to load —</option>';
+        return;
+      }
+      const folders = await resp.json();
+      if (!folders.length) {
+        select.innerHTML = '<option value="">— no folders found —</option>';
+        return;
+      }
+      select.innerHTML = folders.map(f =>
+        `<option value="${escapeHtml(f.full_name || f.name)}">${escapeHtml(f.name)}</option>`
+      ).join('');
+    } catch (e) {
+      select.innerHTML = '<option value="">— error —</option>';
+    }
+  }
+
+  async function populateSnapshotPicker() {
+    const accountId = document.getElementById('ws-account').value;
+    const rangeStart = document.getElementById('ws-range-start').value;
+    const rangeEnd = document.getElementById('ws-range-end').value;
+    const select = document.getElementById('ws-snapshot-select');
+    if (!accountId || !rangeStart || !rangeEnd) {
+      select.innerHTML = '<option value="">(select range first)</option>';
+      return;
+    }
+    // v1: no per-snapshot picker yet — engine picks the latest snapshot in range.
+    // A full per-snapshot picker is a follow-up.
+    select.innerHTML = '<option value="latest-in-range">latest snapshot in range</option>';
+  }
+
   RW.applyPreset = function (preset) {
     document.querySelectorAll('.preset-chip').forEach(c => c.classList.toggle('is-active', c.dataset.preset === preset));
-    if (preset === 'full') {
-      document.getElementById('ws-include-live').checked = false;
+
+    const searchRow = document.getElementById('ws-search-row');
+    const folderPicker = document.getElementById('ws-folder-picker');
+    const snapshotPicker = document.getElementById('ws-snapshot-picker');
+    const actionBar = document.getElementById('ws-action-bar');
+
+    // Reset visibility
+    searchRow.classList.add('hidden');
+    folderPicker.classList.add('hidden');
+    snapshotPicker.classList.add('hidden');
+    actionBar.classList.add('hidden');
+
+    // Default range for each preset
+    const days = {'single-mail': 7, 'folder': 30, 'full': 90}[preset] || 7;
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - days);
+    document.getElementById('ws-range-start').valueAsDate = start;
+    document.getElementById('ws-range-end').valueAsDate = end;
+
+    if (preset === 'single-mail') {
+      searchRow.classList.remove('hidden');
+      document.getElementById('ws-include-live').checked = true;
       document.getElementById('ws-include-snapshots').checked = true;
     } else if (preset === 'folder') {
+      folderPicker.classList.remove('hidden');
       document.getElementById('ws-include-live').checked = true;
+      document.getElementById('ws-include-snapshots').checked = false;
+      populateFolderPicker();
+    } else if (preset === 'full') {
+      snapshotPicker.classList.remove('hidden');
+      document.getElementById('ws-include-live').checked = false;
       document.getElementById('ws-include-snapshots').checked = true;
-    } else {
-      document.getElementById('ws-include-live').checked = true;
-      document.getElementById('ws-include-snapshots').checked = true;
+      populateSnapshotPicker();
     }
+
+    if (typeof RW._updateRangeCost === 'function') RW._updateRangeCost();
   };
 
   RW.runSearch = async function () {
@@ -157,6 +226,69 @@
       alert(`Started ${jobs.length} restore job(s): ${jobs.join(', ')}`);
     });
 
+    document.getElementById('ws-restore-folder-btn').addEventListener('click', async () => {
+      const folder = document.getElementById('ws-folder-select').value;
+      if (!folder) {
+        alert('Pick a folder first');
+        return;
+      }
+      const sourceAcct = document.getElementById('ws-account').value;
+      const destAcct = document.getElementById('ws-destination').value;
+      const progressEl = document.getElementById('ws-folder-progress');
+      progressEl.textContent = 'Submitting…';
+      try {
+        const resp = await fetch('/api/restore', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            source_account_id: sourceAcct,
+            target_account_id: destAcct,
+            restore_mode: 'folder',
+            selected_folders: [folder],
+          }),
+        });
+        if (resp.ok) {
+          const job = await resp.json();
+          progressEl.textContent = `Folder restore started — job ${job.job_id}`;
+          alert(`Folder restore started — job ${job.job_id}`);
+        } else {
+          progressEl.textContent = `Failed: ${resp.status}`;
+          alert(`Failed: ${resp.status}`);
+        }
+      } catch (e) {
+        progressEl.textContent = `Error: ${e.message}`;
+      }
+    });
+
+    document.getElementById('ws-restore-full-btn').addEventListener('click', async () => {
+      const sourceAcct = document.getElementById('ws-account').value;
+      const destAcct = document.getElementById('ws-destination').value;
+      if (!confirm('Full restore copies the entire mailbox. Continue?')) return;
+      const progressEl = document.getElementById('ws-full-progress');
+      progressEl.textContent = 'Submitting…';
+      try {
+        const resp = await fetch('/api/restore', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            source_account_id: sourceAcct,
+            target_account_id: destAcct,
+            restore_mode: 'full',
+          }),
+        });
+        if (resp.ok) {
+          const job = await resp.json();
+          progressEl.textContent = `Full restore started — job ${job.job_id}`;
+          alert(`Full restore started — job ${job.job_id}`);
+        } else {
+          progressEl.textContent = `Failed: ${resp.status}`;
+          alert(`Failed: ${resp.status}`);
+        }
+      } catch (e) {
+        progressEl.textContent = `Error: ${e.message}`;
+      }
+    });
+
     async function updateRangeCost() {
       const accountId = document.getElementById('ws-account').value;
       const rangeStart = document.getElementById('ws-range-start').value;
@@ -192,6 +324,9 @@
     document.getElementById('ws-range-start').addEventListener('change', updateRangeCost);
     document.getElementById('ws-range-end').addEventListener('change', updateRangeCost);
     document.getElementById('ws-account').addEventListener('change', updateRangeCost);
+    // Expose for applyPreset (which lives outside this scope) so it can
+    // refresh the cost preview after changing the default range.
+    RW._updateRangeCost = updateRangeCost;
     // Trigger once on load (after setDefaultRange has populated the inputs)
     updateRangeCost();
   });

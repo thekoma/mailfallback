@@ -236,6 +236,11 @@ def test_restore_workspace_renders(client, db_session, default_store, login_user
     # Destination dropdown lists ALL owned accounts, including the one
     # without a backup policy (Fix B).
     assert acct2.id.encode() in body
+    # Per-preset pickers exist in the DOM (Fix E).
+    assert b'id="ws-folder-picker"' in body
+    assert b'id="ws-snapshot-picker"' in body
+    assert b'id="ws-folder-select"' in body
+    assert b'id="ws-snapshot-select"' in body
 
 
 @patch("mailfallback.routers.restore.submit_restore_job")
