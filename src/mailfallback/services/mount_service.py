@@ -63,3 +63,20 @@ def ensure_mounted(
     return recovery_service.create_recovery(
         db, account_id, snapshot_id, kind=kind, ttl_minutes=ttl_minutes
     )
+
+
+def touch_mount(db: Session, recovery_id: str) -> None:
+    """Bump last_accessed_at — defers cleanup."""
+    rec = db.query(Recovery).filter(Recovery.id == recovery_id).first()
+    if rec is None:
+        return
+    rec.last_accessed_at = datetime.now(UTC)
+    db.commit()
+
+
+def force_unmount(db: Session, recovery_id: str) -> None:
+    """Remove the Recovery (DB row + on-disk tree). Delegates to recovery_service.
+
+    Idempotent: succeeds silently if the Recovery is already gone.
+    """
+    recovery_service.delete_recovery(db, recovery_id)
