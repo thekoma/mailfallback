@@ -91,7 +91,7 @@ def userdb_lookup(username: str, db: Session = Depends(get_db)):
             short = (rec.snapshot_id or rec.id)[:8]
             label = src.name
             ts = rec.restored_at.strftime("%Y-%m-%d") if rec.restored_at else "snapshot"
-            prefix = f"Recovery — {label} ({ts}) [{short}]/"
+            prefix = f"Recovery - {label} ({ts}) [{short}]/"
             namespaces.append(
                 {
                     "name": f"rec_{rec.id}",

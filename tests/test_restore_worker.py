@@ -105,14 +105,14 @@ def test_execute_restore_from_snapshot_namespace_strips_prefix(
     restore_job_fixtures,
 ):
     """Bug 2 regression: when selected_uids keys are Recovery-namespaced
-    (e.g. "Recovery — name (2026-05-11) [snap-abc]/INBOX"), the destination
+    (e.g. "Recovery - name (2026-05-11) [snap-abc]/INBOX"), the destination
     APPEND must land in the bare folder ("INBOX"), not the Recovery-prefixed
     one. The prefix lives only on the source side (mounted snapshot)."""
     f = restore_job_fixtures
     mock_decrypt.return_value = "plaintext-pass"
     mock_create_temp.return_value = ("_restore_snap_test", "random-pass")
 
-    namespaced_folder = "Recovery — source (2026-05-11) [snap-abc]/INBOX"
+    namespaced_folder = "Recovery - source (2026-05-11) [snap-abc]/INBOX"
 
     # Reconfigure the existing job for selection-mode with a snapshot key.
     job = f["job"]

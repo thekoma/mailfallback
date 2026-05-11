@@ -547,7 +547,7 @@ def workspace_search(
         short = (rec.snapshot_id or rec.id)[:8]
         label = account.name
         ts = rec.restored_at.strftime("%Y-%m-%d") if rec.restored_at else "snapshot"
-        ns_label = f"Recovery — {label} ({ts}) [{short}]/"
+        ns_label = f"Recovery - {label} ({ts}) [{short}]/"
         mounted.append((snap_id, ns_label))
 
     # Search live first, then each mounted snapshot.

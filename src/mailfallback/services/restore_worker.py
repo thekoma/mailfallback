@@ -469,7 +469,7 @@ def _map_folder(folder_name, folder_mapping, separator="/", escape_char="_"):
     # snapshot mount. The destination user expects the message in their
     # native folder (e.g., INBOX), not in a synthetic Recovery-prefixed
     # one. Dovecot publishes these as "Recovery — <label> (<ts>) [<id>]/".
-    if folder_name.startswith("Recovery — ") and "/" in folder_name:
+    if folder_name.startswith("Recovery - ") and "/" in folder_name:
         folder_name = folder_name.split("/", 1)[1]
     if separator != "/" and separator in folder_name:
         original = folder_name
