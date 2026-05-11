@@ -75,6 +75,37 @@ def test_search_namespace_empty_namespace_targets_folder_only():
     conn.select.assert_called_once_with('"INBOX"', readonly=True)
 
 
+def test_search_namespace_quotes_multi_word_query():
+    """Verify SUBJECT criteria is properly quoted for multi-word queries."""
+    conn = MagicMock()
+    conn.select.return_value = ("OK", [b"0"])
+    conn.uid.return_value = ("OK", [b""])
+
+    _search_namespace_for_query(conn, namespace="", query="hello world")
+
+    # The SEARCH should pass the query as a SINGLE quoted token
+    call_args = conn.uid.call_args
+    assert call_args.args[0] == "SEARCH"
+    # The criteria should include the query in quotes (one way or another)
+    serialised = " ".join(str(a) for a in call_args.args)
+    assert '"hello world"' in serialised
+
+
+def test_search_namespace_searches_subject_or_from():
+    """Verify SEARCH covers both Subject and From per spec."""
+    conn = MagicMock()
+    conn.select.return_value = ("OK", [b"0"])
+    conn.uid.return_value = ("OK", [b""])
+
+    _search_namespace_for_query(conn, namespace="", query="alice")
+
+    call_args = conn.uid.call_args
+    serialised = " ".join(str(a) for a in call_args.args)
+    # Either OR SUBJECT FROM or two separate criteria — must mention FROM
+    assert "FROM" in serialised
+    assert "SUBJECT" in serialised
+
+
 @patch("mailfallback.routers.restore.delete_temp_imap_user")
 @patch("mailfallback.routers.restore.mount_service")
 @patch("mailfallback.routers.restore._connect_dovecot_for_account")
