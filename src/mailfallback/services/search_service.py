@@ -1,5 +1,6 @@
 """Search service — query mail_index with optional Phase 2 body filter."""
 
+import contextlib
 import logging
 from datetime import datetime
 from typing import Any
@@ -121,6 +122,27 @@ def search_messages(
     else:
         snap_by_msg = {}
 
+    body_matched_set: set[bytes] = set()
+    phase2_skipped = 0
+    if body and query and rows:
+        from mailfallback.config import settings
+
+        cap = getattr(settings, "search_body_candidate_cap", 500)
+        if len(rows) > cap:
+            phase2_skipped = len(rows) - cap
+            candidates_rows = rows[:cap]
+        else:
+            candidates_rows = rows
+        by_account: dict[str, list[tuple[bytes, str, str, str]]] = {}
+        for r in candidates_rows:
+            if r.deleted_at is not None:
+                continue  # snapshot-only — skip Phase 2 (documented v1 limitation)
+            by_account.setdefault(r.account_id, []).append(
+                (r.message_id_hash, r.folder_path, r.maildir_filename, r.message_id)
+            )
+        for acc_id, cands in by_account.items():
+            body_matched_set.update(_dovecot_filter_body(db, acc_id, cands, query))
+
     results = []
     for r in rows:
         results.append(
@@ -135,7 +157,7 @@ def search_messages(
                 "folder_path": r.folder_path,
                 "alive_in_live": r.deleted_at is None,
                 "snapshots": sorted(snap_by_msg.get((r.account_id, r.message_id_hash), [])),
-                "body_matched": None,  # Phase 2 fills this in (Task 9)
+                "body_matched": (r.message_id_hash in body_matched_set) if body else None,
             }
         )
 
@@ -144,5 +166,73 @@ def search_messages(
         "total": total,
         "page": page,
         "page_size": page_size,
-        "phase2_skipped_count": 0,
+        "phase2_skipped_count": phase2_skipped,
     }
+
+
+def _dovecot_filter_body(
+    db: Session,
+    account_id: str,
+    candidates: list[tuple[bytes, str, str, str]],
+    keyword: str,
+) -> set[bytes]:
+    """Return the subset of candidate message_id_hash values whose body matches keyword.
+
+    candidates: list of (hash, folder, maildir_filename, message_id) tuples
+    Per-candidate: SEARCH HEADER Message-Id to get UID, then SEARCH UID BODY to confirm.
+    Two SEARCH calls per candidate, bounded by Phase 1 cap.
+
+    Errors here MUST NOT fail the whole search — return empty set on Dovecot failure.
+    """
+    if not candidates:
+        return set()
+    from mailfallback.models import Account
+    from mailfallback.routers.restore import (
+        _connect_dovecot_for_account,
+        account_namespace_prefix,
+    )
+    from mailfallback.services.dovecot_auth import delete_temp_imap_user
+
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not account:
+        return set()
+    matched: set[bytes] = set()
+    try:
+        conn, temp_user = _connect_dovecot_for_account(db, account)
+    except Exception:
+        logger.warning("Phase 2: Dovecot connect failed for %s", account_id, exc_info=True)
+        return set()
+    try:
+        ns = account_namespace_prefix(account)
+        # Group candidates by folder for fewer SELECTs
+        by_folder: dict[str, list[tuple[bytes, str]]] = {}
+        msgid_by_hash: dict[bytes, str] = {h: msgid for h, _, _, msgid in candidates}
+        for h, folder, filename, _msgid in candidates:
+            by_folder.setdefault(folder, []).append((h, filename))
+        for folder, items in by_folder.items():
+            target = f'"{ns}{folder}"'
+            typ, _ = conn.select(target, readonly=True)
+            if typ != "OK":
+                continue
+            for h, _filename in items:
+                msgid = msgid_by_hash.get(h)
+                if not msgid:
+                    continue
+                quoted_id = msgid.replace('"', "").replace("\\", "")
+                typ, data = conn.uid("SEARCH", "HEADER", "Message-Id", f'"{quoted_id}"')
+                if typ != "OK" or not data or not data[0]:
+                    continue
+                uids = data[0].decode().split()
+                if not uids:
+                    continue
+                uid = uids[0]
+                quoted_kw = keyword.replace('"', "").replace("\\", "")
+                typ, data = conn.uid("SEARCH", "UID", uid, "BODY", f'"{quoted_kw}"')
+                if typ == "OK" and data and data[0] and uid in data[0].decode().split():
+                    matched.add(h)
+    finally:
+        with contextlib.suppress(Exception):
+            conn.logout()
+        with contextlib.suppress(Exception):
+            delete_temp_imap_user(db, temp_user)
+    return matched
