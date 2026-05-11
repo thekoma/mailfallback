@@ -245,6 +245,9 @@ def test_restore_workspace_renders(client, db_session, default_store, login_user
     assert b"alpinejs" in body
     # Workspace JS factory loaded
     assert b"restore_workspace.js" in body
+    # flatpickr inline calendar input (replaces the old dual-handle slider).
+    assert b'id="ws-calendar-input"' in body
+    assert b"flatpickr" in body
 
 
 @patch("mailfallback.routers.restore.submit_restore_job")
@@ -541,3 +544,37 @@ def test_workspace_search_uses_account_namespace_for_live_select(
     expected_target = f'"Andrea (andrea@example.com) [{short_id}]/INBOX"'
     actual_targets = [call.args[0] for call in fake_conn.select.call_args_list]
     assert expected_target in actual_targets, f"Expected {expected_target} in {actual_targets}"
+
+
+@patch("mailfallback.routers.restore.restic_service")
+def test_workspace_snapshot_dates(mock_restic, client, db_session, default_store, login_user):
+    repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
+    db_session.add(repo)
+    acct = Account(
+        name="a",
+        store=default_store,
+        maildir_path="/data/mailboxes/a",
+        imap_host="imap.example.com",
+    )
+    db_session.add(acct)
+    db_session.flush()
+    acct.owners.append(login_user)
+    db_session.add(BackupPolicy(account_id=acct.id, destination_id=repo.id))
+    db_session.commit()
+
+    mock_restic.list_snapshots.return_value = [
+        {"short_id": "a", "time": "2026-05-01T10:00:00Z"},
+        {"short_id": "b", "time": "2026-05-01T22:00:00Z"},  # same day → dedupe
+        {"short_id": "c", "time": "2026-05-08T15:00:00Z"},
+    ]
+
+    login_resp = client.post("/api/auth/login", json={"username": "koma", "password": "x"})
+    assert login_resp.status_code in (200, 303)
+
+    resp = client.post(
+        "/api/restore/workspace/snapshot-dates",
+        json={"account_id": acct.id},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["dates"] == ["2026-05-01", "2026-05-08"]  # sorted, deduped

@@ -669,6 +669,48 @@ def workspace_snapshot_count(
     return {"count": count, "size_bytes": size_bytes}
 
 
+class WorkspaceSnapshotDatesRequest(BaseModel):
+    account_id: str
+
+
+@router.post("/workspace/snapshot-dates")
+def workspace_snapshot_dates(
+    req: WorkspaceSnapshotDatesRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return distinct YYYY-MM-DD strings of days that have at least one snapshot.
+
+    Used by the workspace calendar to highlight days that contain restorable data.
+    """
+    account = account_service.get_account(db, req.account_id, user)
+    if not account:
+        raise HTTPException(404, "account not found")
+
+    backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == req.account_id).first()
+    if not backup:
+        return {"dates": []}
+
+    try:
+        snaps = restic_service.list_snapshots(backup.destination, account.id)
+    except Exception:
+        return {"dates": []}
+
+    dates = set()
+    for s in snaps:
+        ts_raw = s.get("time", "").replace("Z", "+00:00")
+        if not ts_raw:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_raw)
+        except ValueError:
+            continue
+        dates.add(ts.strftime("%Y-%m-%d"))
+
+    return {"dates": sorted(dates)}
+
+
 def _merge_hit(dedup: dict[str, dict], hit: dict, source_label: str) -> None:
     """Merge a hit into the dedup map keyed by Message-Id, preserving per-source location.
 
