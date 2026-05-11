@@ -27,7 +27,7 @@ def test_search_namespace_returns_envelopes():
         ("OK", [(b"3 (UID 3 ENVELOPE (...))", b"Subject: bye\r\nFrom: e@f\r\n\r\n")]),
     ]
 
-    hits = _search_namespace_for_query(conn, namespace="snap-abc/", query="hi")
+    hits = _search_namespace_for_query(conn, namespace="snap-abc/", query="hi", folders=["INBOX"])
 
     assert len(hits) == 3
     assert all(h["namespace"] == "snap-abc/" for h in hits)
@@ -43,7 +43,7 @@ def test_search_namespace_empty_search_result():
     conn.select.return_value = ("OK", [b"0"])
     conn.uid.return_value = ("OK", [b""])
 
-    hits = _search_namespace_for_query(conn, namespace="snap-abc/", query="nope")
+    hits = _search_namespace_for_query(conn, namespace="snap-abc/", query="nope", folders=["INBOX"])
 
     assert hits == []
 
@@ -52,7 +52,9 @@ def test_search_namespace_select_fails():
     conn = MagicMock()
     conn.select.return_value = ("NO", [b"folder missing"])
 
-    hits = _search_namespace_for_query(conn, namespace="missing/", query="anything")
+    hits = _search_namespace_for_query(
+        conn, namespace="missing/", query="anything", folders=["INBOX"]
+    )
 
     assert hits == []
 
@@ -66,7 +68,7 @@ def test_search_namespace_empty_namespace_targets_folder_only():
         ("OK", [(b"1 (UID 1 ENVELOPE (...))", b"Subject: live\r\nFrom: x@y\r\n\r\n")]),
     ]
 
-    hits = _search_namespace_for_query(conn, namespace="", query="live")
+    hits = _search_namespace_for_query(conn, namespace="", query="live", folders=["INBOX"])
 
     assert len(hits) == 1
     assert hits[0]["namespace"] == ""
@@ -81,7 +83,7 @@ def test_search_namespace_quotes_multi_word_query():
     conn.select.return_value = ("OK", [b"0"])
     conn.uid.return_value = ("OK", [b""])
 
-    _search_namespace_for_query(conn, namespace="", query="hello world")
+    _search_namespace_for_query(conn, namespace="", query="hello world", folders=["INBOX"])
 
     # The SEARCH should pass the query as a SINGLE quoted token
     call_args = conn.uid.call_args
@@ -101,6 +103,7 @@ def test_search_namespace_searches_subject_or_from():
         conn,
         namespace="",
         query="alice",
+        folders=["INBOX"],
         criteria_fields=["SUBJECT", "FROM"],
     )
 
@@ -159,6 +162,8 @@ def test_workspace_search_dedup_by_message_id(
     mock_mount.ensure_mounted.return_value = fake_recovery
 
     fake_conn = MagicMock()
+    # No-op LIST so _list_namespace_folders falls back to ["INBOX"] for every namespace.
+    fake_conn.list.return_value = ("OK", [])
     fake_conn.select.return_value = ("OK", [b"1"])
     fake_conn.uid.side_effect = [
         # live SEARCH
@@ -312,6 +317,7 @@ def test_search_namespace_body_includes_body_criterion():
         conn,
         namespace="",
         query="alice",
+        folders=["INBOX"],
         criteria_fields=["SUBJECT", "FROM"],
         search_body=True,
     )
@@ -333,6 +339,7 @@ def test_search_namespace_uses_type_filter_and_multiple_criteria():
         conn,
         namespace="",
         query="bob",
+        folders=["INBOX"],
         criteria_fields=["SUBJECT", "FROM", "TO"],
         type_filter="unseen",
     )
@@ -359,6 +366,7 @@ def test_search_namespace_single_field_no_or_chain():
         conn,
         namespace="",
         query="hi",
+        folders=["INBOX"],
         criteria_fields=["SUBJECT"],
     )
 
@@ -372,10 +380,69 @@ def test_search_namespace_default_is_subject_only():
     conn.select.return_value = ("OK", [b"0"])
     conn.uid.return_value = ("OK", [b""])
 
-    _search_namespace_for_query(conn, namespace="", query="hi")
+    _search_namespace_for_query(conn, namespace="", query="hi", folders=["INBOX"])
 
     args = conn.uid.call_args.args
     assert args == ("SEARCH", "SUBJECT", '"hi"')
+
+
+def test_search_namespace_iterates_all_folders():
+    """G1 regression: search must hit ALL folders in the namespace, not just INBOX."""
+    conn = MagicMock()
+    # LIST returns 3 folders under namespace "ns/"
+    conn.list.return_value = (
+        "OK",
+        [
+            b'(\\HasNoChildren) "/" "ns/INBOX"',
+            b'(\\HasNoChildren) "/" "ns/Sent"',
+            b'(\\HasNoChildren) "/" "ns/Archive"',
+        ],
+    )
+    # Each SELECT returns OK, each SEARCH returns 0 hits
+    conn.select.return_value = ("OK", [b"0"])
+    conn.uid.return_value = ("OK", [b""])
+
+    hits = _search_namespace_for_query(conn, namespace="ns/", query="x")
+
+    assert hits == []
+    # Verify SELECT was called for each of the 3 folders
+    targets = [call.args[0] for call in conn.select.call_args_list]
+    assert '"ns/INBOX"' in targets
+    assert '"ns/Sent"' in targets
+    assert '"ns/Archive"' in targets
+
+
+def test_list_namespace_folders_skips_noselect():
+    """LIST should skip \\Noselect placeholders (e.g. parent of [Gmail])."""
+    from mailfallback.routers.restore import _list_namespace_folders
+
+    conn = MagicMock()
+    conn.list.return_value = (
+        "OK",
+        [
+            b'(\\HasNoChildren) "/" "ns/INBOX"',
+            b'(\\HasChildren \\Noselect) "/" "ns/[Gmail]"',
+            b'(\\HasNoChildren) "/" "ns/[Gmail]/All Mail"',
+        ],
+    )
+
+    folders = _list_namespace_folders(conn, "ns/")
+
+    assert "INBOX" in folders
+    assert "[Gmail]/All Mail" in folders
+    assert "[Gmail]" not in folders
+
+
+def test_list_namespace_folders_falls_back_when_list_fails():
+    """If LIST fails, fall back to ['INBOX'] so search still runs."""
+    from mailfallback.routers.restore import _list_namespace_folders
+
+    conn = MagicMock()
+    conn.list.return_value = ("NO", [])
+
+    folders = _list_namespace_folders(conn, "ns/")
+
+    assert folders == ["INBOX"]
 
 
 @patch("mailfallback.routers.restore.mount_service")
@@ -415,6 +482,7 @@ def test_workspace_search_passes_ttl_override(
     mock_mount.ensure_mounted.return_value = fake_recovery
 
     fake_conn = MagicMock()
+    fake_conn.list.return_value = ("OK", [])
     fake_conn.select.return_value = ("OK", [b"0"])
     fake_conn.uid.return_value = ("OK", [b""])
     mock_connect.return_value = (fake_conn, "_restore_test")
@@ -519,6 +587,7 @@ def test_workspace_search_uses_account_namespace_for_live_select(
     mock_restic.list_snapshots.return_value = []  # no snapshots — only live
 
     fake_conn = MagicMock()
+    fake_conn.list.return_value = ("OK", [])
     fake_conn.select.return_value = ("OK", [b"0"])
     fake_conn.uid.return_value = ("OK", [b""])
     mock_connect.return_value = (fake_conn, "_restore_test")
