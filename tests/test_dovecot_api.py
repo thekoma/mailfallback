@@ -246,3 +246,53 @@ def test_userdb_includes_ready_recoveries_as_namespaces(client, db_session, defa
     assert rec_ns[0]["mail_path"] == ready.restore_path
     assert rec_ns[0]["inbox"] is False
     assert "Recovery" in rec_ns[0]["prefix"]
+
+
+def test_userdb_dedupes_duplicate_recoveries(client, db_session, default_store):
+    """Two Recovery rows for the same (account_id, snapshot_id) collapse to ONE namespace.
+
+    mount_service.ensure_mounted has a documented race that can produce duplicate
+    Recovery rows for the same snapshot. Dovecot rejects userdb responses with
+    duplicate namespace prefixes, so the userdb endpoint MUST dedupe.
+    """
+    user = _create_user(db_session, default_store)
+    acc = _create_account(
+        db_session,
+        default_store,
+        name="Koma",
+        email="koma@example.com",
+        maildir_path="/data/mailboxes/uuid-koma",
+    )
+    acc.owners.append(user)
+
+    now = datetime.now(UTC)
+    older = Recovery(
+        account_id=acc.id,
+        snapshot_id="dup-snap",
+        restore_path="/data/mailboxes/.offsite-restore/older",
+        status=RecoveryStatus.ready,
+        restored_at=now - timedelta(minutes=10),
+    )
+    newer = Recovery(
+        account_id=acc.id,
+        snapshot_id="dup-snap",
+        restore_path="/data/mailboxes/.offsite-restore/newer",
+        status=RecoveryStatus.ready,
+        restored_at=now,
+    )
+    db_session.add_all([older, newer])
+    db_session.commit()
+
+    resp = client.get("/api/internal/dovecot/userdb/alice", headers=HEADERS)
+    assert resp.status_code == 200
+    namespaces = resp.json()["namespaces"]
+
+    rec_ns = [n for n in namespaces if n["name"].startswith("rec_")]
+    # Only ONE recovery namespace for the duplicate snapshot
+    assert len(rec_ns) == 1
+    # Newest wins (recoveries are ordered restored_at DESC)
+    assert rec_ns[0]["name"] == f"rec_{newer.id}"
+    assert rec_ns[0]["mail_path"] == newer.restore_path
+    # All prefixes in the response must be unique (Dovecot's hard requirement)
+    prefixes = [n["prefix"] for n in namespaces]
+    assert len(prefixes) == len(set(prefixes))

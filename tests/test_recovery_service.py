@@ -88,3 +88,45 @@ def test_create_recovery_can_be_ephemeral(mock_restic, db_session, tmp_store):
     )
     assert rec.kind == RecoveryKind.ephemeral
     assert rec.ttl_minutes == 15
+
+
+def test_namespace_prefix_uses_recovery_id_for_uniqueness(db_session, default_store):
+    """Two Recoveries for the same snapshot must produce DIFFERENT namespace prefixes."""
+    from datetime import UTC, datetime
+
+    from mailfallback.models import Account, Recovery, RecoveryStatus
+    from mailfallback.services.recovery_service import namespace_prefix
+
+    acct = Account(
+        name="koma",
+        store=default_store,
+        maildir_path="/data/mailboxes/k",
+        imap_host="imap.example.com",
+    )
+    db_session.add(acct)
+    db_session.commit()
+
+    rec1 = Recovery(
+        account_id=acct.id,
+        snapshot_id="duplicate-snap",
+        restore_path="/tmp/r1",
+        status=RecoveryStatus.ready,
+        restored_at=datetime(2026, 5, 11, 10, 0, tzinfo=UTC),
+    )
+    rec2 = Recovery(
+        account_id=acct.id,
+        snapshot_id="duplicate-snap",
+        restore_path="/tmp/r2",
+        status=RecoveryStatus.ready,
+        restored_at=datetime(2026, 5, 11, 11, 0, tzinfo=UTC),
+    )
+    db_session.add_all([rec1, rec2])
+    db_session.commit()
+
+    p1 = namespace_prefix(rec1, "koma")
+    p2 = namespace_prefix(rec2, "koma")
+
+    assert p1.startswith("Recovery - koma (2026-05-11) [")
+    assert p2.startswith("Recovery - koma (2026-05-11) [")
+    assert p1 != p2  # the [<rec.id[:8]>] differentiator
+    assert p1.endswith("/")

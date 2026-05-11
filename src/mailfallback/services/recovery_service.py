@@ -26,6 +26,19 @@ from mailfallback.services import restic_service
 logger = logging.getLogger(__name__)
 
 
+def namespace_prefix(rec, account_label: str) -> str:
+    """Build the Dovecot namespace prefix for a Recovery.
+
+    MUST be the single source of truth: dovecot.py (publisher) and
+    restore.py (consumer) both call this. Using rec.id[:8] guarantees
+    uniqueness even if multiple Recoveries exist for the same snapshot
+    (race condition documented in mount_service).
+    """
+    short = rec.id[:8]
+    ts = rec.restored_at.strftime("%Y-%m-%d") if rec.restored_at else "snapshot"
+    return f"Recovery - {account_label} ({ts}) [{short}]/"
+
+
 def _build_restore_root(account: Account) -> str:
     """Where the on-disk restore tree lives for this recovery.
 

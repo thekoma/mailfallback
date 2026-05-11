@@ -18,6 +18,7 @@ from mailfallback.models import (
     account_owners,
     group_members,
 )
+from mailfallback.services.recovery_service import namespace_prefix as recovery_namespace_prefix
 
 router = APIRouter(prefix="/api/internal/dovecot", tags=["dovecot-internal"])
 
@@ -83,15 +84,24 @@ def userdb_lookup(username: str, db: Session = Depends(get_db)):
             .order_by(Recovery.restored_at.desc())
             .all()
         )
+        # Dedupe by (account_id, snapshot_id) — keep newest. Idempotency races in
+        # mount_service can produce duplicate Recovery rows for the same snapshot;
+        # Dovecot would reject the userdb response with "Duplicate namespace prefix".
+        seen = set()
+        unique_recoveries = []
+        for rec in recoveries:  # already ordered by restored_at DESC, so first wins (newest)
+            key = (rec.account_id, rec.snapshot_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_recoveries.append(rec)
+        recoveries = unique_recoveries
         accounts_by_id = {a.id: a for a in accounts}
         for rec in recoveries:
             src = accounts_by_id.get(rec.account_id)
             if not src:
                 continue
-            short = (rec.snapshot_id or rec.id)[:8]
-            label = src.name
-            ts = rec.restored_at.strftime("%Y-%m-%d") if rec.restored_at else "snapshot"
-            prefix = f"Recovery - {label} ({ts}) [{short}]/"
+            prefix = recovery_namespace_prefix(rec, src.name)
             namespaces.append(
                 {
                     "name": f"rec_{rec.id}",
