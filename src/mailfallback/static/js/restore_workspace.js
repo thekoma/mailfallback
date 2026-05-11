@@ -27,6 +27,7 @@
     document.getElementById('ws-range-start').value = startDate.toISOString().slice(0, 10);
     document.getElementById('ws-range-end').value = endDate.toISOString().slice(0, 10);
 
+    const fmt = (d) => d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
     // Update visible labels
     document.getElementById('ws-range-start-label').textContent =
       startDays === 0 ? 'today' : `${startDays}d ago`;
@@ -35,15 +36,29 @@
 
     // Update the gradient fill to span the chosen range visually.
     // Slider is "days ago": value 0 = right edge (today), value 365 = left edge.
+    const max = parseInt(startEl.max, 10);
     const fill = document.getElementById('ws-range-fill');
     if (fill) {
-      const max = parseInt(startEl.max, 10);
       const leftDays = Math.max(startDays, endDays);
       const rightDays = Math.min(startDays, endDays);
       const leftPct = ((max - leftDays) / max) * 100;
       const rightPct = ((max - rightDays) / max) * 100;
       fill.style.left = leftPct + '%';
       fill.style.width = (rightPct - leftPct) + '%';
+    }
+
+    // Position tooltips above thumbs and write dates
+    const startTooltip = document.getElementById('ws-range-start-tooltip');
+    const endTooltip = document.getElementById('ws-range-end-tooltip');
+    if (startTooltip) {
+      const startPct = ((max - startDays) / max) * 100;
+      startTooltip.style.left = startPct + '%';
+      startTooltip.textContent = fmt(startDate);
+    }
+    if (endTooltip) {
+      const endPct = ((max - endDays) / max) * 100;
+      endTooltip.style.left = endPct + '%';
+      endTooltip.textContent = fmt(endDate);
     }
   }
 
@@ -336,16 +351,34 @@
       }
     });
 
-    async function updateRangeCost() {
+    let _costRequestSeq = 0;  // to ignore stale responses
+    let _costDebounceTimer = null;
+
+    function updateRangeCost() {
+      // Show "calculating..." immediately for snappy feedback
+      const el = document.getElementById('ws-range-cost');
+      if (!el) return;
+      el.textContent = '⟳ calculating…';
+      el.classList.add('ws-cost-loading');
+
+      // Debounce the actual fetch (250ms) to avoid spamming during drag
+      clearTimeout(_costDebounceTimer);
+      _costDebounceTimer = setTimeout(() => {
+        _doUpdateRangeCost();
+      }, 250);
+    }
+
+    async function _doUpdateRangeCost() {
       const accountId = document.getElementById('ws-account').value;
       const rangeStart = document.getElementById('ws-range-start').value;
       const rangeEnd = document.getElementById('ws-range-end').value;
       const el = document.getElementById('ws-range-cost');
       if (!accountId || !rangeStart || !rangeEnd) {
         el.textContent = '— snapshots in range';
+        el.classList.remove('ws-cost-loading');
         return;
       }
-      el.textContent = 'counting…';
+      const seq = ++_costRequestSeq;
       try {
         const resp = await fetch('/api/restore/workspace/snapshot-count', {
           method: 'POST',
@@ -356,15 +389,21 @@
             range_end: new Date(rangeEnd + 'T23:59:59').toISOString(),
           }),
         });
+        if (seq !== _costRequestSeq) return;  // a newer request superseded
         if (!resp.ok) {
           el.textContent = '— snapshots in range (error)';
+          el.classList.remove('ws-cost-loading');
           return;
         }
         const body = await resp.json();
+        if (seq !== _costRequestSeq) return;
         const sizeMB = (body.size_bytes / 1_000_000).toFixed(0);
         el.textContent = `${body.count} snapshot${body.count === 1 ? '' : 's'} in range · ~${sizeMB} MB`;
+        el.classList.remove('ws-cost-loading');
       } catch (e) {
+        if (seq !== _costRequestSeq) return;
         el.textContent = '— snapshots in range';
+        el.classList.remove('ws-cost-loading');
       }
     }
 
