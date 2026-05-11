@@ -311,3 +311,68 @@ def test_audit_log_survives_user_deletion(db_session, default_store):
     db_session.refresh(log)
     assert log.user_id is None
     assert log.username == "deleteme"
+
+
+def test_recovery_defaults_to_persistent(db_session, default_store):
+    from mailfallback.models import Account, Recovery, RecoveryKind, RecoveryStatus, Repository
+
+    repo = Repository(
+        name="test", backend_type="local", local_path="/tmp/test", restic_password="x"
+    )
+    db_session.add(repo)
+    acct = Account(
+        name="a",
+        imap_host="imap.example.com",
+        store=default_store,
+        maildir_path="/data/mailboxes/a",
+    )
+    db_session.add(acct)
+    db_session.commit()
+
+    r = Recovery(
+        account_id=acct.id,
+        repository_id=repo.id,
+        snapshot_id="abc123",
+        restore_path="/tmp/r",
+        status=RecoveryStatus.ready,
+    )
+    db_session.add(r)
+    db_session.commit()
+    db_session.refresh(r)
+
+    assert r.kind == RecoveryKind.persistent
+    assert r.ttl_minutes is None
+    assert r.last_accessed_at is not None
+
+
+def test_recovery_can_be_ephemeral_with_ttl(db_session, default_store):
+    from mailfallback.models import Account, Recovery, RecoveryKind, RecoveryStatus, Repository
+
+    repo = Repository(
+        name="test", backend_type="local", local_path="/tmp/test", restic_password="x"
+    )
+    db_session.add(repo)
+    acct = Account(
+        name="a",
+        imap_host="imap.example.com",
+        store=default_store,
+        maildir_path="/data/mailboxes/a",
+    )
+    db_session.add(acct)
+    db_session.commit()
+
+    r = Recovery(
+        account_id=acct.id,
+        repository_id=repo.id,
+        snapshot_id="abc",
+        restore_path="/tmp/r",
+        status=RecoveryStatus.ready,
+        kind=RecoveryKind.ephemeral,
+        ttl_minutes=30,
+    )
+    db_session.add(r)
+    db_session.commit()
+    db_session.refresh(r)
+
+    assert r.kind == RecoveryKind.ephemeral
+    assert r.ttl_minutes == 30

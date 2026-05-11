@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    text,
 )
 from sqlalchemy.orm import relationship
 
@@ -91,6 +92,11 @@ class RecoveryStatus(enum.StrEnum):
     ready = "ready"
     failed = "failed"
     deleting = "deleting"
+
+
+class RecoveryKind(enum.StrEnum):
+    persistent = "persistent"
+    ephemeral = "ephemeral"
 
 
 class BackupStatus(enum.StrEnum):
@@ -407,6 +413,19 @@ class Recovery(Base):
     status = Column(Enum(RecoveryStatus), nullable=False, default=RecoveryStatus.restoring)
     error = Column(Text, nullable=True)
     size_bytes = Column(Integer, nullable=True)  # disk size of the recovered tree
+    kind = Column(
+        Enum(RecoveryKind),
+        nullable=False,
+        default=RecoveryKind.persistent,
+        server_default=RecoveryKind.persistent.value,
+    )
+    last_accessed_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
+        server_default=text("now()"),
+    )
+    ttl_minutes = Column(Integer, nullable=True)  # NULL = no TTL
 
     account = relationship("Account", backref="recoveries")
     repository = relationship("Repository")
