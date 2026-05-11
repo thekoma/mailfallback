@@ -508,8 +508,13 @@ def workspace_search(
         rec = mount_service.ensure_mounted(db, req.account_id, snap_id)
         if rec.status != RecoveryStatus.ready:
             continue
-        # Namespace label mirrors dovecot.py's existing convention.
-        ns_label = f"Recovery — {account.name} ({snap_id})/"
+        # Namespace label MUST match the prefix Dovecot publishes in
+        # routers/dovecot.py for this Recovery — otherwise SELECT fails on
+        # the temp IMAP user. Keep the two formatters in sync.
+        short = (rec.snapshot_id or rec.id)[:8]
+        label = account.name
+        ts = rec.restored_at.strftime("%Y-%m-%d") if rec.restored_at else "snapshot"
+        ns_label = f"Recovery — {label} ({ts}) [{short}]/"
         mounted.append((snap_id, ns_label))
 
     # Search live first, then each mounted snapshot.
