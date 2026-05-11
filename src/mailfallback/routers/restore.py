@@ -543,6 +543,57 @@ def workspace_search(
     }
 
 
+class WorkspaceSnapshotCountRequest(BaseModel):
+    account_id: str
+    range_start: datetime
+    range_end: datetime
+
+
+@router.post("/workspace/snapshot-count")
+def workspace_snapshot_count(
+    req: WorkspaceSnapshotCountRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Count snapshots in the requested range and sum their sizes.
+
+    Cheap operation: just lists snapshots from restic and filters by time;
+    no mount happens. Used by the workspace UI to show the cost of widening
+    the time range.
+    """
+    account = account_service.get_account(db, req.account_id, user)
+    if not account:
+        raise HTTPException(404, "account not found")
+
+    backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == req.account_id).first()
+    if not backup:
+        return {"count": 0, "size_bytes": 0}
+
+    try:
+        snaps = restic_service.list_snapshots(backup.destination, account.id)
+    except Exception:
+        return {"count": 0, "size_bytes": 0}
+
+    count = 0
+    size_bytes = 0
+    for s in snaps:
+        ts_raw = s.get("time", "").replace("Z", "+00:00")
+        if not ts_raw:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_raw)
+        except ValueError:
+            continue
+        if req.range_start <= ts <= req.range_end:
+            count += 1
+            # restic snapshot dicts may have "summary" with "total_bytes_processed"
+            summary = s.get("summary") or {}
+            size_bytes += summary.get("total_bytes_processed") or 0
+
+    return {"count": count, "size_bytes": size_bytes}
+
+
 def _merge_hit(dedup: dict[str, dict], hit: dict, source_label: str) -> None:
     """Merge a hit into the dedup map keyed by Message-Id, preserving per-source location.
 
