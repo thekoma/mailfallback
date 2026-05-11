@@ -246,6 +246,13 @@ def test_restore_workspace_renders(client, db_session, default_store, login_user
     assert b'id="ws-snapshot-picker"' in body
     assert b'id="ws-folder-select"' in body
     assert b'id="ws-snapshot-select"' in body
+    # P3: visual range slider replaces the two date inputs. The hidden ISO
+    # fields are preserved (still id="ws-range-start" / "ws-range-end") so
+    # the JS contract for runSearch and updateRangeCost is unchanged.
+    assert b'id="ws-range-start-days"' in body
+    assert b'id="ws-range-end-days"' in body
+    assert b'id="ws-range-start"' in body
+    assert b'id="ws-range-end"' in body
 
 
 @patch("mailfallback.routers.restore.submit_restore_job")

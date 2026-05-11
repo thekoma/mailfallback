@@ -1,13 +1,50 @@
 (function () {
   const RW = window.RestoreWorkspace = {};
 
-  // Default range: last 7 days.
   function setDefaultRange() {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(start.getDate() - 7);
-    document.getElementById('ws-range-start').valueAsDate = start;
-    document.getElementById('ws-range-end').valueAsDate = end;
+    // Defaults are encoded in the HTML range inputs (start=7, end=0).
+    // Sync the hidden ISO fields and labels.
+    syncRangeFromSlider();
+  }
+
+  function syncRangeFromSlider() {
+    const startEl = document.getElementById('ws-range-start-days');
+    const endEl = document.getElementById('ws-range-end-days');
+    if (!startEl || !endEl) return;
+    let startDays = parseInt(startEl.value, 10);
+    let endDays = parseInt(endEl.value, 10);
+    // Enforce: start >= end (start is further back in time)
+    if (startDays < endDays) {
+      [startDays, endDays] = [endDays, startDays];
+    }
+    const now = new Date();
+    const startDate = new Date(now);
+    startDate.setDate(now.getDate() - startDays);
+    const endDate = new Date(now);
+    endDate.setDate(now.getDate() - endDays);
+
+    // Update hidden ISO fields (yyyy-mm-dd format expected by existing code paths)
+    document.getElementById('ws-range-start').value = startDate.toISOString().slice(0, 10);
+    document.getElementById('ws-range-end').value = endDate.toISOString().slice(0, 10);
+
+    // Update visible labels
+    document.getElementById('ws-range-start-label').textContent =
+      startDays === 0 ? 'today' : `${startDays}d ago`;
+    document.getElementById('ws-range-end-label').textContent =
+      endDays === 0 ? 'today' : `${endDays}d ago`;
+
+    // Update the gradient fill to span the chosen range visually.
+    // Slider is "days ago": value 0 = right edge (today), value 365 = left edge.
+    const fill = document.getElementById('ws-range-fill');
+    if (fill) {
+      const max = parseInt(startEl.max, 10);
+      const leftDays = Math.max(startDays, endDays);
+      const rightDays = Math.min(startDays, endDays);
+      const leftPct = ((max - leftDays) / max) * 100;
+      const rightPct = ((max - rightDays) / max) * 100;
+      fill.style.left = leftPct + '%';
+      fill.style.width = (rightPct - leftPct) + '%';
+    }
   }
 
   // Hoisted so applyPreset can call them — actual fetches happen at click time.
@@ -66,13 +103,11 @@
     snapshotPicker.classList.add('hidden');
     actionBar.classList.add('hidden');
 
-    // Default range for each preset
+    // Default range for each preset — set sliders, then propagate
     const days = {'single-mail': 7, 'folder': 30, 'full': 90}[preset] || 7;
-    const end = new Date();
-    const start = new Date();
-    start.setDate(start.getDate() - days);
-    document.getElementById('ws-range-start').valueAsDate = start;
-    document.getElementById('ws-range-end').valueAsDate = end;
+    document.getElementById('ws-range-start-days').value = String(days);
+    document.getElementById('ws-range-end-days').value = '0';
+    syncRangeFromSlider();
 
     if (preset === 'single-mail') {
       searchRow.classList.remove('hidden');
@@ -333,8 +368,10 @@
       }
     }
 
-    document.getElementById('ws-range-start').addEventListener('change', updateRangeCost);
-    document.getElementById('ws-range-end').addEventListener('change', updateRangeCost);
+    const startEl = document.getElementById('ws-range-start-days');
+    const endEl = document.getElementById('ws-range-end-days');
+    if (startEl) startEl.addEventListener('input', () => { syncRangeFromSlider(); updateRangeCost(); });
+    if (endEl) endEl.addEventListener('input', () => { syncRangeFromSlider(); updateRangeCost(); });
     document.getElementById('ws-account').addEventListener('change', updateRangeCost);
     // Expose for applyPreset (which lives outside this scope) so it can
     // refresh the cost preview after changing the default range.
