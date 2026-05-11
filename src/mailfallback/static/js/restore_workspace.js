@@ -64,6 +64,7 @@
   };
 
   RW.renderResults = function (results) {
+    RW.lastResults = results;
     const el = document.getElementById('ws-results');
     const bar = document.getElementById('ws-action-bar');
     if (!results.length) {
@@ -99,6 +100,56 @@
     });
     document.getElementById('ws-select-all').addEventListener('change', e => {
       document.querySelectorAll('.ws-result-cb').forEach(cb => { cb.checked = e.target.checked; });
+    });
+
+    document.getElementById('ws-restore-selected').addEventListener('click', async () => {
+      const selectedRows = Array.from(document.querySelectorAll('.ws-result-cb:checked'))
+        .map(cb => cb.closest('.ws-result'));
+      if (!selectedRows.length) {
+        alert('Select at least one result');
+        return;
+      }
+
+      // RW.lastResults is set by renderResults — used to look up locations.
+      const byMsgid = Object.fromEntries((RW.lastResults || []).map(r => [r.message_id, r]));
+
+      // Group locations by source label; pick "best" location per result
+      // (priority: live > snapshot listed earliest in sources).
+      const grouped = {};  // sourceLabel -> {folder: [uid, ...]}
+      for (const row of selectedRows) {
+        const msgid = row.dataset.msgid;
+        const result = byMsgid[msgid];
+        if (!result) continue;
+        const best = result.locations.find(l => l.source === 'live') || result.locations[0];
+        if (!best) continue;
+        if (!grouped[best.source]) grouped[best.source] = {};
+        const folderKey = (best.namespace || '') + best.folder;
+        if (!grouped[best.source][folderKey]) grouped[best.source][folderKey] = [];
+        grouped[best.source][folderKey].push(String(best.uid));
+      }
+
+      const sourceAcct = document.getElementById('ws-account').value;
+      const destAcct = document.getElementById('ws-destination').value;
+      const jobs = [];
+      for (const [sourceLabel, selected_uids] of Object.entries(grouped)) {
+        const resp = await fetch('/api/restore', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            source_account_id: sourceAcct,
+            target_account_id: destAcct,
+            restore_mode: 'selection',
+            selected_uids: selected_uids,
+          }),
+        });
+        if (resp.ok) {
+          jobs.push((await resp.json()).job_id);
+        } else {
+          alert(`Failed for source ${sourceLabel}: ${resp.status}`);
+          return;
+        }
+      }
+      alert(`Started ${jobs.length} restore job(s): ${jobs.join(', ')}`);
     });
   });
 })();

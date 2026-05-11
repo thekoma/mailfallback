@@ -190,3 +190,55 @@ def test_restore_workspace_renders(client, db_session, default_store, login_user
     assert b'data-preset="full"' in body
     # Workspace marker
     assert b"workspace" in body.lower() or b"page-restore-workspace" in body
+
+
+@patch("mailfallback.routers.restore.submit_restore_job")
+@patch("mailfallback.routers.restore.create_restore_job")
+def test_workspace_restore_post_to_existing_engine(
+    mock_create_job, mock_submit, client, db_session, default_store, login_user
+):
+    repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
+    db_session.add(repo)
+    src = Account(
+        name="src",
+        store=default_store,
+        maildir_path="/data/mailboxes/s",
+        imap_host="imap.example.com",
+    )
+    dst = Account(
+        name="dst",
+        store=default_store,
+        maildir_path="/data/mailboxes/d",
+        imap_host="imap.example.com",
+    )
+    db_session.add_all([src, dst])
+    db_session.flush()
+    src.owners.append(login_user)
+    dst.owners.append(login_user)
+    db_session.add(BackupPolicy(account_id=src.id, destination_id=repo.id))
+    db_session.commit()
+
+    fake_job = MagicMock()
+    fake_job.id = "j-1"
+    fake_job.status.value = "pending"
+    fake_job.source_account_id = src.id
+    fake_job.target_account_id = dst.id
+    fake_job.restore_mode.value = "selection"
+    mock_create_job.return_value = fake_job
+
+    # Authenticate
+    login_resp = client.post("/api/auth/login", json={"username": "koma", "password": "x"})
+    assert login_resp.status_code in (200, 303)
+
+    resp = client.post(
+        "/api/restore",
+        json={
+            "source_account_id": src.id,
+            "target_account_id": dst.id,
+            "restore_mode": "selection",
+            "selected_uids": {"INBOX": ["10"]},
+        },
+    )
+    assert resp.status_code == 200
+    mock_create_job.assert_called_once()
+    mock_submit.assert_called_once_with("j-1")
