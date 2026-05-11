@@ -151,5 +151,43 @@
       }
       alert(`Started ${jobs.length} restore job(s): ${jobs.join(', ')}`);
     });
+
+    async function updateRangeCost() {
+      const accountId = document.getElementById('ws-account').value;
+      const rangeStart = document.getElementById('ws-range-start').value;
+      const rangeEnd = document.getElementById('ws-range-end').value;
+      const el = document.getElementById('ws-range-cost');
+      if (!accountId || !rangeStart || !rangeEnd) {
+        el.textContent = '— snapshots in range';
+        return;
+      }
+      el.textContent = 'counting…';
+      try {
+        const resp = await fetch('/api/restore/workspace/snapshot-count', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            account_id: accountId,
+            range_start: new Date(rangeStart).toISOString(),
+            range_end: new Date(rangeEnd + 'T23:59:59').toISOString(),
+          }),
+        });
+        if (!resp.ok) {
+          el.textContent = '— snapshots in range (error)';
+          return;
+        }
+        const body = await resp.json();
+        const sizeMB = (body.size_bytes / 1_000_000).toFixed(0);
+        el.textContent = `${body.count} snapshot${body.count === 1 ? '' : 's'} in range · ~${sizeMB} MB`;
+      } catch (e) {
+        el.textContent = '— snapshots in range';
+      }
+    }
+
+    document.getElementById('ws-range-start').addEventListener('change', updateRangeCost);
+    document.getElementById('ws-range-end').addEventListener('change', updateRangeCost);
+    document.getElementById('ws-account').addEventListener('change', updateRangeCost);
+    // Trigger once on load (after setDefaultRange has populated the inputs)
+    updateRangeCost();
   });
 })();

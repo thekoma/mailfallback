@@ -288,3 +288,55 @@ def test_workspace_restore_post_to_existing_engine(
     assert resp.status_code == 200
     mock_create_job.assert_called_once()
     mock_submit.assert_called_once_with("j-1")
+
+
+@patch("mailfallback.routers.restore.restic_service")
+def test_workspace_snapshot_count(mock_restic, client, db_session, default_store, login_user):
+    repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
+    db_session.add(repo)
+    acct = Account(
+        name="a",
+        store=default_store,
+        maildir_path="/data/mailboxes/a",
+        imap_host="imap.example.com",
+    )
+    db_session.add(acct)
+    db_session.flush()
+    acct.owners.append(login_user)
+    db_session.add(BackupPolicy(account_id=acct.id, destination_id=repo.id))
+    db_session.commit()
+
+    now = datetime.now(UTC)
+    mock_restic.list_snapshots.return_value = [
+        {
+            "short_id": "old",
+            "time": (now - timedelta(days=30)).isoformat(),
+            "summary": {"total_bytes_processed": 1_000_000},
+        },
+        {
+            "short_id": "mid",
+            "time": (now - timedelta(days=3)).isoformat(),
+            "summary": {"total_bytes_processed": 2_000_000},
+        },
+        {
+            "short_id": "now",
+            "time": now.isoformat(),
+            "summary": {"total_bytes_processed": 3_000_000},
+        },
+    ]
+
+    login_resp = client.post("/api/auth/login", json={"username": "koma", "password": "x"})
+    assert login_resp.status_code in (200, 303)
+
+    resp = client.post(
+        "/api/restore/workspace/snapshot-count",
+        json={
+            "account_id": acct.id,
+            "range_start": (now - timedelta(days=7)).isoformat(),
+            "range_end": now.isoformat(),
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 2  # mid + now within last 7 days
+    assert body["size_bytes"] == 5_000_000  # 2_000_000 + 3_000_000
