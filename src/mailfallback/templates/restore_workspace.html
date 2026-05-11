@@ -33,38 +33,13 @@
 
       <div class="ws-field">
         <span class="ws-field-label">Time range</span>
-        <div class="ws-range">
-          <div class="ws-range-labels">
-            <span x-text="startLabel"></span>
-            <span x-text="endLabel"></span>
-          </div>
-          <div class="ws-range-slider"
-               :class="{'is-dragging': dragging}"
-               @mousedown="dragging = true"
-               @mouseup="dragging = false"
-               @mouseleave="dragging = false">
-            <div class="ws-range-track"></div>
-            <div class="ws-range-fill"
-                 :style="`left: ${fillLeft}%; width: ${fillWidth}%`"></div>
-            <input type="range" min="0" max="365" step="1"
-                   :value="365 - startDays"
-                   @input="startDays = 365 - parseInt($event.target.value, 10); onRangeChange()"
-                   class="ws-range-input">
-            <input type="range" min="0" max="365" step="1"
-                   :value="365 - endDays"
-                   @input="endDays = 365 - parseInt($event.target.value, 10); onRangeChange()"
-                   class="ws-range-input">
-            <div class="ws-range-tooltip ws-range-tooltip-start"
-                 :style="`left: ${startThumbPct}%`"
-                 x-text="startDateLabel"></div>
-            <div class="ws-range-tooltip ws-range-tooltip-end"
-                 :style="`left: ${endThumbPct}%`"
-                 x-text="endDateLabel"></div>
-          </div>
-          <p class="ws-cost"
-             :class="{'is-loading': costLoading}"
-             x-text="costText"></p>
+        <div class="ws-calendar-wrap">
+          {# flatpickr will replace this input with its inline calendar UI #}
+          <input type="text" id="ws-calendar-input" placeholder="Pick range">
         </div>
+        <p class="ws-cost"
+           :class="{'is-loading': costLoading}"
+           x-text="costText"></p>
       </div>
 
       <fieldset class="ws-field">

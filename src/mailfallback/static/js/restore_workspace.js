@@ -11,8 +11,11 @@ function restoreWorkspace() {
     // Inputs
     accountId: '',
     destinationId: '',
-    startDays: 7,
-    endDays: 0,
+    rangeStart: null,           // Date object — managed by flatpickr
+    rangeEnd: null,             // Date object — managed by flatpickr
+    snapshotDates: [],          // Array of YYYY-MM-DD strings
+    _fp: null,                  // flatpickr instance
+
     includeLive: true,
     includeSnapshots: true,
     ttlOverride: null,
@@ -20,9 +23,6 @@ function restoreWorkspace() {
     filters: {subject: true, from: false, to: false, body: false, type: 'all'},
     filtersOpen: false,
     selectedFolder: '',
-
-    // Slider drag state
-    dragging: false,
 
     // Async/UI state
     searching: false,
@@ -43,46 +43,15 @@ function restoreWorkspace() {
     _costTimer: null,
 
     // === Computed ===
-    get startLabel() {
-      return this.startDays === 0 ? 'today' : `${this.startDays}d ago`;
-    },
-    get endLabel() {
-      return this.endDays === 0 ? 'today' : `${this.endDays}d ago`;
-    },
-    get startDateLabel() {
-      const d = new Date();
-      d.setDate(d.getDate() - this.startDays);
-      return d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
-    },
-    get endDateLabel() {
-      const d = new Date();
-      d.setDate(d.getDate() - this.endDays);
-      return d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
-    },
-    get startThumbPct() {
-      return ((365 - this.startDays) / 365) * 100;
-    },
-    get endThumbPct() {
-      return ((365 - this.endDays) / 365) * 100;
-    },
-    get fillLeft() {
-      const max = Math.max(this.startDays, this.endDays);
-      return ((365 - max) / 365) * 100;
-    },
-    get fillWidth() {
-      const max = Math.max(this.startDays, this.endDays);
-      const min = Math.min(this.startDays, this.endDays);
-      return (((365 - min) / 365) * 100) - (((365 - max) / 365) * 100);
-    },
     get rangeStartIso() {
-      const d = new Date();
-      d.setDate(d.getDate() - Math.max(this.startDays, this.endDays));
+      if (!this.rangeStart) return null;
+      const d = new Date(this.rangeStart);
       d.setHours(0, 0, 0, 0);
       return d.toISOString();
     },
     get rangeEndIso() {
-      const d = new Date();
-      d.setDate(d.getDate() - Math.min(this.startDays, this.endDays));
+      if (!this.rangeEnd) return null;
+      const d = new Date(this.rangeEnd);
       d.setHours(23, 59, 59, 999);
       return d.toISOString();
     },
@@ -94,8 +63,71 @@ function restoreWorkspace() {
       if (sel && sel.options.length > 0) this.accountId = sel.options[0].value;
       const destSel = document.querySelector('[x-model="destinationId"]');
       if (destSel && destSel.options.length > 0) this.destinationId = destSel.options[0].value;
+
+      this._initCalendar();
       this.refreshIcons();
-      this.updateRangeCost();
+
+      // Default range: last 7 days
+      const end = new Date();
+      const start = new Date();
+      start.setDate(start.getDate() - 7);
+      if (this._fp) this._fp.setDate([start, end], true);
+
+      this.fetchSnapshotDates().then(() => this.updateRangeCost());
+    },
+
+    _initCalendar() {
+      const self = this;
+      const input = document.getElementById('ws-calendar-input');
+      if (!input || !window.flatpickr) return;
+      this._fp = window.flatpickr(input, {
+        mode: 'range',
+        inline: true,
+        dateFormat: 'Y-m-d',
+        maxDate: 'today',
+        onChange(selectedDates) {
+          if (selectedDates.length === 2) {
+            self.rangeStart = selectedDates[0];
+            self.rangeEnd = selectedDates[1];
+            self.updateRangeCost();
+          }
+          // selectedDates.length === 1 — mid-range selection, wait for second click
+        },
+        onDayCreate(dObj, dStr, fp, dayElem) {
+          const d = dayElem.dateObj;
+          if (!d) return;
+          const iso = d.getFullYear() + '-' +
+                      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                      String(d.getDate()).padStart(2, '0');
+          if (self.snapshotDates.includes(iso)) {
+            dayElem.classList.add('has-snapshot');
+            const dot = document.createElement('span');
+            dot.className = 'snapshot-dot';
+            dayElem.appendChild(dot);
+          }
+        },
+      });
+    },
+
+    async fetchSnapshotDates() {
+      if (!this.accountId) return;
+      try {
+        const resp = await fetch('/api/restore/workspace/snapshot-dates', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({account_id: this.accountId}),
+        });
+        if (!resp.ok) {
+          this.snapshotDates = [];
+          return;
+        }
+        const body = await resp.json();
+        this.snapshotDates = body.dates || [];
+        // Re-render flatpickr to re-run onDayCreate with the fresh data set.
+        if (this._fp) this._fp.redraw();
+      } catch (e) {
+        this.snapshotDates = [];
+      }
     },
 
     refreshIcons() {
@@ -109,15 +141,17 @@ function restoreWorkspace() {
     applyPreset(id) {
       this.preset = id;
       const days = {'single-mail': 7, 'folder': 30, 'full': 90}[id] || 7;
-      this.startDays = days;
-      this.endDays = 0;
+      const end = new Date();
+      const start = new Date();
+      start.setDate(start.getDate() - days);
+      if (this._fp) this._fp.setDate([start, end], true);
       this.results = [];
       this.selected = [];
       this.searched = false;
       this.statusText = '';
       this.refreshIcons();
       if (id === 'folder') this.loadFolders();
-      this.updateRangeCost();
+      // updateRangeCost() will be called by flatpickr's onChange
     },
 
     onAccountChange() {
@@ -125,18 +159,8 @@ function restoreWorkspace() {
       this.selected = [];
       this.searched = false;
       this.statusText = '';
-      this.updateRangeCost();
+      this.fetchSnapshotDates().then(() => this.updateRangeCost());
       if (this.preset === 'folder') this.loadFolders();
-    },
-
-    onRangeChange() {
-      // Swap if start crossed end
-      if (this.startDays < this.endDays) {
-        const tmp = this.startDays;
-        this.startDays = this.endDays;
-        this.endDays = tmp;
-      }
-      this.updateRangeCost();
     },
 
     updateRangeCost() {
@@ -147,8 +171,8 @@ function restoreWorkspace() {
     },
 
     async _fetchCost() {
-      if (!this.accountId) {
-        this.costText = '— snapshots in range';
+      if (!this.accountId || !this.rangeStart || !this.rangeEnd) {
+        this.costText = '— pick a range';
         this.costLoading = false;
         return;
       }

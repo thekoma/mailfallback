@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="/static/vendor/htmx.min.js"></script>
     <script src="/static/vendor/lucide.min.js"></script>
+    {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}{% if not user %} login-page{% endif %}">
     <header class="topbar" id="topbar">
