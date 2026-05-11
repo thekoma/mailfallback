@@ -37,7 +37,10 @@ def test_no_migration_drift():
         alembic_cfg.attributes["connection"] = conn
         command.upgrade(alembic_cfg, "head")
 
-        mc = MigrationContext.configure(conn)
+        mc = MigrationContext.configure(
+            conn,
+            opts={"include_schemas": True},
+        )
         diff = compare_metadata(mc, Base.metadata)
 
     meaningful = [op for op in diff if _is_meaningful(op)]
@@ -60,4 +63,14 @@ def _is_meaningful(op):
         # SQLite Enum rendering differs from PostgreSQL
         if op_type == "modify_type":
             return False
+        # SQLite ATTACHed databases don't reflect FKs / indexes back to the
+        # comparator; tolerate "added FK" / "removed index" noise from the
+        # mail_index schema (real Postgres deployments are checked separately).
+        if op_type in ("add_fk", "remove_fk", "add_index", "remove_index"):
+            obj = op[1] if len(op) > 1 else None
+            schema = getattr(obj, "schema", None) or getattr(
+                getattr(obj, "table", None), "schema", None
+            )
+            if schema == "mail_index":
+                return False
     return True
