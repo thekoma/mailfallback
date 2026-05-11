@@ -1,0 +1,24 @@
+{# Server-side rendered fragment of search hits — used both as initial empty
+   state and as the template the client mirrors. #}
+{% if not results %}
+<p class="text-muted text-small">No results yet — type a query and press Search.</p>
+{% else %}
+{% for r in results %}
+<div class="ws-result" data-msgid="{{ r.message_id|default('') }}">
+  <label class="ws-result-row">
+    <input type="checkbox" class="ws-result-cb" value="{{ r.message_id|default('') }}">
+    <div class="ws-result-meta">
+      <strong>{{ r.subject|default('(no subject)') }}</strong>
+      <div class="text-muted text-xsmall">
+        {{ r.folder|default('') }} · from {{ r['from']|default('?') }}
+      </div>
+      <div class="ws-badges">
+        {% for s in r.sources %}
+          <span class="ws-badge ws-badge-{{ 'live' if s == 'live' else 'snap' }}">{{ s }}</span>
+        {% endfor %}
+      </div>
+    </div>
+  </label>
+</div>
+{% endfor %}
+{% endif %}
