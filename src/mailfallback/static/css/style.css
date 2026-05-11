@@ -1450,7 +1450,7 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 .ws-range-slider {
   position: relative;
   height: 44px;
-  margin: .25rem 0 1.5rem;
+  margin: 1.75rem 0 2rem;  /* room for tooltip above and below */
 }
 
 .ws-range-track {
@@ -1544,7 +1544,6 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 
 .ws-range-tooltip {
   position: absolute;
-  bottom: -28px;
   transform: translateX(-50%);
   background: var(--ws-card);
   color: var(--ws-cyan);
@@ -1558,7 +1557,23 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   z-index: 1;
   box-shadow: 0 2px 6px rgba(0,0,0,0.3);
 }
-.ws-range-tooltip::before {
+/* Start tooltip above the slider */
+.ws-range-tooltip:nth-of-type(1) { top: -22px; }
+.ws-range-tooltip:nth-of-type(1)::before {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+  width: 8px;
+  height: 8px;
+  background: var(--ws-card);
+  border-bottom: 1px solid var(--ws-cyan);
+  border-right: 1px solid var(--ws-cyan);
+}
+/* End tooltip below the slider */
+.ws-range-tooltip:nth-of-type(2) { bottom: -28px; }
+.ws-range-tooltip:nth-of-type(2)::before {
   content: '';
   position: absolute;
   top: -5px;
@@ -1590,13 +1605,16 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 
 /* Search row */
 
-.ws-search-row {
-  display: flex;
+.ws-root .ws-search-row {
+  display: flex !important;
   gap: .5rem;
   align-items: stretch;
+  width: 100%;
 }
-.ws-search-row input[type="text"] {
-  flex: 1;
+.ws-root .ws-search-row input[type="text"] {
+  flex: 1 1 auto !important;
+  min-width: 0;  /* lets flex-basis shrink correctly */
+  width: auto !important;
   padding: .65rem 1rem;
   font-size: .95rem;
   background: var(--ws-card);
@@ -1606,14 +1624,15 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   margin: 0;
   transition: border-color .15s, box-shadow .15s;
 }
-.ws-search-row input[type="text"]:focus {
+.ws-root .ws-search-row input[type="text"]:focus {
   border-color: var(--ws-cyan);
   outline: none;
   box-shadow: 0 0 0 3px var(--ws-cyan-soft);
 }
 
-.ws-btn-primary,
-.ws-btn-danger {
+.ws-root .ws-btn-primary,
+.ws-root .ws-btn-danger {
+  display: inline-flex !important;
   flex: 0 0 auto;
   padding: .65rem 1.25rem;
   font-size: .9rem;
@@ -1621,32 +1640,32 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   border-radius: .5rem;
   border: none;
   cursor: pointer;
-  display: inline-flex;
   align-items: center;
   gap: .4rem;
   margin: 0;
-  width: auto;
+  width: auto !important;
+  max-width: 220px;  /* hard cap */
   transition: all .15s;
   white-space: nowrap;
 }
-.ws-btn-primary {
+.ws-root .ws-btn-primary {
   background: var(--ws-cyan);
   color: #0f172a;
 }
-.ws-btn-primary:hover:not(:disabled) {
+.ws-root .ws-btn-primary:hover:not(:disabled) {
   background: #0284c7;
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(56, 189, 248, 0.3);
 }
-.ws-btn-primary:disabled {
+.ws-root .ws-btn-primary:disabled {
   opacity: .5;
   cursor: not-allowed;
 }
-.ws-btn-danger {
+.ws-root .ws-btn-danger {
   background: var(--ws-danger);
   color: white;
 }
-.ws-btn-danger:hover:not(:disabled) {
+.ws-root .ws-btn-danger:hover:not(:disabled) {
   background: #ef4444;
   box-shadow: 0 4px 12px rgba(248, 113, 113, 0.3);
 }
