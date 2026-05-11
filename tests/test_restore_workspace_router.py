@@ -75,11 +75,19 @@ def test_search_namespace_empty_namespace_targets_folder_only():
     conn.select.assert_called_once_with('"INBOX"', readonly=True)
 
 
+@patch("mailfallback.routers.restore.delete_temp_imap_user")
 @patch("mailfallback.routers.restore.mount_service")
 @patch("mailfallback.routers.restore._connect_dovecot_for_account")
 @patch("mailfallback.routers.restore.restic_service")
 def test_workspace_search_dedup_by_message_id(
-    mock_restic, mock_connect, mock_mount, client, db_session, default_store, login_user
+    mock_restic,
+    mock_connect,
+    mock_mount,
+    mock_delete_user,
+    client,
+    db_session,
+    default_store,
+    login_user,
 ):
     repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
     db_session.add(repo)
@@ -94,6 +102,10 @@ def test_workspace_search_dedup_by_message_id(
     acct.owners.append(login_user)
     db_session.add(BackupPolicy(account_id=acct.id, destination_id=repo.id))
     db_session.commit()
+
+    # Authenticate as login_user (created by the fixture as koma/x)
+    login_resp = client.post("/api/auth/login", json={"username": "koma", "password": "x"})
+    assert login_resp.status_code == 200, login_resp.text
 
     mock_restic.list_snapshots.return_value = [
         {"short_id": "snap1", "time": (datetime.now(UTC) - timedelta(days=2)).isoformat()},
@@ -120,7 +132,7 @@ def test_workspace_search_dedup_by_message_id(
         ("OK", [b"99"]),
         ("OK", [(b"...", b"Subject: x\r\nMessage-Id: <abc@host>\r\n\r\n")]),
     ]
-    mock_connect.return_value = fake_conn
+    mock_connect.return_value = (fake_conn, "_restore_testuser")
 
     resp = client.post(
         "/api/restore/workspace/search",
@@ -140,3 +152,4 @@ def test_workspace_search_dedup_by_message_id(
     result = body["results"][0]
     assert "live" in result["sources"]
     assert "snap1" in result["sources"]
+    mock_delete_user.assert_called_once_with(db_session, "_restore_testuser")
