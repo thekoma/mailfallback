@@ -27,6 +27,9 @@ dependencies = [
     "psycopg2-binary>=2.9",
 ]
 
+[project.scripts]
+mfb = "mailfallback.cli:app"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3",
@@ -70,3 +73,4 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S106", "S108", "S110"]
+"src/mailfallback/cli/**" = ["T201"]  # CLI uses print() for stdout output
