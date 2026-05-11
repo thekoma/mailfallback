@@ -1,139 +1,256 @@
-<div class="flex-between">
-  <div>
-    <h2><i data-lucide="archive-restore" class="icon-xl icon-inline"></i>Restore</h2>
-    <p class="text-muted text-small mt-0">What are you looking for?</p>
-  </div>
-</div>
+<div x-data="restoreWorkspace()" x-init="init()" class="ws-root">
 
-{# Preset chips #}
-<div class="restore-presets" role="tablist">
-  <button type="button" class="preset-chip is-active" data-preset="single-mail">
-    <i data-lucide="mail" class="icon-sm icon-inline"></i> A single mail
-  </button>
-  <button type="button" class="preset-chip" data-preset="folder">
-    <i data-lucide="folder" class="icon-sm icon-inline"></i> A folder / subset
-  </button>
-  <button type="button" class="preset-chip" data-preset="full">
-    <i data-lucide="alert-triangle" class="icon-sm icon-inline"></i> The whole mailbox
-  </button>
-</div>
-
-<div class="workspace-grid">
-  <aside class="workspace-sidebar">
-    <label>Mailbox
-      <select name="account_id" id="ws-account">
-        {% for acct, _ in protected %}
-        <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address }})</option>
-        {% endfor %}
-      </select>
-    </label>
-
-    <div class="ws-range-block">
-      <label class="text-small">Time range</label>
-      <div class="ws-range-labels">
-        <span id="ws-range-start-label">7d ago</span>
-        <span id="ws-range-end-label">today</span>
-      </div>
-      <div class="ws-range-slider">
-        <input type="range" id="ws-range-start-days" min="0" max="365" value="7" step="1" class="ws-range-input">
-        <input type="range" id="ws-range-end-days" min="0" max="365" value="0" step="1" class="ws-range-input">
-        <div class="ws-range-track"></div>
-        <div class="ws-range-fill" id="ws-range-fill"></div>
-        <div class="ws-range-tooltip" id="ws-range-start-tooltip"></div>
-        <div class="ws-range-tooltip" id="ws-range-end-tooltip"></div>
-      </div>
-      {# Hidden ISO date fields populated by JS — preserves existing JS contract #}
-      <input type="hidden" id="ws-range-start" name="range_start">
-      <input type="hidden" id="ws-range-end" name="range_end">
-      <p class="text-muted text-xsmall" id="ws-range-cost">— snapshots in range</p>
+  <div class="ws-header">
+    <div>
+      <h2><i data-lucide="archive-restore" class="icon-xl icon-inline"></i>Restore</h2>
+      <p class="text-muted text-small mt-0">What are you looking for?</p>
     </div>
+  </div>
 
-    <fieldset>
-      <legend>Sources</legend>
-      <label><input type="checkbox" id="ws-include-live" checked> Live</label>
-      <label><input type="checkbox" id="ws-include-snapshots" checked> Snapshots</label>
-    </fieldset>
+  {# Preset chips #}
+  <div class="ws-presets" role="tablist">
+    <template x-for="p in presets" :key="p.id">
+      <button type="button"
+              class="ws-chip"
+              :class="{'is-active': preset === p.id}"
+              @click="applyPreset(p.id)">
+        <i :data-lucide="p.icon" class="icon-sm icon-inline"></i>
+        <span x-text="p.label"></span>
+      </button>
+    </template>
+  </div>
 
-    <details class="advanced">
-      <summary>Advanced</summary>
-      <label><input type="checkbox" id="ws-search-body"> Search in body</label>
-      <label>TTL ephemeral mounts (min)
-        <input type="number" id="ws-ttl-override" min="5" max="240"
-               placeholder="default {{ settings.recovery_ephemeral_ttl_minutes }}">
+  <div class="ws-grid">
+    <aside class="ws-sidebar">
+      <label class="ws-field">
+        <span class="ws-field-label">Mailbox</span>
+        <select x-model="accountId" @change="onAccountChange()">
+          {% for acct in protected | map(attribute=0) %}
+          <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address }})</option>
+          {% endfor %}
+        </select>
       </label>
-    </details>
 
-    <label>Destination
-      <select name="destination_id" id="ws-destination">
-        {% for acct in all_accounts %}
-        <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address or "—" }})</option>
-        {% endfor %}
-      </select>
-    </label>
-  </aside>
-
-  <main class="workspace-panel">
-    <form id="ws-search-form" onsubmit="event.preventDefault(); window.RestoreWorkspace.runSearch();">
-      <div class="search-row" id="ws-search-row">
-        <input type="text" id="ws-query" placeholder="Search…" autocomplete="off">
-        <button type="submit" class="primary ws-search-btn">
-          <i data-lucide="search" class="icon-sm icon-inline"></i> Search
-        </button>
+      <div class="ws-field">
+        <span class="ws-field-label">Time range</span>
+        <div class="ws-range">
+          <div class="ws-range-labels">
+            <span x-text="startLabel"></span>
+            <span x-text="endLabel"></span>
+          </div>
+          <div class="ws-range-slider"
+               :class="{'is-dragging': dragging}"
+               @mousedown="dragging = true"
+               @mouseup="dragging = false"
+               @mouseleave="dragging = false">
+            <div class="ws-range-track"></div>
+            <div class="ws-range-fill"
+                 :style="`left: ${fillLeft}%; width: ${fillWidth}%`"></div>
+            <input type="range" min="0" max="365" step="1"
+                   x-model.number="startDays"
+                   @input="onRangeChange()"
+                   class="ws-range-input">
+            <input type="range" min="0" max="365" step="1"
+                   x-model.number="endDays"
+                   @input="onRangeChange()"
+                   class="ws-range-input">
+            <div class="ws-range-tooltip"
+                 :style="`left: ${startThumbPct}%`"
+                 x-text="startDateLabel"></div>
+            <div class="ws-range-tooltip"
+                 :style="`left: ${endThumbPct}%`"
+                 x-text="endDateLabel"></div>
+          </div>
+          <p class="ws-cost"
+             :class="{'is-loading': costLoading}"
+             x-text="costText"></p>
+        </div>
       </div>
-      <details class="ws-filters">
-        <summary class="text-muted text-small">Filters</summary>
-        <div class="ws-filters-grid">
-          <fieldset>
-            <legend class="text-xsmall text-muted">Search in</legend>
-            <label class="text-small"><input type="checkbox" id="ws-sf-subject" checked> Subject</label>
-            <label class="text-small"><input type="checkbox" id="ws-sf-from"> From</label>
-            <label class="text-small"><input type="checkbox" id="ws-sf-to"> To</label>
-            <label class="text-small"><input type="checkbox" id="ws-sf-body"> Body</label>
-          </fieldset>
-          <label class="text-small">Type
-            <select id="ws-sf-type">
-              <option value="all">All</option>
-              <option value="unseen">Unread</option>
-              <option value="flagged">Flagged</option>
-              <option value="unanswered">Unanswered</option>
+
+      <fieldset class="ws-field">
+        <legend class="ws-field-label">Sources</legend>
+        <label class="ws-inline"><input type="checkbox" x-model="includeLive"> Live</label>
+        <label class="ws-inline"><input type="checkbox" x-model="includeSnapshots"> Snapshots</label>
+      </fieldset>
+
+      <details class="ws-field ws-advanced">
+        <summary class="ws-field-label">Advanced</summary>
+        <label class="ws-inline">
+          TTL ephemeral (min)
+          <input type="number" x-model.number="ttlOverride" min="5" max="240"
+                 placeholder="default {{ settings.recovery_ephemeral_ttl_minutes }}">
+        </label>
+      </details>
+
+      <label class="ws-field">
+        <span class="ws-field-label">Destination</span>
+        <select x-model="destinationId">
+          {% for acct in all_accounts %}
+          <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address or "—" }})</option>
+          {% endfor %}
+        </select>
+      </label>
+    </aside>
+
+    <main class="ws-panel">
+      {# Single-mail / search-first preset #}
+      <template x-if="preset === 'single-mail'">
+        <div class="ws-search">
+          <form @submit.prevent="runSearch()" class="ws-search-row">
+            <input type="text" x-model="query" placeholder="Search subject, sender…" autocomplete="off">
+            <button type="submit" class="ws-btn-primary" :disabled="searching">
+              <template x-if="!searching">
+                <span><i data-lucide="search" class="icon-sm icon-inline"></i> Search</span>
+              </template>
+              <template x-if="searching">
+                <span><i data-lucide="loader" class="icon-sm icon-inline spin"></i> Searching…</span>
+              </template>
+            </button>
+          </form>
+
+          <details class="ws-filters" x-bind:open="filtersOpen">
+            <summary @click.prevent="filtersOpen = !filtersOpen" class="ws-field-label">Filters</summary>
+            <div class="ws-filters-grid">
+              <fieldset>
+                <legend class="ws-field-label">Search in</legend>
+                <label class="ws-inline"><input type="checkbox" x-model="filters.subject"> Subject</label>
+                <label class="ws-inline"><input type="checkbox" x-model="filters.from"> From</label>
+                <label class="ws-inline"><input type="checkbox" x-model="filters.to"> To</label>
+                <label class="ws-inline"><input type="checkbox" x-model="filters.body"> Body</label>
+              </fieldset>
+              <label class="ws-field">
+                <span class="ws-field-label">Type</span>
+                <select x-model="filters.type">
+                  <option value="all">All</option>
+                  <option value="unseen">Unread</option>
+                  <option value="flagged">Flagged</option>
+                  <option value="unanswered">Unanswered</option>
+                </select>
+              </label>
+            </div>
+          </details>
+
+          <p class="ws-status text-muted text-xsmall" x-text="statusText" x-show="statusText"></p>
+
+          {# Loading skeletons #}
+          <template x-if="searching && results.length === 0">
+            <div class="ws-results">
+              <template x-for="i in 3" :key="i">
+                <div class="ws-skeleton">
+                  <div class="ws-skeleton-line" style="width: 60%"></div>
+                  <div class="ws-skeleton-line" style="width: 40%"></div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          {# Empty state #}
+          <template x-if="!searching && searched && results.length === 0">
+            <div class="ws-empty">
+              <i data-lucide="search-x" class="icon-xl"></i>
+              <p>No matches. Try expanding the time range or different filters.</p>
+            </div>
+          </template>
+
+          {# Results #}
+          <template x-if="results.length > 0">
+            <div class="ws-results">
+              <template x-for="r in results" :key="r.message_id">
+                <label class="ws-result"
+                       :class="{'is-selected': selected.includes(r.message_id)}">
+                  <input type="checkbox"
+                         :value="r.message_id"
+                         x-model="selected">
+                  <div class="ws-result-body">
+                    <div class="ws-result-subject" x-text="r.subject || '(no subject)'"></div>
+                    <div class="ws-result-meta text-xsmall text-muted">
+                      <span x-text="r.folder || ''"></span>
+                      <span> · from </span>
+                      <span x-text="r.from || '?'"></span>
+                    </div>
+                    <div class="ws-badges">
+                      <template x-for="s in r.sources" :key="s">
+                        <span class="ws-badge"
+                              :class="s === 'live' ? 'ws-badge-live' : 'ws-badge-snap'"
+                              x-text="s"></span>
+                      </template>
+                    </div>
+                  </div>
+                </label>
+              </template>
+            </div>
+          </template>
+
+          <div class="ws-action-bar" x-show="results.length > 0" x-transition>
+            <label class="ws-inline">
+              <input type="checkbox"
+                     :checked="selected.length === results.length && results.length > 0"
+                     @change="toggleSelectAll($event.target.checked)">
+              <span>
+                <span x-text="selected.length"></span> /
+                <span x-text="results.length"></span> selected
+              </span>
+            </label>
+            <button class="ws-btn-primary"
+                    :disabled="selected.length === 0 || restoring"
+                    @click="restoreSelected()">
+              <i :data-lucide="restoring ? 'loader' : 'play'"
+                 :class="{'spin': restoring}"
+                 class="icon-sm icon-inline"></i>
+              <span x-text="restoring ? 'Restoring…' : 'Restore selected →'"></span>
+            </button>
+          </div>
+        </div>
+      </template>
+
+      {# Folder preset #}
+      <template x-if="preset === 'folder'">
+        <div class="ws-folder-flow">
+          <p class="text-muted">Pick a folder to restore in full from the source mailbox.</p>
+          <label class="ws-field">
+            <span class="ws-field-label">Folder</span>
+            <select x-model="selectedFolder">
+              <option value="">Loading folders…</option>
+              <template x-for="f in folders" :key="f.full_name || f.name">
+                <option :value="f.full_name || f.name" x-text="f.name"></option>
+              </template>
             </select>
           </label>
+          <button class="ws-btn-primary"
+                  :disabled="!selectedFolder || restoring"
+                  @click="restoreFolder()">
+            <i :data-lucide="restoring ? 'loader' : 'play'"
+               :class="{'spin': restoring}"
+               class="icon-sm icon-inline"></i>
+            <span x-text="restoring ? 'Restoring folder…' : 'Restore folder →'"></span>
+          </button>
+          <p class="text-muted text-xsmall" x-text="folderStatus" x-show="folderStatus"></p>
         </div>
-      </details>
-      <p class="text-muted text-xsmall" id="ws-mount-progress"></p>
-    </form>
+      </template>
 
-    {# Folder picker (folder preset) — initially hidden #}
-    <div id="ws-folder-picker" class="hidden">
-      <label>Folder
-        <select id="ws-folder-select"></select>
-      </label>
-      <button type="button" class="primary" id="ws-restore-folder-btn">
-        <i data-lucide="play" class="icon-sm icon-inline"></i> Restore folder →
-      </button>
-      <p class="text-muted text-xsmall" id="ws-folder-progress"></p>
-    </div>
+      {# Full mailbox preset #}
+      <template x-if="preset === 'full'">
+        <div class="ws-full-flow">
+          <div class="ws-callout">
+            <i data-lucide="alert-triangle" class="icon-md"></i>
+            <div>
+              <strong>Full mailbox restore</strong>
+              <p>Copies the entire latest snapshot in range to the destination mailbox. This can take a while.</p>
+            </div>
+          </div>
+          <button class="ws-btn-danger"
+                  :disabled="restoring"
+                  @click="restoreFull()">
+            <i :data-lucide="restoring ? 'loader' : 'play'"
+               :class="{'spin': restoring}"
+               class="icon-sm icon-inline"></i>
+            <span x-text="restoring ? 'Restoring…' : 'Run full restore →'"></span>
+          </button>
+          <p class="text-muted text-xsmall" x-text="fullStatus" x-show="fullStatus"></p>
+        </div>
+      </template>
+    </main>
+  </div>
 
-    {# Snapshot picker (full preset) — initially hidden #}
-    <div id="ws-snapshot-picker" class="hidden">
-      <label>Snapshot
-        <select id="ws-snapshot-select"></select>
-      </label>
-      <button type="button" class="primary" id="ws-restore-full-btn">
-        <i data-lucide="play" class="icon-sm icon-inline"></i> Full restore →
-      </button>
-      <p class="text-muted text-xsmall" id="ws-full-progress"></p>
-    </div>
-
-    <div id="ws-results"></div>
-
-    <div id="ws-action-bar" class="ws-action-bar hidden">
-      <label><input type="checkbox" id="ws-select-all"> Select all</label>
-      <button type="button" id="ws-restore-selected" class="primary">
-        <i data-lucide="play" class="icon-sm icon-inline"></i> Restore selected →
-      </button>
-    </div>
-  </main>
+  {% include "partials/restore_status_strip.html" ignore missing %}
 </div>
-
-{% include "partials/restore_status_strip.html" ignore missing %}
