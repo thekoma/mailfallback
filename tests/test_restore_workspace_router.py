@@ -232,27 +232,19 @@ def test_restore_workspace_renders(client, db_session, default_store, login_user
     resp = client.get("/restore")
     assert resp.status_code == 200
     body = resp.content
-    # Preset chips visible
-    assert b'data-preset="single-mail"' in body
-    assert b'data-preset="folder"' in body
-    assert b'data-preset="full"' in body
+    # Alpine.js component bootstrapping
+    assert b'x-data="restoreWorkspace()"' in body
+    # We no longer use data-preset attributes — Alpine drives state via x-data
+    assert b"data-preset" not in body
     # Workspace marker
-    assert b"workspace" in body.lower() or b"page-restore-workspace" in body
+    assert b"page-restore-workspace" in body
     # Destination dropdown lists ALL owned accounts, including the one
     # without a backup policy (Fix B).
     assert acct2.id.encode() in body
-    # Per-preset pickers exist in the DOM (Fix E).
-    assert b'id="ws-folder-picker"' in body
-    assert b'id="ws-snapshot-picker"' in body
-    assert b'id="ws-folder-select"' in body
-    assert b'id="ws-snapshot-select"' in body
-    # P3: visual range slider replaces the two date inputs. The hidden ISO
-    # fields are preserved (still id="ws-range-start" / "ws-range-end") so
-    # the JS contract for runSearch and updateRangeCost is unchanged.
-    assert b'id="ws-range-start-days"' in body
-    assert b'id="ws-range-end-days"' in body
-    assert b'id="ws-range-start"' in body
-    assert b'id="ws-range-end"' in body
+    # Alpine CDN script tag is present (defer-loaded before workspace.js)
+    assert b"alpinejs" in body
+    # Workspace JS factory loaded
+    assert b"restore_workspace.js" in body
 
 
 @patch("mailfallback.routers.restore.submit_restore_job")
