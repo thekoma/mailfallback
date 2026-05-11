@@ -224,6 +224,15 @@ def execute_restore_job(db: Session, job_id: str) -> None:
 
 
 def _resolve_folders(src_conn, source, job):
+    # When selected_uids was passed (e.g. by the Restore Workspace), trust the
+    # keys verbatim — they may include alternative namespaces such as mounted
+    # Recovery snapshots ("Recovery — name (snap-X)/INBOX") that don't live
+    # under the source account's own namespace prefix. We pass each key as
+    # both the full IMAP path and the short folder key so the per-folder
+    # uid_filter lookup later in _execute_restore matches by the same key.
+    if job.selected_uids:
+        return [(folder, folder) for folder in job.selected_uids]
+
     namespace_prefix = _get_namespace_prefix(source)
     status, folder_data = src_conn.list(f'"{namespace_prefix}"', "*")
     if status != "OK" or not folder_data:
@@ -245,8 +254,6 @@ def _resolve_folders(src_conn, source, job):
 
     if job.selected_folders:
         return [(full, short) for full, short in all_folders if short in job.selected_folders]
-    if job.selected_uids:
-        return [(full, short) for full, short in all_folders if short in job.selected_uids]
     return all_folders
 
 
