@@ -1,6 +1,7 @@
 """Tests for search_service — Phase 1 header search via mail_index."""
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 
@@ -143,3 +144,21 @@ def test_search_pagination(db_session, search_setup):
     )
     assert len(page1["results"]) == 2
     assert page1["total"] == 3
+
+
+@patch("mailfallback.services.search_service._dovecot_filter_body")
+def test_phase2_body_filter_marks_survivors(mock_filter, db_session, search_setup):
+    """When body=True, _dovecot_filter_body returns a subset of message_id_hashes
+    that match the body keyword. search_messages flags those as body_matched=True."""
+    # Mock returns: only the first message hash matches body
+    mock_filter.return_value = {b"\x01" * 20}
+
+    result = search_service.search_messages(
+        db_session,
+        user=search_setup["user"],
+        query="fattura",
+        body=True,
+    )
+    by_subject = {r["subject"]: r for r in result["results"]}
+    assert by_subject["fattura marzo"]["body_matched"] is True
+    assert by_subject["old fattura"]["body_matched"] is False

@@ -55,6 +55,8 @@ class Settings(BaseSettings):
 
     confs_path: str = "/confs"
 
+    search_body_candidate_cap: int = 500
+
     db_host: str = "db"
     db_port: int = 5432
     db_name: str = "mailfallback"
