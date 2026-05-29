@@ -257,6 +257,48 @@ def test_dovecot_body_search_timeout_sets_partial(db_session, search_setup, monk
     assert partial is True
 
 
+def test_dovecot_body_search_deadline_stops_between_fetch_batches(
+    db_session, search_setup, monkeypatch
+):
+    """With >500 matched UIDs the FETCH is chunked; the deadline must be honoured
+    between batches so a single huge folder can't blow past the soft timeout."""
+    from mailfallback.services import search_service as svc
+
+    uids = b" ".join(str(n).encode() for n in range(1, 601))  # 600 UIDs -> 2 batches
+    fetched_batches = []
+
+    class FakeConn:
+        def select(self, target, readonly=True):
+            return ("OK", [b"600"])
+
+        def uid(self, *args):
+            if args[0] == "SEARCH":
+                return ("OK", [uids])
+            if args[0] == "FETCH":
+                fetched_batches.append(args[1])
+                return ("OK", [(b"x (UID 1 ...", b"Message-ID: <2@h>\r\n"), b")"])
+            return ("NO", [b""])
+
+        def logout(self):
+            pass
+
+    class FakeTime:
+        # account check, folder check, batch-0 check all pre-deadline; batch-1 trips.
+        def __init__(self):
+            self._seq = iter([0.0, 0.0, 0.0, 200.0])
+
+        def monotonic(self):
+            return next(self._seq, 200.0)
+
+    monkeypatch.setattr(svc, "time", FakeTime())
+    _install_fake_dovecot(monkeypatch, FakeConn())
+    acct = search_setup["account"]
+    _matched, partial = _dovecot_body_search(db_session, [acct.id], "hello", deadline=100.0)
+
+    assert partial is True
+    assert len(fetched_batches) == 1  # second batch skipped once the deadline passed
+
+
 def test_dovecot_body_search_sanitises_crlf_in_keyword(db_session, search_setup, monkeypatch):
     captured = []
 

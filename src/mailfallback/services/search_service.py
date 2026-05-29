@@ -228,6 +228,8 @@ def _dovecot_body_search(
                 if not uids:
                     continue
                 for i in range(0, len(uids), 500):
+                    if time.monotonic() > deadline:
+                        return matched, True
                     batch = uids[i : i + 500]
                     typ, fdata = conn.uid(
                         "FETCH", ",".join(batch), "(BODY[HEADER.FIELDS (MESSAGE-ID)])"
