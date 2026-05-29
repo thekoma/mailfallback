@@ -572,7 +572,7 @@ class WorkspaceSearchRequest(BaseModel):
     search_subject: bool = True
     search_from: bool = False
     search_to: bool = False
-    search_body: bool = False
+    deep: bool = False  # full-folder body search (replaces legacy search_body)
     type_filter: str = "all"  # all|unseen|flagged|unanswered
     ttl_minutes: int | None = None  # override default ephemeral TTL
 
@@ -594,16 +594,6 @@ def workspace_search(
     if not settings.use_index_search:
         return _legacy_mount_workspace_search(req, request, user, db)
 
-    # Build criteria fields list as before (subject/from/to/body)
-    criteria: list[str] = []
-    if req.search_subject:
-        criteria.append("SUBJECT")
-    if req.search_from:
-        criteria.append("FROM")
-    if req.search_to:
-        criteria.append("TO")
-    body = req.search_body or "BODY" in criteria
-
     new_result = search_service.search_messages(
         db,
         user=user,
@@ -612,7 +602,7 @@ def workspace_search(
         range_start=req.range_start,
         range_end=req.range_end,
         include_deleted=req.include_snapshots,
-        body=body,
+        deep=req.deep,
         page=1,
         page_size=200,
     )
@@ -694,7 +684,11 @@ def workspace_search(
                 ],
             }
         )
-    return {"results": legacy_results, "mounted_snapshots": []}
+    return {
+        "results": legacy_results,
+        "mounted_snapshots": [],
+        "partial": new_result.get("partial", False),
+    }
 
 
 def _legacy_mount_workspace_search(req, request, user, db):
@@ -753,7 +747,7 @@ def _legacy_mount_workspace_search(req, request, user, db):
         criteria.append("FROM")
     if req.search_to:
         criteria.append("TO")
-    if req.search_body:
+    if req.deep:
         criteria.append("BODY")
     if not criteria:
         criteria = ["SUBJECT"]
@@ -802,7 +796,7 @@ class RestoreSearchRequest(BaseModel):
     range_end: datetime | None = None
     include_deleted: bool = True
     snapshot_id: str | None = None
-    body: bool = False
+    deep: bool = False
     page: int = 1
     page_size: int = 50
 
@@ -823,7 +817,7 @@ def api_restore_search(
         range_end=req.range_end,
         include_deleted=req.include_deleted,
         snapshot_id=req.snapshot_id,
-        body=req.body,
+        deep=req.deep,
         page=req.page,
         page_size=req.page_size,
     )
