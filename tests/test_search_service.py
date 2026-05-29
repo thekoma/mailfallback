@@ -150,7 +150,7 @@ def test_search_pagination(db_session, search_setup):
     assert page1["total"] == 3
 
 
-def _install_fake_dovecot(monkeypatch, conn, selected_folders):
+def _install_fake_dovecot(monkeypatch, conn):
     def fake_connect(db, account):
         return conn, "_restore_test"
 
@@ -187,7 +187,7 @@ def test_dovecot_body_search_returns_hashes_for_matched_uids(db_session, search_
         def logout(self):
             pass
 
-    _install_fake_dovecot(monkeypatch, FakeConn(), selected)
+    _install_fake_dovecot(monkeypatch, FakeConn())
     acct = search_setup["account"]
     deadline = _time.monotonic() + 10
     matched, partial = _dovecot_body_search(db_session, [acct.id], "hello", deadline)
@@ -228,7 +228,7 @@ def test_dovecot_body_search_only_selects_live_folders(db_session, search_setup,
         def logout(self):
             pass
 
-    _install_fake_dovecot(monkeypatch, FakeConn(), selected)
+    _install_fake_dovecot(monkeypatch, FakeConn())
     deadline = _time.monotonic() + 10
     _dovecot_body_search(db_session, [acct.id], "x", deadline)
 
@@ -247,13 +247,39 @@ def test_dovecot_body_search_timeout_sets_partial(db_session, search_setup, monk
         def logout(self):
             pass
 
-    _install_fake_dovecot(monkeypatch, FakeConn(), [])
+    _install_fake_dovecot(monkeypatch, FakeConn())
     acct = search_setup["account"]
     deadline = _time.monotonic() - 1  # already expired
     matched, partial = _dovecot_body_search(db_session, [acct.id], "x", deadline)
 
     assert matched == set()
     assert partial is True
+
+
+def test_dovecot_body_search_sanitises_crlf_in_keyword(db_session, search_setup, monkeypatch):
+    captured = []
+
+    class FakeConn:
+        def select(self, target, readonly=True):
+            captured.append(target)
+            return ("OK", [b"0"])
+
+        def uid(self, *args):
+            captured.append(args)
+            return ("OK", [b""])  # no UIDs -> FETCH not reached
+
+        def logout(self):
+            pass
+
+    _install_fake_dovecot(monkeypatch, FakeConn())
+    acct = search_setup["account"]
+    deadline = _time.monotonic() + 10
+    _dovecot_body_search(db_session, [acct.id], 'evil"\r\nLOGOUT', deadline)
+
+    for entry in captured:
+        joined = " ".join(str(a) for a in (entry if isinstance(entry, tuple) else (entry,)))
+        assert "\r" not in joined
+        assert "\n" not in joined
 
 
 def test_parse_message_id_from_fetch_tuple():

@@ -234,13 +234,17 @@ def _dovecot_body_search(
                 uids = data[0].decode().split()
                 if not uids:
                     continue
-                typ, fdata = conn.uid("FETCH", ",".join(uids), "(BODY[HEADER.FIELDS (MESSAGE-ID)])")
-                if typ != "OK" or not fdata:
-                    continue
-                for item in fdata:
-                    msgid = _parse_message_id_from_fetch(item)
-                    if msgid:
-                        matched.add(_hash_message_id(msgid))
+                for i in range(0, len(uids), 500):
+                    batch = uids[i : i + 500]
+                    typ, fdata = conn.uid(
+                        "FETCH", ",".join(batch), "(BODY[HEADER.FIELDS (MESSAGE-ID)])"
+                    )
+                    if typ != "OK" or not fdata:
+                        continue
+                    for item in fdata:
+                        msgid = _parse_message_id_from_fetch(item)
+                        if msgid:
+                            matched.add(_hash_message_id(msgid))
         finally:
             with contextlib.suppress(Exception):
                 conn.logout()
