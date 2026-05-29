@@ -20,7 +20,9 @@ function restoreWorkspace() {
     includeSnapshots: true,
     ttlOverride: null,
     query: '',
-    filters: {subject: true, from: false, to: false, body: false, type: 'all'},
+    filters: {subject: true, from: false, to: false, type: 'all'},
+    deepSearch: false,
+    partial: false,
     filtersOpen: false,
     selectedFolder: '',
 
@@ -217,6 +219,7 @@ function restoreWorkspace() {
       this.searched = true;
       this.statusText = 'Mounting snapshots & searching…';
       this.results = [];
+      this.partial = false;
       this.selected = [];
       this.refreshIcons();
       try {
@@ -233,7 +236,7 @@ function restoreWorkspace() {
             search_subject: this.filters.subject,
             search_from: this.filters.from,
             search_to: this.filters.to,
-            search_body: this.filters.body,
+            deep: this.deepSearch,
             type_filter: this.filters.type,
             ttl_minutes: this.ttlOverride,
           }),
@@ -244,6 +247,7 @@ function restoreWorkspace() {
         }
         const body = await resp.json();
         this.results = body.results || [];
+        this.partial = !!body.partial;
         this.statusText = `${this.results.length} result${this.results.length === 1 ? '' : 's'} · ${(body.mounted_snapshots || []).length} snapshot${(body.mounted_snapshots || []).length === 1 ? '' : 's'} mounted`;
       } catch (e) {
         this.statusText = `Search error: ${e.message}`;
