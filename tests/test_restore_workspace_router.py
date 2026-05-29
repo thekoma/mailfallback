@@ -833,3 +833,41 @@ def test_workspace_wrapper_populates_uid_from_dovecot(
     assert len(body["results"]) == 1
     locations = body["results"][0]["locations"]
     assert locations[0]["uid"] == "17"  # populated, not None
+
+
+@patch("mailfallback.routers.restore.search_service.search_messages")
+def test_workspace_search_passes_deep_and_returns_partial(
+    mock_search, client, db_session, default_store, login_user
+):
+    from mailfallback.models import Account
+
+    acct = Account(name="a", store=default_store, maildir_path="/x", imap_host="i")
+    db_session.add(acct)
+    db_session.flush()
+    acct.owners.append(login_user)
+    db_session.commit()
+
+    mock_search.return_value = {
+        "results": [],
+        "total": 0,
+        "page": 1,
+        "page_size": 200,
+        "partial": True,
+    }
+
+    login = client.post("/api/auth/login", json={"username": "koma", "password": "x"})
+    assert login.status_code in (200, 303)
+
+    resp = client.post(
+        "/api/restore/workspace/search",
+        json={
+            "account_id": acct.id,
+            "query": "google",
+            "range_start": "2000-01-01T00:00:00Z",
+            "range_end": "2030-01-01T00:00:00Z",
+            "deep": True,
+        },
+    )
+    assert resp.status_code == 200
+    assert mock_search.call_args.kwargs["deep"] is True
+    assert resp.json()["partial"] is True
