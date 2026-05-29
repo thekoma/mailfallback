@@ -51,14 +51,15 @@ alongside "Deep search" would be two confusing body-ish controls.
    fetch the **full** match set (not a single page) because the UNION must
    happen before pagination.
 2. **Body search:** for each live folder of the account →
-   `UID SEARCH BODY "<sanitized keyword>"` → matching UIDs. Then a single
-   `UID FETCH <uids> (BODY[HEADER.FIELDS (MESSAGE-ID)])` → Message-Ids → hash →
-   look up index rows `R2`.
-3. **Union:** `R1 ∪ R2` deduplicated by `message_id_hash`; mark
-   `body_matched=true` on `R2` members.
-4. Apply filters (date range, `include_deleted`, snapshot scope), sort, then
-   **paginate in memory** over the merged set.
-5. The per-folder IMAP loop is wrapped by a deadline. If exceeded, stop, return
+   `UID SEARCH BODY "<sanitized keyword>"` → matching UIDs. Then
+   `UID FETCH <uids> (BODY[HEADER.FIELDS (MESSAGE-ID)])` → Message-Ids → hash
+   (same SHA-1 as `index_service._hash_message_id`) → set `body_hashes`.
+3. **Union (in SQL):** the index query filter becomes
+   `tsv_match OR message_id_hash IN body_hashes`, with all the usual filters
+   (account scope, date range, `include_deleted`, snapshot) still applied. This
+   keeps the union, ordering, and pagination in a single SQL query — no
+   in-memory paging. Rows whose hash is in `body_hashes` get `body_matched=true`.
+4. The per-folder IMAP loop is wrapped by a deadline. If exceeded, stop, return
    what was collected, set `partial=true`.
 
 Note: one `SEARCH BODY` per folder is *more* efficient than the current Phase 2,
