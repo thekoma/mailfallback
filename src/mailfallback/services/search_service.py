@@ -49,42 +49,41 @@ def search_messages(
     range_end: datetime | None = None,
     include_deleted: bool = True,
     snapshot_id: str | None = None,
-    body: bool = False,
+    deep: bool = False,
     page: int = 1,
     page_size: int = 50,
 ) -> dict[str, Any]:
-    """Phase 1 (always): Postgres index query.
-    Phase 2 (if body=True): Dovecot SEARCH body filter on candidates (Task 9).
+    """Phase 1 (always): Postgres index query over subject/from/to.
 
-    Returns: {results, total, page, page_size, phase2_skipped_count}
+    Deep search (deep=True): also run a full-folder Dovecot body search over the
+    in-scope accounts' live folders and union the matches into the query via
+    `message_id_hash IN body_hashes`. Live-only; bounded by a soft timeout that
+    surfaces as `partial`.
+
+    Returns: {results, total, page, page_size, partial}
     """
+    empty = {"results": [], "total": 0, "page": page, "page_size": page_size, "partial": False}
     visible = _accessible_account_ids(db, user)
     if not visible:
-        return {
-            "results": [],
-            "total": 0,
-            "page": page,
-            "page_size": page_size,
-            "phase2_skipped_count": 0,
-        }
+        return empty
     scope = [a for a in account_ids if a in visible] if account_ids else visible
     if not scope:
-        return {
-            "results": [],
-            "total": 0,
-            "page": page,
-            "page_size": page_size,
-            "phase2_skipped_count": 0,
-        }
+        return empty
+
+    body_hashes: set[bytes] = set()
+    partial = False
+    if deep and query:
+        from mailfallback.config import settings
+
+        deadline = time.monotonic() + getattr(settings, "deep_search_timeout_seconds", 10)
+        body_hashes, partial = _dovecot_body_search(db, scope, query, deadline)
 
     q = db.query(MailIndexMessage).filter(MailIndexMessage.account_id.in_(scope))
     if not include_deleted:
         q = q.filter(MailIndexMessage.deleted_at.is_(None))
     # NULL date_sent is treated as "unknown date" and kept in the result set
     # for any range — otherwise messages whose Date: header didn't parse
-    # disappear from any date-filtered search. Discovered via T10's wrapper
-    # test: the workspace UI passes a wide year range and expects messages
-    # without a parsed date to still match.
+    # disappear from any date-filtered search.
     if range_start:
         q = q.filter(
             (MailIndexMessage.date_sent >= range_start) | MailIndexMessage.date_sent.is_(None)
@@ -100,22 +99,24 @@ def search_messages(
             & (SnapshotMessage.message_id_hash == MailIndexMessage.message_id_hash),
         ).filter(SnapshotMessage.snapshot_id == snapshot_id)
     if query:
-        # Use tsvector match on Postgres; fall back to ILIKE on SQLite (tests).
         if db.bind.dialect.name == "postgresql":
-            q = q.filter(MailIndexMessage.tsv.op("@@")(func.plainto_tsquery("simple", query)))
+            text_match = MailIndexMessage.tsv.op("@@")(func.plainto_tsquery("simple", query))
         else:
             pat = f"%{query}%"
-            q = q.filter(
+            text_match = (
                 (MailIndexMessage.subject.ilike(pat))
                 | (MailIndexMessage.from_addr.ilike(pat))
                 | (MailIndexMessage.from_name.ilike(pat))
             )
+        if body_hashes:
+            q = q.filter(text_match | MailIndexMessage.message_id_hash.in_(body_hashes))
+        else:
+            q = q.filter(text_match)
     q = q.order_by(MailIndexMessage.date_sent.desc().nullslast())
 
     total = q.count()
     rows = q.offset((page - 1) * page_size).limit(page_size).all()
 
-    # Build snapshot membership lookup for the result set
     if rows:
         hashes = [r.message_id_hash for r in rows]
         snap_rows = (
@@ -133,14 +134,6 @@ def search_messages(
     else:
         snap_by_msg = {}
 
-    body_matched_set: set[bytes] = set()
-    phase2_skipped = 0
-    if body and query and rows:
-        from mailfallback.config import settings
-
-        deadline = time.monotonic() + getattr(settings, "deep_search_timeout_seconds", 10)
-        body_matched_set, _partial = _dovecot_body_search(db, scope, query, deadline)
-
     results = []
     for r in rows:
         results.append(
@@ -155,7 +148,7 @@ def search_messages(
                 "folder_path": r.folder_path,
                 "alive_in_live": r.deleted_at is None,
                 "snapshots": sorted(snap_by_msg.get((r.account_id, r.message_id_hash), [])),
-                "body_matched": (r.message_id_hash in body_matched_set) if body else None,
+                "body_matched": (r.message_id_hash in body_hashes) if deep else None,
             }
         )
 
@@ -164,7 +157,7 @@ def search_messages(
         "total": total,
         "page": page,
         "page_size": page_size,
-        "phase2_skipped_count": phase2_skipped,
+        "partial": partial,
     }
 
 

@@ -2,6 +2,7 @@
 
 import time as _time
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 
@@ -278,6 +279,91 @@ def test_dovecot_body_search_sanitises_crlf_in_keyword(db_session, search_setup,
 
     for entry in captured:
         joined = " ".join(str(a) for a in (entry if isinstance(entry, tuple) else (entry,)))
+        assert "\r" not in joined
+        assert "\n" not in joined
+
+
+@patch("mailfallback.services.search_service._dovecot_body_search")
+def test_deep_search_unions_body_only_matches(mock_body, db_session, search_setup):
+    """deep=True folds body-only matches (whose subject does NOT match the query)
+    into the result set and flags them body_matched=True."""
+    # "hello world" (hash \x02) does not match query "fattura" by subject,
+    # but the body search returns it.
+    mock_body.return_value = ({b"\x02" * 20}, False)
+
+    result = search_service.search_messages(
+        db_session,
+        user=search_setup["user"],
+        query="fattura",
+        deep=True,
+    )
+    by_subject = {r["subject"]: r for r in result["results"]}
+    # tsv matches + body-only union
+    assert "fattura marzo" in by_subject
+    assert "old fattura" in by_subject
+    assert "hello world" in by_subject  # body-only, unioned in
+    assert by_subject["hello world"]["body_matched"] is True
+    assert by_subject["fattura marzo"]["body_matched"] is False
+    assert result["partial"] is False
+
+
+@patch("mailfallback.services.search_service._dovecot_body_search")
+def test_deep_search_propagates_partial(mock_body, db_session, search_setup):
+    mock_body.return_value = (set(), True)
+    result = search_service.search_messages(
+        db_session, user=search_setup["user"], query="fattura", deep=True
+    )
+    assert result["partial"] is True
+
+
+def test_default_search_excludes_body_only_matches(db_session, search_setup):
+    """deep defaults to False: a message that only matches by body is NOT
+    returned and body_matched is None."""
+    result = search_service.search_messages(db_session, user=search_setup["user"], query="fattura")
+    by_subject = {r["subject"]: r for r in result["results"]}
+    assert "hello world" not in by_subject
+    assert by_subject["fattura marzo"]["body_matched"] is None
+    assert "phase2_skipped_count" not in result
+    assert result["partial"] is False
+
+
+def test_deep_sanitises_crlf_in_keyword(db_session, search_setup, monkeypatch):
+    """Deep search keyword sanitisation strips control chars (CRLF) so a
+    malicious input can't break out of the IMAP quoted string."""
+    captured_searches: list[tuple] = []
+
+    class FakeConn:
+        def select(self, *args, **kwargs):
+            return ("OK", [b"0"])
+
+        def uid(self, *args):
+            captured_searches.append(args)
+            return ("OK", [b""])
+
+        def logout(self):
+            pass
+
+    def fake_connect(db, account):
+        return FakeConn(), "_restore_test"
+
+    def fake_delete_temp(db, username):
+        pass
+
+    monkeypatch.setattr("mailfallback.routers.restore._connect_dovecot_for_account", fake_connect)
+    monkeypatch.setattr("mailfallback.routers.restore.account_namespace_prefix", lambda a: "")
+    monkeypatch.setattr(
+        "mailfallback.services.dovecot_auth.delete_temp_imap_user", fake_delete_temp
+    )
+
+    result = search_service.search_messages(
+        db_session,
+        user=search_setup["user"],
+        query='evil"\r\nLOGOUT',
+        deep=True,
+    )
+    assert result["total"] >= 0
+    for args in captured_searches:
+        joined = " ".join(str(a) for a in args)
         assert "\r" not in joined
         assert "\n" not in joined
 
