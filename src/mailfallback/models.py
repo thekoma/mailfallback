@@ -438,7 +438,8 @@ class MailIndexMessage(Base):
     """Per-account, per-message metadata index used by the search API.
 
     One row per (account_id, message_id_hash). Headers only — no body content.
-    Body search uses Dovecot FTS on the survivors of a query against this index.
+    Deep search adds a full-folder Dovecot body search and unions the matches
+    into this index query by message_id_hash (see services/search_service.py).
     """
 
     __tablename__ = "messages"
