@@ -55,7 +55,6 @@ class Settings(BaseSettings):
 
     confs_path: str = "/confs"
 
-    search_body_candidate_cap: int = 500
     deep_search_timeout_seconds: int = 10
     use_index_search: bool = True
 

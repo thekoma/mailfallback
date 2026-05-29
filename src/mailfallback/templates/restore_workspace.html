@@ -83,6 +83,11 @@
             </button>
           </form>
 
+          <label class="ws-inline ws-deep-toggle">
+            <input type="checkbox" x-model="deepSearch">
+            Deep search <span class="text-muted text-xsmall">— also search message bodies (active mail only, slower)</span>
+          </label>
+
           <details class="ws-filters" x-bind:open="filtersOpen">
             <summary @click.prevent="filtersOpen = !filtersOpen" class="ws-field-label">Filters</summary>
             <div class="ws-filters-grid">
@@ -91,7 +96,6 @@
                 <label class="ws-inline"><input type="checkbox" x-model="filters.subject"> Subject</label>
                 <label class="ws-inline"><input type="checkbox" x-model="filters.from"> From</label>
                 <label class="ws-inline"><input type="checkbox" x-model="filters.to"> To</label>
-                <label class="ws-inline"><input type="checkbox" x-model="filters.body"> Body</label>
               </fieldset>
               <label class="ws-field">
                 <span class="ws-field-label">Type</span>
@@ -106,6 +110,9 @@
           </details>
 
           <p class="ws-status text-muted text-xsmall" x-text="statusText" x-show="statusText"></p>
+          <p class="ws-status text-warning text-xsmall" x-show="partial">
+            Partial results — the deep search timed out. Narrow the date range for completeness.
+          </p>
 
           {# Loading skeletons #}
           <template x-if="searching && results.length === 0">
