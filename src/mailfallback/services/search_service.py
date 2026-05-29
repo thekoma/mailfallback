@@ -1,4 +1,4 @@
-"""Search service — query mail_index with optional Phase 2 body filter."""
+"""Search service — query mail_index with optional deep (body) search."""
 
 import contextlib
 import logging
