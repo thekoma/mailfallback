@@ -807,14 +807,14 @@ tr.recovery-row > td:first-child { padding-left: 1.75rem; }
     background: var(--pico-card-background-color);
     cursor: pointer;
     font-size: 0.85rem;
-    color: var(--pico-color);
+    color: var(--mfb-icon-btn-color);
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 0.4rem;
     transition: background 120ms;
 }
-.admin-row .admin-btn:hover { background: rgba(255, 255, 255, 0.04); }
+.admin-row .admin-btn:hover { background: var(--pico-secondary-background); }
 .admin-row .admin-btn.is-active { background: rgba(99, 102, 241, 0.12); border-color: rgba(99, 102, 241, 0.5); }
 .admin-row .admin-btn.danger { color: var(--mfb-stats-dot-error, #ef4444); border-color: rgba(239, 68, 68, 0.4); }
 .admin-row .admin-btn.danger:hover { background: rgba(239, 68, 68, 0.08); }
