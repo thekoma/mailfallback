@@ -572,7 +572,7 @@ class WorkspaceSearchRequest(BaseModel):
     search_subject: bool = True
     search_from: bool = False
     search_to: bool = False
-    deep: bool = False  # full-folder body search (replaces legacy search_body)
+    deep: bool = False  # full-folder Dovecot body search
     type_filter: str = "all"  # all|unseen|flagged|unanswered
     ttl_minutes: int | None = None  # override default ephemeral TTL
 
@@ -687,7 +687,7 @@ def workspace_search(
     return {
         "results": legacy_results,
         "mounted_snapshots": [],
-        "partial": new_result.get("partial", False),
+        "partial": new_result["partial"],
     }
 
 
