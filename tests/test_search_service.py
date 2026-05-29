@@ -13,6 +13,7 @@ from mailfallback.models import (
 )
 from mailfallback.security import hash_password
 from mailfallback.services import search_service
+from mailfallback.services.search_service import _parse_message_id_from_fetch
 
 
 @pytest.fixture
@@ -207,3 +208,24 @@ def test_phase2_sanitises_crlf_in_keyword(db_session, search_setup, monkeypatch)
         assert "\r" not in joined
         assert "\n" not in joined
         assert '"\r\n' not in joined
+
+
+def test_parse_message_id_from_fetch_tuple():
+    item = (
+        b"1 (UID 7 BODY[HEADER.FIELDS (MESSAGE-ID)] {38}",
+        b"Message-ID: <abc@example.com>\r\n\r\n",
+    )
+    assert _parse_message_id_from_fetch(item) == "<abc@example.com>"
+
+
+def test_parse_message_id_from_fetch_case_insensitive():
+    item = (b"meta", b"message-id:   <X@y>\r\n")
+    assert _parse_message_id_from_fetch(item) == "<X@y>"
+
+
+def test_parse_message_id_from_fetch_non_tuple_returns_none():
+    assert _parse_message_id_from_fetch(b")") is None
+
+
+def test_parse_message_id_from_fetch_missing_header_returns_none():
+    assert _parse_message_id_from_fetch((b"meta", b"Subject: hi\r\n")) is None
