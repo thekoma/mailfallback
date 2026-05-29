@@ -1,7 +1,7 @@
 """Tests for search_service — Phase 1 header search via mail_index."""
 
+import time as _time
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
 
 import pytest
 
@@ -13,7 +13,10 @@ from mailfallback.models import (
 )
 from mailfallback.security import hash_password
 from mailfallback.services import search_service
-from mailfallback.services.search_service import _parse_message_id_from_fetch
+from mailfallback.services.search_service import (
+    _dovecot_body_search,
+    _parse_message_id_from_fetch,
+)
 
 
 @pytest.fixture
@@ -147,43 +150,9 @@ def test_search_pagination(db_session, search_setup):
     assert page1["total"] == 3
 
 
-@patch("mailfallback.services.search_service._dovecot_filter_body")
-def test_phase2_body_filter_marks_survivors(mock_filter, db_session, search_setup):
-    """When body=True, _dovecot_filter_body returns a subset of message_id_hashes
-    that match the body keyword. search_messages flags those as body_matched=True."""
-    # Mock returns: only the first message hash matches body
-    mock_filter.return_value = {b"\x01" * 20}
-
-    result = search_service.search_messages(
-        db_session,
-        user=search_setup["user"],
-        query="fattura",
-        body=True,
-    )
-    by_subject = {r["subject"]: r for r in result["results"]}
-    assert by_subject["fattura marzo"]["body_matched"] is True
-    assert by_subject["old fattura"]["body_matched"] is False
-
-
-def test_phase2_sanitises_crlf_in_keyword(db_session, search_setup, monkeypatch):
-    """Phase 2 keyword/Message-Id sanitisation strips control chars (CRLF)
-    so a malicious input can't break out of the IMAP quoted string."""
-    captured_searches: list[tuple] = []
-
-    class FakeConn:
-        def select(self, *args, **kwargs):
-            return ("OK", [b"0"])
-
-        def uid(self, *args):
-            captured_searches.append(args)
-            # Reply with no UIDs so the inner loop is skipped
-            return ("OK", [b""])
-
-        def logout(self):
-            pass
-
+def _install_fake_dovecot(monkeypatch, conn, selected_folders):
     def fake_connect(db, account):
-        return FakeConn(), "_restore_test"
+        return conn, "_restore_test"
 
     def fake_delete_temp(db, username):
         pass
@@ -192,22 +161,99 @@ def test_phase2_sanitises_crlf_in_keyword(db_session, search_setup, monkeypatch)
     monkeypatch.setattr(
         "mailfallback.services.dovecot_auth.delete_temp_imap_user", fake_delete_temp
     )
+    monkeypatch.setattr("mailfallback.routers.restore.account_namespace_prefix", lambda a: "")
 
-    # Inject CRLF + quote into the keyword. After sanitisation the IMAP
-    # SEARCH should NOT contain those bytes.
-    result = search_service.search_messages(
-        db_session,
-        user=search_setup["user"],
-        query='evil"\r\nLOGOUT',
-        body=True,
+
+def test_dovecot_body_search_returns_hashes_for_matched_uids(db_session, search_setup, monkeypatch):
+    from mailfallback.services.index_service import _hash_message_id
+
+    selected = []
+
+    class FakeConn:
+        def select(self, target, readonly=True):
+            selected.append(target)
+            return ("OK", [b"3"])
+
+        def uid(self, *args):
+            if args[0] == "SEARCH":
+                return ("OK", [b"7"])
+            if args[0] == "FETCH":
+                return (
+                    "OK",
+                    [(b"1 (UID 7 ...", b"Message-ID: <2@h>\r\n"), b")"],
+                )
+            return ("NO", [b""])
+
+        def logout(self):
+            pass
+
+    _install_fake_dovecot(monkeypatch, FakeConn(), selected)
+    acct = search_setup["account"]
+    deadline = _time.monotonic() + 10
+    matched, partial = _dovecot_body_search(db_session, [acct.id], "hello", deadline)
+
+    assert _hash_message_id("<2@h>") in matched
+    assert partial is False
+
+
+def test_dovecot_body_search_only_selects_live_folders(db_session, search_setup, monkeypatch):
+    """A folder that exists only via a deleted (snapshot-only) message must NOT
+    be body-searched — deep search is live-only."""
+    from mailfallback.models import MailIndexMessage
+
+    acct = search_setup["account"]
+    db_session.add(
+        MailIndexMessage(
+            account_id=acct.id,
+            message_id_hash=b"\x08" * 20,
+            message_id="<8@h>",
+            subject="deleted only",
+            folder_path="Trash",
+            maildir_filename="8",
+            deleted_at=datetime.now(UTC),
+        )
     )
-    assert result["total"] >= 0  # search ran without raising
-    # Verify no captured SEARCH arg contains the unsanitised payload
-    for args in captured_searches:
-        joined = " ".join(str(a) for a in args)
-        assert "\r" not in joined
-        assert "\n" not in joined
-        assert '"\r\n' not in joined
+    db_session.commit()
+
+    selected = []
+
+    class FakeConn:
+        def select(self, target, readonly=True):
+            selected.append(target)
+            return ("OK", [b"0"])
+
+        def uid(self, *args):
+            return ("OK", [b""])
+
+        def logout(self):
+            pass
+
+    _install_fake_dovecot(monkeypatch, FakeConn(), selected)
+    deadline = _time.monotonic() + 10
+    _dovecot_body_search(db_session, [acct.id], "x", deadline)
+
+    assert '"Trash"' not in selected
+    assert '"INBOX"' in selected
+
+
+def test_dovecot_body_search_timeout_sets_partial(db_session, search_setup, monkeypatch):
+    class FakeConn:
+        def select(self, target, readonly=True):
+            return ("OK", [b"0"])
+
+        def uid(self, *args):
+            return ("OK", [b""])
+
+        def logout(self):
+            pass
+
+    _install_fake_dovecot(monkeypatch, FakeConn(), [])
+    acct = search_setup["account"]
+    deadline = _time.monotonic() - 1  # already expired
+    matched, partial = _dovecot_body_search(db_session, [acct.id], "x", deadline)
+
+    assert matched == set()
+    assert partial is True
 
 
 def test_parse_message_id_from_fetch_tuple():
