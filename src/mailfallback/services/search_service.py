@@ -2,6 +2,7 @@
 
 import contextlib
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -246,3 +247,20 @@ def _dovecot_filter_body(
         with contextlib.suppress(Exception):
             delete_temp_imap_user(db, temp_user)
     return matched
+
+
+_MESSAGE_ID_RE = re.compile(rb"message-id:\s*(<[^>\r\n]*>)", re.IGNORECASE)
+
+
+def _parse_message_id_from_fetch(item: Any) -> str | None:
+    """Extract the bare Message-Id from one imaplib FETCH response item.
+
+    Matched items are (metadata, payload) tuples; separators (e.g. b')') are not.
+    """
+    if not isinstance(item, tuple) or len(item) < 2:
+        return None
+    payload = item[1]
+    if not isinstance(payload, (bytes, bytearray)):
+        return None
+    m = _MESSAGE_ID_RE.search(payload)
+    return m.group(1).decode("ascii", errors="replace") if m else None
