@@ -366,6 +366,7 @@ button.icon-btn.success, a.icon-btn.success { color: var(--mfb-success-color); b
     background: var(--mfb-badge-neutral-bg);
 }
 .provider-logo { height: 1.1em; vertical-align: middle; margin-right: 0.25rem; }
+.provider-card .provider-logo { height: 24px; width: 24px; margin: 0; }
 
 /* === Brand === */
 .brand-short { color: var(--pico-primary); }
