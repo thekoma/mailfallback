@@ -1762,6 +1762,32 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   box-shadow: 0 4px 12px rgba(248, 113, 113, 0.3);
 }
 
+/* Folder / full-mailbox flows — same vertical rhythm as the search pane,
+   and workspace-styled controls instead of Pico defaults. */
+.ws-folder-flow,
+.ws-full-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .75rem;
+}
+.ws-folder-flow > p,
+.ws-full-flow > p { margin: 0; }
+.ws-folder-flow .ws-field {
+  width: 100%;
+  max-width: 360px;
+}
+.ws-folder-flow select {
+  width: 100%;
+  padding: .45rem .6rem;
+  font-size: .85rem;
+  background: var(--ws-input-bg);
+  border: 1px solid var(--ws-border);
+  border-radius: .35rem;
+  color: var(--ws-text);
+  margin: 0;
+}
+
 /* Filters disclosure */
 
 .ws-filters {
