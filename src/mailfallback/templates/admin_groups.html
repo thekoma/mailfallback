@@ -92,7 +92,11 @@
         </tr>
         {% endfor %}
         {% if not groups %}
-        <tr><td colspan="6" class="text-muted">No groups yet.</td></tr>
+        <tr><td colspan="6" class="empty-cell">
+            <i data-lucide="users-round"></i>
+            <strong>No groups yet</strong>
+            <span class="empty-hint">Groups share account access: every member sees the group’s mailboxes in webmail. Create one below.</span>
+        </td></tr>
         {% endif %}
     </tbody>
 </table>
