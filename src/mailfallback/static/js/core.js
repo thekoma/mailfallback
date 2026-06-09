@@ -140,8 +140,26 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     });
-    /* Lucide icons for HTMX-loaded content */
+    /* Lucide icons: initial render + HTMX-loaded content */
+    lucide.createIcons();
     document.body.addEventListener('htmx:afterSettle', function() {
         lucide.createIcons();
     });
+});
+
+// Toasts — flash messages arrive via data attributes on <body>
+function showToast(msg, type) {
+    var c = document.getElementById('toast-container');
+    var t = document.createElement('div');
+    t.className = 'toast toast-' + (type || 'error');
+    t.textContent = msg;
+    t.onclick = function() { t.classList.add('toast-out'); setTimeout(function() { t.remove(); }, 300); };
+    c.appendChild(t);
+    setTimeout(function() { if (t.parentNode) { t.classList.add('toast-out'); setTimeout(function() { t.remove(); }, 300); } }, 5000);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    var b = document.body;
+    if (b.dataset.flashSuccess) showToast(b.dataset.flashSuccess, 'success');
+    if (b.dataset.flashError) showToast(b.dataset.flashError, 'error');
 });
