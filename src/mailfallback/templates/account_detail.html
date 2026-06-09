@@ -111,16 +111,16 @@
     {# F — Schedule ── #}
     <div class="card-bento span-3">
         <h3>Schedule</h3>
-        <div class="kpi-num" style="font-size:1.2rem">{{ account.sync_schedule | cron_human }}</div>
+        <div class="kpi-num kpi-num-sm">{{ account.sync_schedule | cron_human }}</div>
         <div class="kpi-sub"><code>{{ account.sync_schedule }}</code></div>
         {% if account.suspended %}
-        <div class="kpi-sub" style="color: var(--mfb-stats-dot-error)">Suspended</div>
+        <div class="kpi-sub text-error-state">Suspended</div>
         {% endif %}
     </div>
 
     {# G — Folder treemap ── #}
     <div class="card-bento span-8 row-2" id="treemap-card">
-        <h3>Folder treemap <span style="font-weight:400;text-transform:none;letter-spacing:0;">— hover to spotlight</span></h3>
+        <h3>Folder treemap <span class="h3-note">— hover to spotlight</span></h3>
         {% if folder_stats %}
         <div class="treemap" id="treemap">
             {% set total = folder_stats|sum(attribute='size_bytes') or 1 %}
@@ -146,15 +146,15 @@
     <div class="card-bento span-4">
         <h3>Off-site backup</h3>
         {% if backup_config %}
-        <div class="kpi-num" style="font-size:1.5rem">
+        <div class="kpi-num kpi-num-md">
             {% if backup_config.last_snapshot_count %}{{ backup_config.last_snapshot_count }}{% else %}—{% endif %}
-            <span style="font-size:0.8rem;color:var(--pico-muted-color);font-weight:400;">snapshots</span>
+            <span class="kpi-unit">snapshots</span>
         </div>
         <div class="kpi-sub">
             {% if backup_config.last_successful_run_at %}
             Last clean: {{ backup_config.last_successful_run_at | time_ago }}
             {% elif backup_config.last_status.value == "failed" %}
-            <span style="color:var(--mfb-stats-dot-error)">Last attempt failed</span>
+            <span class="text-error-state">Last attempt failed</span>
             {% else %}
             No off-site backup yet
             {% endif %}
@@ -177,7 +177,7 @@
 
     {# I — Timeline strip ── #}
     <div class="card-bento span-8" id="timeline-card">
-        <h3>Sync timeline <span style="font-weight:400;text-transform:none;letter-spacing:0;">— last {{ timeline_global|length }} runs</span></h3>
+        <h3>Sync timeline <span class="h3-note">— last {{ timeline_global|length }} runs</span></h3>
         {% if timeline_global %}
         <div class="timeline-wrap">
             <div class="timeline-strip" id="timeline-strip" data-mode="status">
@@ -187,9 +187,9 @@
                 {% endfor %}
             </div>
             <div class="timeline-legend">
-                <span><span class="tl-swatch" style="background:var(--mfb-stats-dot-ok,#22c55e)"></span>ok</span>
-                <span><span class="tl-swatch" style="background:var(--mfb-stats-dot-error,#ef4444)"></span>fail</span>
-                <span><span class="tl-swatch" style="background:var(--mfb-stats-dot-syncing,#3b82f6)"></span>running</span>
+                <span><span class="tl-swatch tl-swatch-ok"></span>ok</span>
+                <span><span class="tl-swatch tl-swatch-error"></span>fail</span>
+                <span><span class="tl-swatch tl-swatch-syncing"></span>running</span>
                 <span id="tl-mode-label"></span>
             </div>
         </div>
@@ -202,8 +202,8 @@
     <div class="card-bento span-4">
         <h3>Recoveries</h3>
         {% if recoveries %}
-        <div class="kpi-num" style="font-size:1.5rem">{{ recoveries|length }}
-            <span style="font-size:0.8rem;color:var(--pico-muted-color);font-weight:400;">restored</span>
+        <div class="kpi-num kpi-num-md">{{ recoveries|length }}
+            <span class="kpi-unit">restored</span>
         </div>
         <div class="kpi-list">
             {% for r in recoveries[:2] %}
@@ -262,7 +262,7 @@
 {# ── Admin sections (one revealed at a time by JS) ── #}
 
 <div class="admin-section" id="admin-edit">
-    <h3 style="margin-top:0">Edit account</h3>
+    <h3 class="mt-0">Edit account</h3>
     <form method="post" action="/accounts/{{ account.id }}/edit">
         <div class="grid-2">
             <div>
@@ -334,7 +334,7 @@
 </div>
 
 <div class="admin-section" id="admin-ownership">
-    <h3 style="margin-top:0">Ownership &amp; visibility</h3>
+    <h3 class="mt-0">Ownership &amp; visibility</h3>
     <strong>Owners:</strong>
     <div class="flex gap-05 flex-wrap mt-025">
         {% for o in account.owners %}
@@ -359,7 +359,7 @@
         <div class="flex gap-05 items-end">
             <div>
                 <label class="text-small">Add owner:</label>
-                <select name="user_id" style="margin-bottom:0">
+                <select name="user_id" class="mb-0">
                     {% for u in all_users %}
                     {% if u not in account.owners %}
                     <option value="{{ u.id }}">{{ u.username }}</option>
@@ -375,7 +375,7 @@
     {% endif %}
 
     {% if account.visible_to_groups %}
-    <strong class="mt-05" style="display:block">Visible to groups:</strong>
+    <strong class="mt-05 d-block">Visible to groups:</strong>
     <div class="flex gap-05 flex-wrap mt-025">
         {% for g in account.visible_to_groups %}
         <span class="badge badge-admin">{{ g.name }}</span>
@@ -385,13 +385,13 @@
 </div>
 
 <div class="admin-section" id="admin-offsite">
-    <h3 style="margin-top:0">Off-site backup → Repository</h3>
+    <h3 class="mt-0">Off-site backup → Repository</h3>
     {% include "partials/account_backup.html" %}
 </div>
 
 {% if user.role.value == "admin" %}
 <div class="admin-section" id="admin-manage">
-    <h3 style="margin-top:0">Maintenance</h3>
+    <h3 class="mt-0">Maintenance</h3>
     <h4 class="mb-025">Migrate mail store</h4>
     {% if account.migrating %}
     <div hx-get="/accounts/{{ account.id }}/migration-progress" hx-trigger="every 2s" hx-swap="innerHTML">
@@ -403,7 +403,7 @@
         onsubmit="return confirm(this.dataset.confirm)">
         <label>Current: <strong>{{ account.store.name }}</strong> — Move to</label>
         <div class="flex gap-05 items-end">
-            <select name="target_store_id" style="margin-bottom:0">
+            <select name="target_store_id" class="mb-0">
                 {% for s in stores %}
                 {% if s.id != account.store.id %}
                 <option value="{{ s.id }}">{{ s.name }} ({{ s.path }})</option>
@@ -450,7 +450,7 @@
 {% endif %}
 
 <div class="admin-section" id="admin-data">
-    <h3 style="margin-top:0">Raw data</h3>
+    <h3 class="mt-0">Raw data</h3>
     <details open>
         <summary><strong>Mailbox statistics</strong></summary>
         <div id="stats-section"
@@ -494,7 +494,7 @@
 
 {% if user.role.value == "admin" %}
 <div class="admin-section" id="admin-delete">
-    <h3 style="margin-top:0; color: var(--mfb-stats-dot-error)">⚠ Delete this account</h3>
+    <h3 class="mt-0 text-error-state">⚠ Delete this account</h3>
     <p>This action is irreversible. Type <strong>{{ account.email_address or account.name }}</strong> to confirm.</p>
     <label>
         <input type="checkbox" id="delete-files" value="1">

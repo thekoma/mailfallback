@@ -1,5 +1,57 @@
 /* MFB — MailFallBack styles */
 
+/* === Fonts (Geist, self-hosted variable fonts) === */
+@font-face {
+    font-family: "Geist";
+    src: url("/static/vendor/fonts/Geist-Variable.woff2") format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+}
+@font-face {
+    font-family: "Geist Mono";
+    src: url("/static/vendor/fonts/GeistMono-Variable.woff2") format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+}
+:root {
+    --pico-font-family-sans-serif: "Geist", system-ui, "Segoe UI", Roboto, Helvetica, Arial,
+        sans-serif, var(--pico-font-family-emoji);
+    --pico-font-family-monospace: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
+        monospace, var(--pico-font-family-emoji);
+}
+
+/* === Typography === */
+h1, h2, h3 { letter-spacing: -0.02em; text-wrap: balance; }
+.stat-value, .kpi-num {
+    font-family: var(--pico-font-family-monospace);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.03em;
+}
+table td, .health-value, .timeline-strip { font-variant-numeric: tabular-nums; }
+
+/* === Utilities (replacing static inline styles) === */
+.mt-0 { margin-top: 0; }
+.mb-0 { margin-bottom: 0; }
+.d-block { display: block; }
+.h3-note { font-weight: 400; text-transform: none; letter-spacing: 0; }
+.kpi-unit { font-size: 0.8rem; color: var(--pico-muted-color); font-weight: 400; }
+.kpi-num-sm { font-size: 1.2rem; }
+.kpi-num-md { font-size: 1.5rem; }
+.text-error-state { color: var(--mfb-stats-dot-error); }
+.tl-swatch-ok { background: var(--mfb-stats-dot-ok); }
+.tl-swatch-error { background: var(--mfb-stats-dot-error); }
+.tl-swatch-syncing { background: var(--mfb-stats-dot-syncing); }
+
+/* === Micro-interactions === */
+button:not(:disabled):active,
+[role="button"]:not([aria-disabled="true"]):active,
+a.stat-card:active {
+    transform: translateY(1px) scale(0.99);
+}
+@media (prefers-reduced-motion: reduce) {
+    button:active, [role="button"]:active, a.stat-card:active { transform: none; }
+}
+
 /* === Dark mode custom properties === */
 :root {
     --mfb-badge-idle-bg: #dcfce7;
@@ -30,6 +82,8 @@
     --mfb-stats-dot-ok: #16a34a;
     --mfb-stats-dot-syncing: #2563eb;
     --mfb-stats-dot-error: #dc2626;
+    --mfb-nav-color: #4b5563;
+    --mfb-nav-strong-color: #111827;
 }
 [data-theme="dark"] {
     --mfb-badge-idle-bg: #052e16;
@@ -60,6 +114,8 @@
     --mfb-stats-dot-ok: #4ade80;
     --mfb-stats-dot-syncing: #60a5fa;
     --mfb-stats-dot-error: #f87171;
+    --mfb-nav-color: #9ca3af;
+    --mfb-nav-strong-color: #f3f4f6;
 }
 
 body { overflow-x: hidden; }
@@ -104,20 +160,27 @@ body { overflow-x: hidden; }
 .theme-icon-dark { display: none; }
 [data-theme="dark"] .theme-icon-light { display: none; }
 [data-theme="dark"] .theme-icon-dark { display: inline; }
-.sidebar-brand a { display: flex; align-items: center; gap: 0.3rem; }
+/* Pico redefines --pico-color to primary inside anchors (same trap as
+   --mfb-icon-btn-color) — nav links need their own neutral variable. */
+.sidebar-brand a { display: flex; align-items: center; gap: 0.3rem; color: var(--mfb-nav-strong-color); }
 .sidebar-nav { display: flex; flex-direction: column; padding: 0.5rem 0; }
 .sidebar-nav a {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem 1.2rem;
-    color: var(--pico-color);
+    color: var(--mfb-nav-color);
     text-decoration: none;
     font-size: 0.9rem;
-    transition: background 0.15s;
+    transition: background 0.15s, color 0.15s;
 }
-.sidebar-nav a:hover { background: var(--pico-secondary-background); }
-.sidebar-nav a.active { background: var(--pico-primary-focus); border-right: 3px solid var(--pico-primary); font-weight: 600; }
+.sidebar-nav a:hover { background: var(--pico-secondary-background); color: var(--mfb-nav-strong-color); }
+.sidebar-nav a.active {
+    background: var(--pico-primary-focus);
+    border-right: 3px solid var(--pico-primary);
+    font-weight: 600;
+    color: var(--mfb-nav-strong-color);
+}
 .sidebar-nav hr { margin: 0.3rem 1.2rem; border-color: var(--pico-muted-border-color); }
 .sidebar-label { padding: 0.8rem 1.2rem 0.25rem; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--pico-secondary); border-top: 1px solid var(--pico-muted-border-color); margin-top: 0.3rem; }
 .sidebar-overlay {
@@ -169,6 +232,7 @@ body.login-page .content { margin-left: 0; max-width: 100%; display: flex; justi
 .mt-05 { margin-top: 0.5rem; }
 .mt-1 { margin-top: 1rem; }
 .mb-0 { margin-bottom: 0; }
+.d-block { display: block; }
 .mb-025 { margin-bottom: 0.25rem; }
 
 /* === Flex/Grid helpers === */
@@ -1262,9 +1326,11 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
     user-select: none;
 }
 .status-badge:hover { filter: brightness(1.15); }
-.status-ok { background: var(--mfb-badge-idle-bg); color: var(--mfb-badge-idle-color); border-color: var(--mfb-badge-idle-border); }
+/* Quiet by default: neutral surface for every chip, state carried by the
+   icon/text tint. Only errors keep a tinted background. */
+.status-ok { background: var(--mfb-badge-neutral-bg); color: var(--mfb-success-color); border-color: var(--mfb-badge-neutral-border); }
 .status-error { background: var(--mfb-badge-error-bg); color: var(--mfb-badge-error-color); border-color: var(--mfb-badge-error-border); }
-.status-active { background: var(--mfb-badge-warning-bg); color: var(--mfb-badge-warning-color); border-color: var(--mfb-badge-warning-border); }
+.status-active { background: var(--mfb-badge-neutral-bg); color: var(--mfb-sync-color); border-color: var(--mfb-badge-neutral-border); }
 .status-neutral { background: var(--mfb-badge-neutral-bg); color: var(--mfb-badge-neutral-color); border-color: var(--mfb-badge-neutral-border); }
 .status-detail {
     background: var(--mfb-badge-neutral-bg); border: 1px solid var(--mfb-badge-neutral-border);
@@ -1278,14 +1344,37 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 /* === Restore workspace (Alpine version) === */
 /* ============================================================ */
 
+/* Workspace palette is theme-scoped: light defaults here, dark overrides
+   below — the slate set used to be hardcoded and stayed dark in light mode. */
 .page-restore-workspace .ws-root {
+  --ws-cyan: #0284c7;
+  --ws-cyan-strong: #0369a1;
+  --ws-cyan-soft: rgba(2, 132, 199, 0.10);
+  --ws-on-accent: #ffffff;
+  --ws-purple: #7c3aed;
+  --ws-card: #f8fafc;
+  --ws-card-hover: #f1f5f9;
+  --ws-border: #e2e8f0;
+  --ws-border-soft: #f1f5f9;
+  --ws-input-bg: #ffffff;
+  --ws-text: #0f172a;
+  --ws-text-muted: #64748b;
+  --ws-text-dim: #94a3b8;
+  --ws-success: #16a34a;
+  --ws-warn: #b45309;
+  --ws-danger: #dc2626;
+}
+[data-theme="dark"] .page-restore-workspace .ws-root {
   --ws-cyan: #38bdf8;
+  --ws-cyan-strong: #0284c7;
   --ws-cyan-soft: rgba(56, 189, 248, 0.12);
+  --ws-on-accent: #0f172a;
   --ws-purple: #a78bfa;
   --ws-card: #1e293b;
   --ws-card-hover: #243144;
   --ws-border: #334155;
   --ws-border-soft: #1e293b;
+  --ws-input-bg: #0f172a;
   --ws-text: #e2e8f0;
   --ws-text-muted: #94a3b8;
   --ws-text-dim: #64748b;
@@ -1390,7 +1479,7 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   padding: .45rem .6rem;
   font-size: .85rem;
   margin: 0;
-  background: #0f172a;
+  background: var(--ws-input-bg);
   border: 1px solid var(--ws-border);
   border-radius: .35rem;
   color: var(--ws-text);
@@ -1456,10 +1545,30 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   width: 100% !important;
 }
 
+/* Day/weekday/month colors come from the workspace theme vars — the stock
+   flatpickr stylesheet (light) is loaded without its dark theme. */
 .ws-calendar-wrap .flatpickr-day {
   position: relative;
   border-radius: .35rem;
+  color: var(--ws-text);
 }
+.ws-calendar-wrap .flatpickr-day.prevMonthDay,
+.ws-calendar-wrap .flatpickr-day.nextMonthDay,
+.ws-calendar-wrap .flatpickr-day.flatpickr-disabled {
+  color: var(--ws-text-dim);
+}
+.ws-calendar-wrap .flatpickr-weekday,
+.ws-calendar-wrap .flatpickr-current-month,
+.ws-calendar-wrap .flatpickr-current-month .numInput,
+.ws-calendar-wrap .flatpickr-current-month .flatpickr-monthDropdown-months {
+  color: var(--ws-text-muted);
+  background: transparent;
+}
+.ws-calendar-wrap .flatpickr-months .flatpickr-prev-month,
+.ws-calendar-wrap .flatpickr-months .flatpickr-next-month {
+  fill: var(--ws-text-muted);
+}
+.ws-calendar-wrap .flatpickr-day.today { border-color: var(--ws-cyan); }
 
 .ws-calendar-wrap .flatpickr-day:hover {
   background: var(--ws-card-hover);
@@ -1471,7 +1580,7 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 .ws-calendar-wrap .flatpickr-day.endRange {
   background: var(--ws-cyan) !important;
   border-color: var(--ws-cyan) !important;
-  color: #0f172a !important;
+  color: var(--ws-on-accent) !important;
   font-weight: 600;
 }
 
@@ -1565,10 +1674,10 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 }
 .ws-root .ws-btn-primary {
   background: var(--ws-cyan);
-  color: #0f172a;
+  color: var(--ws-on-accent);
 }
 .ws-root .ws-btn-primary:hover:not(:disabled) {
-  background: #0284c7;
+  background: var(--ws-cyan-strong);
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(56, 189, 248, 0.3);
 }
@@ -1632,7 +1741,7 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   width: 100%;
   padding: .45rem .6rem;
   font-size: .85rem;
-  background: #0f172a;
+  background: var(--ws-input-bg);
   border: 1px solid var(--ws-border);
   border-radius: .35rem;
   color: var(--ws-text);
@@ -1756,7 +1865,7 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 }
 .ws-badge-live {
   background: var(--ws-cyan);
-  color: #0f172a;
+  color: var(--ws-on-accent);
   box-shadow: 0 0 6px rgba(56, 189, 248, 0.4);
 }
 .ws-badge-snap {

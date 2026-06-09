@@ -5,13 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}MailFallBack{% endblock %}</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="preload" href="/static/vendor/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/static/vendor/fonts/GeistMono-Variable.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/static/vendor/pico.min.css">
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="/static/vendor/htmx.min.js"></script>
     <script src="/static/vendor/lucide.min.js"></script>
     {% block head %}{% endblock %}
 </head>
-<body class="{% block body_class %}{% endblock %}{% if not user %} login-page{% endif %}">
+{% set _flash_success = get_flash(request, "success") %}
+{% set _flash_error = get_flash(request, "error") %}
+<body class="{% block body_class %}{% endblock %}{% if not user %} login-page{% endif %}"{% if _flash_success %} data-flash-success="{{ _flash_success }}"{% endif %}{% if _flash_error %} data-flash-error="{{ _flash_error }}"{% endif %}>
     <header class="topbar" id="topbar">
         <button id="menu-toggle" aria-label="Menu">
             <i data-lucide="menu" class="icon-xl"></i>
@@ -68,25 +72,5 @@
     <div id="toast-container"></div>
     <script src="/static/js/core.js"></script>
     {% block scripts %}{% endblock %}
-    <script>
-    lucide.createIcons();
-    {% set _flash_success = get_flash(request, "success") %}
-    {% set _flash_error = get_flash(request, "error") %}
-    {% if _flash_success %}
-    document.addEventListener('DOMContentLoaded', function() { showToast('{{ _flash_success }}', 'success'); });
-    {% endif %}
-    {% if _flash_error %}
-    document.addEventListener('DOMContentLoaded', function() { showToast('{{ _flash_error }}', 'error'); });
-    {% endif %}
-    function showToast(msg, type) {
-        var c = document.getElementById('toast-container');
-        var t = document.createElement('div');
-        t.className = 'toast toast-' + (type || 'error');
-        t.textContent = msg;
-        t.onclick = function() { t.classList.add('toast-out'); setTimeout(function() { t.remove(); }, 300); };
-        c.appendChild(t);
-        setTimeout(function() { if (t.parentNode) { t.classList.add('toast-out'); setTimeout(function() { t.remove(); }, 300); } }, 5000);
-    }
-    </script>
 </body>
 </html>
