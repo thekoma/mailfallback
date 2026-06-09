@@ -1806,19 +1806,28 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   padding-top: .75rem;
   border-top: 1px solid var(--ws-border);
 }
-.ws-filters-grid fieldset {
-  border: none;
-  padding: 0;
-  margin: 0;
-  width: auto;  /* Pico defaults fieldset to 100%, which would wrap the row */
+/* Both groups share the same skeleton — label on top, controls row below
+   with a fixed height — so checkboxes and the select sit on one line. */
+.ws-filter-group {
+  display: flex;
+  flex-direction: column;
+  width: auto;       /* Pico gives [role=group] width:100%, which wraps the row */
+  margin-bottom: 0;  /* and a bottom margin via its input-group styling */
+  box-shadow: none;
+}
+.ws-filter-group > .ws-field-label { margin-bottom: .3rem; }
+.ws-filter-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: .4rem 1rem;
+  min-height: 2.25rem;
 }
-.ws-filters-grid legend {
-  padding: 0;
-  margin-bottom: .35rem;
+.ws-filter-group.is-overridden .ws-filter-row { opacity: .45; }
+.ws-filter-note {
+  margin: .6rem 0 0;
+  font-size: .75rem;
+  color: var(--ws-text-muted);
 }
 .ws-filters-grid select {
   width: auto;
