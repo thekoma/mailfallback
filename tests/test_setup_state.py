@@ -53,6 +53,26 @@ def test_fresh_admin_has_all_pending(db_session, default_store):
     assert state["complete"] is False
 
 
+def test_sso_admin_without_password_hash_does_not_crash(db_session, default_store):
+    """OIDC/OAuth admins have password_hash=None — the dashboard must not 500
+    on the default-password check (it raised AttributeError from bcrypt)."""
+    from mailfallback.models import User
+
+    admin = User(
+        username="sso-admin",
+        password_hash=None,
+        role=UserRole.admin,
+        enabled=True,
+        store_id=default_store.id,
+    )
+    db_session.add(admin)
+    db_session.commit()
+
+    state = get_setup_state(db_session, admin)
+    assert state["is_admin"] is True
+    assert state["default_password"] is False
+
+
 def test_admin_with_changed_password_marks_password_done(db_session, default_store):
     admin = create_user(
         db_session, "admin", "a-different-strong-pass", UserRole.admin, store_id=default_store.id
