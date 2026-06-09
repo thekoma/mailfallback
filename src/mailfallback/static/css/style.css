@@ -366,6 +366,12 @@ button.icon-btn.success, a.icon-btn.success { color: var(--mfb-success-color); b
     background: var(--mfb-badge-neutral-bg);
 }
 .provider-logo { height: 1.1em; vertical-align: middle; margin-right: 0.25rem; }
+.provider-card .provider-logo { height: 28px; width: 28px; margin: 0 0 0.35rem; }
+.provider-card .provider-glyph {
+    width: 28px; height: 28px;
+    margin-bottom: 0.35rem;
+    color: var(--pico-muted-color);
+}
 
 /* === Brand === */
 .brand-short { color: var(--pico-primary); }
@@ -489,7 +495,7 @@ button.icon-btn.success, a.icon-btn.success { color: var(--mfb-success-color); b
 .inline-form { display: inline; margin: 0; }
 .email-text { color: var(--pico-muted-color); font-size: 0.9rem; }
 .log-pre { margin-top: 0.5rem; font-size: 0.85rem; }
-.hidden { display: none; }
+.hidden { display: none !important; }
 .no-underline { text-decoration: none; }
 .mb-0 > p { margin-bottom: 0; }
 .content details { margin-top: 1rem; }
@@ -680,15 +686,15 @@ a.chain-stage:hover { border-color: var(--pico-primary); transform: translateY(-
 
 .provider-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
 }
 .provider-card {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 0.25rem;
-    padding: 1rem;
+    gap: 0.3rem;
+    padding: 1.25rem;
     background: var(--pico-card-background-color);
     border: 2px solid var(--pico-muted-border-color);
     border-radius: 0.5rem;
@@ -762,7 +768,9 @@ a.chain-stage:hover { border-color: var(--pico-primary); transform: translateY(-
     table { font-size: 0.85rem; }
 }
 
-.table-wrap { overflow: visible; }
+/* Wide tables scroll inside their wrapper instead of widening the page.
+   Kebab dropdowns are safe: they render in a position:fixed body portal. */
+.table-wrap { overflow-x: auto; }
 .w-full { width: 100%; }
 
 /* Dropdown menu */
@@ -1575,8 +1583,21 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 }
 
 .ws-calendar-wrap .flatpickr-calendar.inline {
-  position: static;
+  /* relative, not static: the absolute prev/next month arrows anchor here —
+     with static they escape to the sticky .ws-sidebar and land on its labels */
+  position: relative;
   width: 100% !important;
+}
+
+/* Stock flatpickr sizes the day grid at a fixed 307.875px, wider than the
+   320px sidebar minus padding — make it fluid so it fits the wrap. */
+.ws-calendar-wrap .flatpickr-months { position: relative; }
+.ws-calendar-wrap .flatpickr-days,
+.ws-calendar-wrap .dayContainer,
+.ws-calendar-wrap .flatpickr-weekdays {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
 }
 
 /* Day/weekday/month colors come from the workspace theme vars — the stock
@@ -1585,6 +1606,9 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   position: relative;
   border-radius: .35rem;
   color: var(--ws-text);
+  max-width: none;
+  height: 34px;
+  line-height: 34px;
 }
 .ws-calendar-wrap .flatpickr-day.prevMonthDay,
 .ws-calendar-wrap .flatpickr-day.nextMonthDay,
@@ -1661,6 +1685,16 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   min-width: 0;
 }
 
+/* Search pane — uniform vertical rhythm between row, deep toggle, filters,
+   status and results (children come and go via Alpine templates). */
+.ws-search {
+  display: flex;
+  flex-direction: column;
+  gap: .65rem;
+}
+.ws-search .ws-deep-toggle { margin: 0; }
+.ws-search .ws-status { margin: 0; }
+
 /* Search row */
 
 .ws-root .ws-search-row {
@@ -1728,14 +1762,51 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   box-shadow: 0 4px 12px rgba(248, 113, 113, 0.3);
 }
 
+/* Folder / full-mailbox flows — same vertical rhythm as the search pane,
+   and workspace-styled controls instead of Pico defaults. */
+.ws-folder-flow,
+.ws-full-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .75rem;
+}
+.ws-folder-flow > p,
+.ws-full-flow > p { margin: 0; }
+.ws-folder-flow .ws-field {
+  width: 100%;
+  max-width: 360px;
+}
+.ws-folder-flow select {
+  width: 100%;
+  padding: .45rem .6rem;
+  font-size: .85rem;
+  background: var(--ws-input-bg);
+  border: 1px solid var(--ws-border);
+  border-radius: .35rem;
+  color: var(--ws-text);
+  margin: 0;
+}
+
 /* Filters disclosure */
 
 .ws-filters {
-  margin-top: .75rem;
+  margin-top: 0;
   padding: .5rem .75rem;
   background: var(--ws-card);
   border: 1px solid var(--ws-border);
   border-radius: .5rem;
+}
+/* The app-wide collapsible-section dressing (right chevron on summary,
+   left border on body) doubles up with the workspace's own ▸ marker —
+   neutralize it inside the workspace disclosures. */
+.ws-search .ws-filters > summary::after,
+.ws-sidebar .ws-advanced > summary::after { content: none !important; }
+.ws-search .ws-filters > :not(summary),
+.ws-sidebar .ws-advanced > :not(summary) {
+  border-left: none !important;
+  margin-left: 0 !important;
+  padding-left: 0 !important;
 }
 .ws-filters summary {
   cursor: pointer;
@@ -1752,27 +1823,41 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 }
 .ws-filters[open] summary::before { transform: rotate(90deg); }
 .ws-filters-grid {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 1rem;
-  margin-top: .75rem;
+  /* content-packed groups side by side, not spread across the panel */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 1rem 2.5rem;
+  margin-top: .5rem;
   padding-top: .75rem;
   border-top: 1px solid var(--ws-border);
 }
-.ws-filters-grid fieldset {
-  border: none;
-  padding: 0;
-  margin: 0;
+/* Both groups share the same skeleton — label on top, controls row below
+   with a fixed height — so checkboxes and the select sit on one line. */
+.ws-filter-group {
+  display: flex;
+  flex-direction: column;
+  width: auto;       /* Pico gives [role=group] width:100%, which wraps the row */
+  margin-bottom: 0;  /* and a bottom margin via its input-group styling */
+  box-shadow: none;
+}
+.ws-filter-group > .ws-field-label { margin-bottom: .3rem; }
+.ws-filter-row {
   display: flex;
   flex-wrap: wrap;
-  gap: .25rem .75rem;
+  align-items: center;
+  gap: .4rem 1rem;
+  min-height: 2.25rem;
 }
-.ws-filters-grid legend {
-  padding: 0;
-  margin-bottom: .35rem;
+.ws-filter-group.is-overridden .ws-filter-row { opacity: .45; }
+.ws-filter-note {
+  margin: .6rem 0 0;
+  font-size: .75rem;
+  color: var(--ws-text-muted);
 }
 .ws-filters-grid select {
-  width: 100%;
+  width: auto;
+  min-width: 160px;
   padding: .45rem .6rem;
   font-size: .85rem;
   background: var(--ws-input-bg);

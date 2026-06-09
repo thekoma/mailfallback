@@ -83,7 +83,9 @@ jobs:
 
       - name: Determine tag
         id: tag
-        run: echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+        # PR runs have GITHUB_REF_NAME like "173/merge" — '/' is invalid in a
+        # Docker tag, so swap it for '-'. Push runs ("main") are unaffected.
+        run: echo "tag=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
