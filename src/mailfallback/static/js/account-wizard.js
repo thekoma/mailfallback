@@ -4,6 +4,7 @@
 
 (function () {
     var oauthAvailable = window._oauthAvailable || {};
+    var pickedLabel = "";
 
     function $(id) { return document.getElementById(id); }
     function show(el) { if (el) el.classList.remove("hidden"); }
@@ -47,14 +48,18 @@
         var serverDetails = $("server-settings");
 
         var providerLabel = btn.querySelector("strong") ? btn.querySelector("strong").textContent : provider;
-        step2Title.textContent = "Sign in to " + providerLabel;
+        pickedLabel = providerLabel;
+        step2Title.textContent = provider === "other"
+            ? "Connect your IMAP server"
+            : "Sign in to " + providerLabel;
 
         if ((provider === "google" && oauthAvailable.google) ||
             (provider === "microsoft" && oauthAvailable.microsoft)) {
-            // OAuth path
+            // OAuth path — the "Sign in with X" button is the action; hide Continue.
             $("auth_type").value = "oauth2";
             show(oauthBlock);
             hide(imapBlock);
+            hide($("wizard-step2-next"));
             oauthLabel.textContent = "Sign in with " + providerLabel;
             // Populate hidden IMAP server fields — the account record needs a host
             // even for OAuth (it's the IMAP endpoint mbsync syncs from).
@@ -73,6 +78,7 @@
             $("auth_type").value = "app_password";
             hide(oauthBlock);
             show(imapBlock);
+            show($("wizard-step2-next"));
 
             // Pre-fill IMAP host/port for known providers
             var presets = {
@@ -88,7 +94,17 @@
                 $("tls_type").value = preset.tls;
                 // Keep server-settings collapsed; user can expand if they need to override.
             } else {
-                // 'other' — open server settings so the user provides the host.
+                // 'other' — drop any host a previous provider pick pre-filled,
+                // but keep a value the user typed themselves.
+                var hostEl = $("imap_host");
+                var presetHosts = Object.keys(presets).map(function (k) { return presets[k].host; })
+                    .concat(["imap.gmail.com", "outlook.office365.com"]);
+                if (presetHosts.indexOf(hostEl.value) !== -1) {
+                    hostEl.value = "";
+                    $("imap_port").value = 993;
+                    $("tls_type").value = "IMAPS";
+                }
+                // Open server settings so the user provides the host.
                 if (serverDetails) serverDetails.open = true;
             }
         }
@@ -137,6 +153,7 @@
         $("auth_type").value = "app_password";
         hide($("wizard-oauth-block"));
         show($("wizard-imap-block"));
+        show($("wizard-step2-next"));
     };
 
     window.wizardStep2Next = function () {
@@ -163,7 +180,7 @@
             nameField.value = local.charAt(0).toUpperCase() + local.slice(1);
         }
         // Update step 3 summary
-        $("wizard-summary-provider").textContent = $("provider").value || "Custom";
+        $("wizard-summary-provider").textContent = pickedLabel || "Custom IMAP";
         $("wizard-summary-email").textContent = email;
         wizardGoTo(3);
     };

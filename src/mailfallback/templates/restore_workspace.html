@@ -31,7 +31,10 @@
         </select>
       </label>
 
-      <div class="ws-field">
+      {# Search-only parameters — the folder and full presets restore from the
+         local backup and ignore these, so hide them there. x-show (not x-if)
+         keeps the inline flatpickr instance alive across preset switches. #}
+      <div class="ws-field" x-show="preset === 'single-mail'">
         <span class="ws-field-label">Time range</span>
         <div class="ws-calendar-wrap">
           {# flatpickr will replace this input with its inline calendar UI #}
@@ -42,13 +45,13 @@
            x-text="costText"></p>
       </div>
 
-      <fieldset class="ws-field">
+      <fieldset class="ws-field" x-show="preset === 'single-mail'">
         <legend class="ws-field-label">Sources</legend>
         <label class="ws-inline"><input type="checkbox" x-model="includeLive"> Live</label>
         <label class="ws-inline"><input type="checkbox" x-model="includeSnapshots"> Snapshots</label>
       </fieldset>
 
-      <details class="ws-field ws-advanced">
+      <details class="ws-field ws-advanced" x-show="preset === 'single-mail'">
         <summary class="ws-field-label">Advanced</summary>
         <label class="ws-inline">
           TTL ephemeral (min)
@@ -91,22 +94,33 @@
           <details class="ws-filters" x-bind:open="filtersOpen">
             <summary @click.prevent="filtersOpen = !filtersOpen" class="ws-field-label">Filters</summary>
             <div class="ws-filters-grid">
-              <fieldset>
-                <legend class="ws-field-label">Search in</legend>
-                <label class="ws-inline"><input type="checkbox" x-model="filters.subject"> Subject</label>
-                <label class="ws-inline"><input type="checkbox" x-model="filters.from"> From</label>
-                <label class="ws-inline"><input type="checkbox" x-model="filters.to"> To</label>
-              </fieldset>
-              <label class="ws-field">
+              {# Deep search uses IMAP TEXT (all headers + body), which supersedes
+                 the field scoping below — grey it out instead of lying. #}
+              <div class="ws-filter-group" role="group" aria-label="Search in"
+                   :class="{'is-overridden': deepSearch}">
+                <span class="ws-field-label">Search in</span>
+                <div class="ws-filter-row">
+                  <label class="ws-inline"><input type="checkbox" x-model="filters.subject" :disabled="deepSearch"> Subject</label>
+                  <label class="ws-inline"><input type="checkbox" x-model="filters.from" :disabled="deepSearch"> From</label>
+                  <label class="ws-inline"><input type="checkbox" x-model="filters.to" :disabled="deepSearch"> To</label>
+                </div>
+              </div>
+              <div class="ws-filter-group">
                 <span class="ws-field-label">Type</span>
-                <select x-model="filters.type">
-                  <option value="all">All</option>
-                  <option value="unseen">Unread</option>
-                  <option value="flagged">Flagged</option>
-                  <option value="unanswered">Unanswered</option>
-                </select>
-              </label>
+                <div class="ws-filter-row">
+                  <select x-model="filters.type">
+                    <option value="all">All</option>
+                    <option value="unseen">Unread</option>
+                    <option value="flagged">Flagged</option>
+                    <option value="unanswered">Unanswered</option>
+                  </select>
+                </div>
+              </div>
             </div>
+            <p class="ws-filter-note" x-show="deepSearch" x-transition>
+              <i data-lucide="info" class="icon-sm icon-inline"></i>
+              Deep search already covers subject, sender, recipients and the message body — "Search in" doesn't apply. The Type filter still does.
+            </p>
           </details>
 
           <p class="ws-status text-muted text-xsmall" x-text="statusText" x-show="statusText"></p>
@@ -188,11 +202,11 @@
       {# Folder preset #}
       <template x-if="preset === 'folder'">
         <div class="ws-folder-flow">
-          <p class="text-muted">Pick a folder to restore in full from the source mailbox.</p>
+          <p class="text-muted">Pick a folder to copy in full from the source mailbox's local backup.</p>
           <label class="ws-field">
             <span class="ws-field-label">Folder</span>
             <select x-model="selectedFolder">
-              <option value="">Loading folders…</option>
+              <option value="" x-text="folders.length ? 'Choose a folder…' : 'Loading folders…'"></option>
               <template x-for="f in folders" :key="f.full_name || f.name">
                 <option :value="f.full_name || f.name" x-text="f.name"></option>
               </template>
@@ -217,7 +231,7 @@
             <i data-lucide="alert-triangle" class="icon-md"></i>
             <div>
               <strong>Full mailbox restore</strong>
-              <p>Copies the entire latest snapshot in range to the destination mailbox. This can take a while.</p>
+              <p>Copies the source mailbox's entire local backup to the destination mailbox. This can take a while.</p>
             </div>
           </div>
           <button class="ws-btn-danger"
