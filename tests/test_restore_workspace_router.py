@@ -253,8 +253,8 @@ def test_restore_workspace_renders(client, db_session, default_store, login_user
     # Destination dropdown lists ALL owned accounts, including the one
     # without a backup policy (Fix B).
     assert acct2.id.encode() in body
-    # Alpine CDN script tag is present (defer-loaded before workspace.js)
-    assert b"alpinejs" in body
+    # Vendored Alpine script tag is present (defer-loaded before workspace.js)
+    assert b"/static/vendor/alpine.min.js" in body
     # Workspace JS factory loaded
     assert b"restore_workspace.js" in body
     # flatpickr inline calendar input (replaces the old dual-handle slider).
