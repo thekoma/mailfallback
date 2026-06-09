@@ -43,12 +43,14 @@ def get_setup_state(db: Session, user: User) -> dict:
 
     # Default password: try to verify the bootstrap default against the user's hash.
     # `verify_password` is bcrypt; comparing against the documented bootstrap is honest.
+    # SSO/OAuth admins have no local password at all (password_hash is None).
     default_password = False
-    try:
-        default_password = verify_password(DEFAULT_ADMIN_PASSWORD, user.password_hash)
-    except (ValueError, TypeError):
-        # Malformed hash or any bcrypt error — assume not default.
-        default_password = False
+    if user.password_hash:
+        try:
+            default_password = verify_password(DEFAULT_ADMIN_PASSWORD, user.password_hash)
+        except (ValueError, TypeError):
+            # Malformed hash or any bcrypt error — assume not default.
+            default_password = False
 
     has_mailbox = db.query(Account).count() > 0
     has_repository = db.query(Repository).count() > 0
