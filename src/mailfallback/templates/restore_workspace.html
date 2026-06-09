@@ -94,22 +94,33 @@
           <details class="ws-filters" x-bind:open="filtersOpen">
             <summary @click.prevent="filtersOpen = !filtersOpen" class="ws-field-label">Filters</summary>
             <div class="ws-filters-grid">
-              <fieldset>
-                <legend class="ws-field-label">Search in</legend>
-                <label class="ws-inline"><input type="checkbox" x-model="filters.subject"> Subject</label>
-                <label class="ws-inline"><input type="checkbox" x-model="filters.from"> From</label>
-                <label class="ws-inline"><input type="checkbox" x-model="filters.to"> To</label>
-              </fieldset>
-              <label class="ws-field">
+              {# Deep search uses IMAP TEXT (all headers + body), which supersedes
+                 the field scoping below — grey it out instead of lying. #}
+              <div class="ws-filter-group" role="group" aria-label="Search in"
+                   :class="{'is-overridden': deepSearch}">
+                <span class="ws-field-label">Search in</span>
+                <div class="ws-filter-row">
+                  <label class="ws-inline"><input type="checkbox" x-model="filters.subject" :disabled="deepSearch"> Subject</label>
+                  <label class="ws-inline"><input type="checkbox" x-model="filters.from" :disabled="deepSearch"> From</label>
+                  <label class="ws-inline"><input type="checkbox" x-model="filters.to" :disabled="deepSearch"> To</label>
+                </div>
+              </div>
+              <div class="ws-filter-group">
                 <span class="ws-field-label">Type</span>
-                <select x-model="filters.type">
-                  <option value="all">All</option>
-                  <option value="unseen">Unread</option>
-                  <option value="flagged">Flagged</option>
-                  <option value="unanswered">Unanswered</option>
-                </select>
-              </label>
+                <div class="ws-filter-row">
+                  <select x-model="filters.type">
+                    <option value="all">All</option>
+                    <option value="unseen">Unread</option>
+                    <option value="flagged">Flagged</option>
+                    <option value="unanswered">Unanswered</option>
+                  </select>
+                </div>
+              </div>
             </div>
+            <p class="ws-filter-note" x-show="deepSearch" x-transition>
+              <i data-lucide="info" class="icon-sm icon-inline"></i>
+              Deep search already covers subject, sender, recipients and the message body — "Search in" doesn't apply. The Type filter still does.
+            </p>
           </details>
 
           <p class="ws-status text-muted text-xsmall" x-text="statusText" x-show="statusText"></p>
