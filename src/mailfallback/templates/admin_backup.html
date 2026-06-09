@@ -144,10 +144,10 @@
         </tr>
         {% endfor %}
         {% if not destinations %}
-        <tr><td colspan="8" class="text-muted">
-            No repositories configured. A Repository is an off-site, encrypted store for snapshots.
-            Use the form below to add your first one — then attach a backup policy to a mailbox
-            from its account-detail page.
+        <tr><td colspan="8" class="empty-cell">
+            <i data-lucide="cloud-upload"></i>
+            <strong>No repositories yet</strong>
+            <span class="empty-hint">A Repository is an off-site, encrypted store for snapshots. Add your first one below, then attach a backup policy to a mailbox from its account-detail page.</span>
         </td></tr>
         {% endif %}
     </tbody>

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Users — MFB{% endblock %}
 {% block content %}
-<h2><i data-lucide="users" class="icon-xl icon-inline"></i>User Management</h2>
+<h2><i data-lucide="users" class="icon-xl icon-inline"></i>Users</h2>
 
 
 <div class="table-wrap">
@@ -144,7 +144,7 @@
                     onsubmit="return confirm(this.dataset.confirm)">
                     <label>Current: <strong>{{ u.store.name if u.store else '—' }}</strong> — Move to</label>
                     <div class="flex gap-05 items-end">
-                        <select name="target_store_id" style="margin-bottom:0">
+                        <select name="target_store_id" class="mb-0">
                             {% for s in stores %}
                             {% if not u.store or s.id != u.store.id %}
                             <option value="{{ s.id }}">{{ s.name }} ({{ s.path }})</option>

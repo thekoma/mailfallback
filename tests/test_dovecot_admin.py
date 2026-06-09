@@ -85,7 +85,7 @@ def test_settings_page_shows_dovecot_section(client, db_session, default_store):
     _login_admin(client, db_session, default_store)
     resp = client.get("/settings")
     assert resp.status_code == 200
-    assert "Dovecot Management" in resp.text
+    assert "Dovecot management" in resp.text
     assert "Health Check" in resp.text
     assert "Force Resync" in resp.text
     assert "FTS Reindex" in resp.text

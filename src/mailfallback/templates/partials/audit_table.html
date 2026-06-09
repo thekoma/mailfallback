@@ -21,7 +21,11 @@
         </tr>
         {% endfor %}
         {% if not entries %}
-        <tr><td colspan="5" class="text-center text-muted">No audit entries found</td></tr>
+        <tr><td colspan="5" class="empty-cell">
+            <i data-lucide="scroll-text"></i>
+            <strong>No audit entries</strong>
+            <span class="empty-hint">Logins, account changes and admin actions will appear here. Try widening the filters above.</span>
+        </td></tr>
         {% endif %}
     </tbody>
 </table>

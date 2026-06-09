@@ -155,7 +155,7 @@
                     <div class="flex gap-05 items-end">
                         <div>
                             <label class="text-small">Move everything to:</label>
-                            <select name="target_store_id" style="margin-bottom:0">
+                            <select name="target_store_id" class="mb-0">
                                 {% for s in other_stores %}
                                 <option value="{{ s.id }}">{{ s.name }} ({{ s.path }})</option>
                                 {% endfor %}
@@ -197,7 +197,11 @@
         </tr>
         {% endfor %}
         {% if not stores %}
-        <tr><td colspan="7" class="text-muted">No stores configured yet.</td></tr>
+        <tr><td colspan="7" class="empty-cell">
+            <i data-lucide="hard-drive"></i>
+            <strong>No mail stores yet</strong>
+            <span class="empty-hint">A store is a directory where Maildir data lives. Add one below to place accounts on a specific disk or volume.</span>
+        </td></tr>
         {% endif %}
     </tbody>
 </table>

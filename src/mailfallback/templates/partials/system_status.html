@@ -36,7 +36,7 @@
     {% elif dovecot.ok is none %}
     <span class="text-small text-muted">Not checked yet</span>
     {% else %}
-    <span class="text-small" style="color:var(--mfb-badge-error-fg);">{{ dovecot.error }}</span>
+    <span class="text-small text-error-state">{{ dovecot.error }}</span>
     {% endif %}
 </div>
 
@@ -51,24 +51,24 @@
         <div class="progress-bar" style="width:{{ pct }}%"></div>
     </div>
     {% if fts.user_statuses %}
-    <div class="text-small" style="margin-top:4px;">
+    <div class="text-small mt-025">
         {% for us in fts.user_statuses %}
-        {% if us.status == 'ok' %}<span style="color:var(--mfb-badge-idle-fg);">&#10003; {{ us.username }}</span>{% else %}<span style="color:var(--mfb-badge-error-fg);">&#10007; {{ us.username }}</span>{% endif %}
+        {% if us.status == 'ok' %}<span class="text-ok-state">&#10003; {{ us.username }}</span>{% else %}<span class="text-error-state">&#10007; {{ us.username }}</span>{% endif %}
         {% if not loop.last %} · {% endif %}
         {% endfor %}
-        {% if fts.current_user %} · <span style="color:var(--mfb-badge-warning-fg);">&#9203; {{ fts.current_user }}</span>{% endif %}
+        {% if fts.current_user %} · <span class="text-warn-state">&#9203; {{ fts.current_user }}</span>{% endif %}
     </div>
     {% endif %}
     {% elif fts.status == 'completed' %}
     <span class="text-small text-muted">Last reindex: {{ fts.completed_at|time_ago }} — {{ fts.details.users_processed if fts.details else '?' }} users</span>
     {% elif fts.status == 'failed' %}
-    <span class="text-small" style="color:var(--mfb-badge-error-fg);">Failed: {{ fts.details.errors[0] if fts.details and fts.details.errors else 'unknown' }}</span>
+    <span class="text-small text-error-state">Failed: {{ fts.details.errors[0] if fts.details and fts.details.errors else 'unknown' }}</span>
     {% else %}
     <span class="text-small text-muted">No recent reindex</span>
     {% endif %}
 
     {% if resync.status == 'running' %}
-    <div class="status-detail-header" style="margin-top:8px;">
+    <div class="status-detail-header mt-05">
         <strong>Force Resync</strong>
         <span class="text-small text-muted">{{ resync.progress_current }}/{{ resync.progress_total }}</span>
     </div>
@@ -87,7 +87,7 @@
     <span class="text-small">{{ syncing_count }} sync job{{ 's' if syncing_count != 1 else '' }} running</span><br>
     {% endif %}
     {% for acct in error_accounts %}
-    <div class="text-small" style="color:var(--mfb-badge-error-fg);">
+    <div class="text-small text-error-state">
         &#10007; <a href="/accounts/{{ acct.id }}">{{ acct.name }}</a> — {{ acct.last_error[:60] if acct.last_error else 'sync failed' }}
     </div>
     {% endfor %}
@@ -99,7 +99,7 @@
     <span class="text-small text-muted">No active restore jobs</span>
     {% else %}
     {% for job in active_restores %}
-    <div style="margin-bottom:6px;">
+    <div class="mb-05">
         <div class="status-detail-header">
             <strong>{{ job.source_account.name }} → {{ job.target_account.name }}</strong>
             <span class="text-small text-muted">{{ job.restored_messages }}/{{ job.total_messages }}</span>
