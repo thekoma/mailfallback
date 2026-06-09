@@ -6,7 +6,7 @@
 <form class="flex gap-1 items-end flex-wrap mb-0" hx-get="/admin/audit/table" hx-target="#audit-table-wrap" hx-push-url="true">
     <div>
         <label class="text-xs">User</label>
-        <select name="user" style="margin-bottom:0;min-width:140px">
+        <select name="user" class="filter-control">
             <option value="">All users</option>
             {% for u in all_users %}
             <option value="{{ u.username }}" {% if filters.get('user') == u.username %}selected{% endif %}>{{ u.username }}</option>
@@ -15,7 +15,7 @@
     </div>
     <div>
         <label class="text-xs">Action</label>
-        <select name="action" style="margin-bottom:0;min-width:160px">
+        <select name="action" class="filter-control">
             <option value="">All actions</option>
             {% for a in distinct_actions %}
             <option value="{{ a }}" {% if filters.get('action') == a %}selected{% endif %}>{{ get_action_label(a) }}</option>

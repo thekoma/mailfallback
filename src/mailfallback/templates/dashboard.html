@@ -23,32 +23,34 @@
 {% endif %}
 
 <div class="stat-cards">
-    <a href="/accounts" class="stat-card">
-        <div class="stat-value">{{ stats.accounts }}</div>
-        <div class="stat-label"><i data-lucide="mail" class="icon-sm icon-inline"></i> Accounts</div>
-    </a>
-    <div class="stat-card">
+    <div class="stat-card stat-hero span-5">
         <div class="stat-value">{{ stats.messages | default(0) }}</div>
         <div class="stat-label"><i data-lucide="inbox" class="icon-sm icon-inline"></i> Messages</div>
     </div>
-    <div class="stat-card">
+    <div class="stat-card span-4">
         <div class="stat-value">{{ stats.storage }}</div>
         <div class="stat-label"><i data-lucide="hard-drive" class="icon-sm icon-inline"></i> Usage{% if stats.storage_total %} <span class="text-xs">({{ stats.storage_total }} disk)</span>{% endif %}</div>
     </div>
-    <a href="/accounts" class="stat-card {% if stats.errors > 0 %}stat-error{% else %}stat-ok{% endif %}">
-        <div class="stat-value">{{ stats.errors }}</div>
-        <div class="stat-label"><i data-lucide="alert-circle" class="icon-sm icon-inline"></i> Errors</div>
+    <a href="/accounts" class="stat-card span-3">
+        <div class="stat-value">{{ stats.accounts }}</div>
+        <div class="stat-label"><i data-lucide="mail" class="icon-sm icon-inline"></i> Accounts</div>
     </a>
-    {% if user.role.value == "admin" %}
-    <a href="/admin/users" class="stat-card">
-        <div class="stat-value">{{ stats.users }}</div>
-        <div class="stat-label"><i data-lucide="user-circle" class="icon-sm icon-inline"></i> Users</div>
-    </a>
-    <a href="/admin/stores" class="stat-card">
-        <div class="stat-value">{{ stats.stores }}</div>
-        <div class="stat-label"><i data-lucide="database" class="icon-sm icon-inline"></i> Stores</div>
-    </a>
-    {% endif %}
+    <div class="stat-meta span-12">
+        <a href="/accounts" class="{% if stats.errors > 0 %}text-error-state{% else %}text-ok-state{% endif %}">
+            <i data-lucide="alert-circle" class="icon-sm icon-inline"></i>
+            <strong>{{ stats.errors }}</strong> error{{ '' if stats.errors == 1 else 's' }}
+        </a>
+        {% if user.role.value == "admin" %}
+        <a href="/admin/users">
+            <i data-lucide="user-circle" class="icon-sm icon-inline"></i>
+            <strong>{{ stats.users }}</strong> user{{ '' if stats.users == 1 else 's' }}
+        </a>
+        <a href="/admin/stores">
+            <i data-lucide="database" class="icon-sm icon-inline"></i>
+            <strong>{{ stats.stores }}</strong> store{{ '' if stats.stores == 1 else 's' }}
+        </a>
+        {% endif %}
+    </div>
 </div>
 
 {% if chain_summary and chain_summary.mailboxes > 0 %}
@@ -68,7 +70,7 @@
             <li><strong>Snapshot</strong> — a point-in-time capture inside a Repository.</li>
         </ul>
         <p class="text-small text-muted mt-025">Click any stage's name below to manage it.</p>
-        <form method="post" action="/profile/dismiss-chain-explainer" style="display:inline">
+        <form method="post" action="/profile/dismiss-chain-explainer" class="d-inline">
             <button type="submit" class="icon-btn">
                 <i data-lucide="check" class="icon-sm"></i> Got it — don't show again
             </button>

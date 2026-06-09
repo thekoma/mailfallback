@@ -155,7 +155,7 @@
                     <div class="flex gap-05 items-end">
                         <div>
                             <label class="text-small">Move everything to:</label>
-                            <select name="target_store_id" style="margin-bottom:0">
+                            <select name="target_store_id" class="mb-0">
                                 {% for s in other_stores %}
                                 <option value="{{ s.id }}">{{ s.name }} ({{ s.path }})</option>
                                 {% endfor %}
