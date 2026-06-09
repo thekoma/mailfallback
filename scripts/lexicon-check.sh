@@ -22,13 +22,13 @@ ALLOWED='(local|off-site|offsite|locale|configuration|destination|policy|policie
 filter_content_matches() {
     local word="$1"
     awk -v word="$word" '
-        BEGIN { IGNORECASE = 1 }
         {
             # grep -REn output: path:lineno:content
             i = index($0, ":");
             rest = substr($0, i + 1);
             j = index(rest, ":");
-            content = substr(rest, j + 1);
+            # tolower(): IGNORECASE is gawk-only; BSD awk would match case-sensitively
+            content = tolower(substr(rest, j + 1));
             standalone = "(^|[^a-zA-Z_./-])" word "([^a-zA-Z_/-]|$)";
             if (content ~ standalone) print $0;
         }
@@ -38,14 +38,14 @@ filter_content_matches() {
 # Remove rows whose content matches the "backup + qualifier" pattern (in either order).
 strip_qualified() {
     awk -v allowed="$ALLOWED" '
-        BEGIN { IGNORECASE = 1 }
         {
             i = index($0, ":");
             rest = substr($0, i + 1);
             j = index(rest, ":");
-            content = substr(rest, j + 1);
-            qualified_after = "[bB]ackup[ \t]+" allowed "([^a-zA-Z]|$)";
-            qualified_before = allowed "[ \t]+[bB]ackup([^a-zA-Z]|$)";
+            # tolower(): IGNORECASE is gawk-only; BSD awk would match case-sensitively
+            content = tolower(substr(rest, j + 1));
+            qualified_after = "backup[ \t]+" allowed "([^a-zA-Z]|$)";
+            qualified_before = allowed "[ \t]+backup([^a-zA-Z]|$)";
             if (content ~ qualified_after || content ~ qualified_before) next;
             print $0;
         }
