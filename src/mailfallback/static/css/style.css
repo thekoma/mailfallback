@@ -1771,6 +1771,17 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   border: 1px solid var(--ws-border);
   border-radius: .5rem;
 }
+/* The app-wide collapsible-section dressing (right chevron on summary,
+   left border on body) doubles up with the workspace's own ▸ marker —
+   neutralize it inside the workspace disclosures. */
+.ws-search .ws-filters > summary::after,
+.ws-sidebar .ws-advanced > summary::after { content: none !important; }
+.ws-search .ws-filters > :not(summary),
+.ws-sidebar .ws-advanced > :not(summary) {
+  border-left: none !important;
+  margin-left: 0 !important;
+  padding-left: 0 !important;
+}
 .ws-filters summary {
   cursor: pointer;
   list-style: none;
@@ -1786,11 +1797,12 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 }
 .ws-filters[open] summary::before { transform: rotate(90deg); }
 .ws-filters-grid {
-  display: grid;
-  /* cap the Type column so the two groups don't drift apart on wide panels */
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 200px);
-  gap: 1rem 2rem;
-  margin-top: .75rem;
+  /* content-packed groups side by side, not spread across the panel */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 1rem 2.5rem;
+  margin-top: .5rem;
   padding-top: .75rem;
   border-top: 1px solid var(--ws-border);
 }
@@ -1798,16 +1810,19 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   border: none;
   padding: 0;
   margin: 0;
+  width: auto;  /* Pico defaults fieldset to 100%, which would wrap the row */
   display: flex;
   flex-wrap: wrap;
-  gap: .25rem .75rem;
+  align-items: center;
+  gap: .4rem 1rem;
 }
 .ws-filters-grid legend {
   padding: 0;
   margin-bottom: .35rem;
 }
 .ws-filters-grid select {
-  width: 100%;
+  width: auto;
+  min-width: 160px;
   padding: .45rem .6rem;
   font-size: .85rem;
   background: var(--ws-input-bg);
