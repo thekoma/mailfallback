@@ -37,22 +37,22 @@
         <p class="text-muted text-small">Pick the right one and we'll fill in the technical bits for you.</p>
         <div class="provider-grid mt-1">
             <button type="button" class="provider-card" data-provider="google" onclick="wizardPickProvider(this)">
-                <i data-lucide="mail" class="icon-lg"></i>
+                {% with provider="google" %}{% include "partials/provider_logo.html" %}{% endwith %}
                 <strong>Gmail</strong>
                 <small class="text-muted">Sign in with Google</small>
             </button>
             <button type="button" class="provider-card" data-provider="microsoft" onclick="wizardPickProvider(this)">
-                <i data-lucide="mail" class="icon-lg"></i>
+                {% with provider="microsoft" %}{% include "partials/provider_logo.html" %}{% endwith %}
                 <strong>Outlook / Microsoft 365</strong>
                 <small class="text-muted">Sign in with Microsoft</small>
             </button>
             <button type="button" class="provider-card" data-provider="yahoo" onclick="wizardPickProvider(this)">
-                <i data-lucide="mail" class="icon-lg"></i>
+                <i data-lucide="at-sign" class="icon-lg"></i>
                 <strong>Yahoo</strong>
                 <small class="text-muted">App password</small>
             </button>
             <button type="button" class="provider-card" data-provider="icloud" onclick="wizardPickProvider(this)">
-                <i data-lucide="mail" class="icon-lg"></i>
+                <i data-lucide="cloud" class="icon-lg"></i>
                 <strong>iCloud</strong>
                 <small class="text-muted">App-specific password</small>
             </button>
