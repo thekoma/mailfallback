@@ -23,6 +23,8 @@ from mailfallback.services.oauth2 import (
     exchange_microsoft_code,
 )
 from mailfallback.services.store_service import ensure_default_store
+from mailfallback.services.sync_service import create_sync_job
+from mailfallback.services.sync_worker import TOKEN_REFRESH_FAILED, submit_sync_job
 from mailfallback.services.user_service import authenticate_user
 
 router = APIRouter(tags=["auth"])
@@ -117,6 +119,20 @@ def _oauth_failure_redirect(db, request, account_id, reason="failed"):
     return RedirectResponse("/", status_code=303)
 
 
+def _resume_after_reauth(db: Session, account: Account) -> None:
+    """Clear the token-refresh error and kick a sync after a successful
+    re-authentication — the UI promises sync resumes on reconnect."""
+    from mailfallback.models import SyncState
+
+    if account.sync_state == SyncState.error and account.last_error == TOKEN_REFRESH_FAILED:
+        account.sync_state = SyncState.idle
+        account.last_error = None
+        db.commit()
+        job = create_sync_job(db, account.id, source="reauth")
+        if job:
+            submit_sync_job(job.id)
+
+
 @router.get("/auth/google/callback")
 async def google_oauth_callback(
     request: Request,
@@ -155,6 +171,7 @@ async def google_oauth_callback(
     account.credentials = encrypt_credentials(token_data, settings.secret_key)
     account.auth_type = AuthType.oauth2
     db.commit()
+    _resume_after_reauth(db, account)
 
     return RedirectResponse(f"/accounts/{account_id}")
 
@@ -209,6 +226,7 @@ async def microsoft_oauth_callback(
     account.credentials = encrypt_credentials(token_data, settings.secret_key)
     account.auth_type = AuthType.oauth2
     db.commit()
+    _resume_after_reauth(db, account)
 
     return RedirectResponse(f"/accounts/{account_id}")
 

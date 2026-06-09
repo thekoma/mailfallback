@@ -72,7 +72,7 @@ def test_restore_renders_calendar_page(client, db_session, default_store):
     assert "page-restore-workspace" in body
     # Alpine-driven workspace component (replaces former data-preset chips)
     assert 'x-data="restoreWorkspace()"' in body
-    assert "alpinejs" in body  # CDN script tag present
+    assert "/static/vendor/alpine.min.js" in body  # vendored Alpine script tag
     # The old chooser copy is gone
     assert "Recover from a snapshot" not in body
 

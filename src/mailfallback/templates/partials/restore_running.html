@@ -11,7 +11,7 @@
     {% set pct = (done * 100 // job.total_messages) if job.total_messages > 0 else 0 %}
     <article>
         <header>
-            <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="row-between">
                 <strong>{{ job.source_account.name }} → {{ job.target_account.name }}</strong>
                 <button type="button" class="outline secondary btn-sm"
                         hx-post="/api/restore/{{ job.id }}/cancel"

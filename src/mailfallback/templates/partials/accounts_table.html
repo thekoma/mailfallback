@@ -192,7 +192,7 @@
                 <div class="actions flex-end">
                     <form method="post" action="/accounts/{{ account.id }}/recoveries/{{ r.id }}/delete"
                           data-confirm="Delete this recovery? The on-disk Maildir will be removed permanently."
-                          onsubmit="return confirm(this.dataset.confirm)" style="display:inline">
+                          onsubmit="return confirm(this.dataset.confirm)" class="d-inline">
                         <button type="submit" class="icon-btn danger" title="Delete recovery"
                                 {% if r.status.value == "restoring" %}disabled{% endif %}>
                             <i data-lucide="trash-2" class="icon-sm"></i>
