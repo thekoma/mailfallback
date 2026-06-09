@@ -17,6 +17,19 @@ def test_restore_page_renders(client, db_session, default_store):
     assert "Restore" in resp.text
 
 
+def test_restore_mailbox_select_lists_accounts_without_backup_policy(
+    client, db_session, default_store
+):
+    """The Mailbox search dropdown must list every owned account, not just the
+    ones with a BackupPolicy — otherwise the workspace search silently posts
+    account_id="" and always returns zero results."""
+    acct = _setup_separator_test(db_session, default_store, client)
+    resp = client.get("/restore")
+    assert resp.status_code == 200
+    # The account id must appear in BOTH the Mailbox and Destination selects.
+    assert resp.text.count(f'value="{acct.id}"') == 2
+
+
 def _setup_separator_test(db_session, default_store, client):
     """Create a user and target account, login, and return the account."""
     user = User(

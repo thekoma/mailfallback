@@ -173,6 +173,68 @@ class TestExecuteBackup:
         assert BackupStatus.running in observed_statuses
 
 
+class TestIndexHooks:
+    @patch("mailfallback.services.backup_worker.index_service")
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_backup_worker_calls_record_snapshot_after_success(
+        self, mock_restic, mock_index, db_session, account_backup
+    ):
+        """After a successful restic backup, record_snapshot is called with the new snapshot id."""
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.return_value = {
+            "snapshot_id": "abc12345",
+            "files_new": 5,
+            "files_changed": 0,
+            "data_added": 1024,
+        }
+        mock_restic.apply_retention.return_value = {"pruned": False, "removed_snapshot_ids": []}
+        mock_restic.list_snapshots.return_value = []
+
+        execute_backup(db_session, account_backup.id)
+
+        mock_index.record_snapshot.assert_called_once_with(
+            db_session, account_backup.account_id, "abc12345"
+        )
+
+    @patch("mailfallback.services.backup_worker.index_service")
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_backup_worker_calls_prune_snapshot_for_each_removed(
+        self, mock_restic, mock_index, db_session, account_backup
+    ):
+        """When apply_retention prunes snapshots, prune_snapshot is called for each id."""
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.return_value = {"snapshot_id": "new00001"}
+        mock_restic.apply_retention.return_value = {
+            "pruned": True,
+            "removed_snapshot_ids": ["old00001", "old00002"],
+        }
+        mock_restic.list_snapshots.return_value = []
+
+        execute_backup(db_session, account_backup.id)
+
+        assert mock_index.prune_snapshot.call_count == 2
+        mock_index.prune_snapshot.assert_any_call(db_session, "old00001")
+        mock_index.prune_snapshot.assert_any_call(db_session, "old00002")
+
+    @patch("mailfallback.services.backup_worker.index_service")
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_backup_worker_index_failure_does_not_break_backup(
+        self, mock_restic, mock_index, db_session, account_backup
+    ):
+        """If index_service raises, the backup still completes successfully."""
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.return_value = {"snapshot_id": "new00002"}
+        mock_restic.apply_retention.return_value = {"pruned": False, "removed_snapshot_ids": []}
+        mock_restic.list_snapshots.return_value = []
+        mock_index.record_snapshot.side_effect = RuntimeError("indexer kaboom")
+
+        # Must NOT raise
+        execute_backup(db_session, account_backup.id)
+
+        db_session.refresh(account_backup)
+        assert account_backup.last_status == BackupStatus.completed
+
+
 class TestGetBackupProgress:
     def test_no_progress(self):
         from mailfallback.services.backup_worker import get_backup_progress

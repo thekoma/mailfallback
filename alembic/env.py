@@ -9,8 +9,11 @@ from mailfallback.db import Base
 from mailfallback.models import (  # noqa: F401 — register models
     Account,
     AuditLog,
+    MailIndexMessage,
+    MailIndexRebuildStatus,
     MailStore,
     RestoreJob,
+    SnapshotMessage,
     StoreMigration,
     SyncJob,
     User,
@@ -30,7 +33,12 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
-    context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        include_schemas=True,
+    )
     with context.begin_transaction():
         context.run_migrations()
 
@@ -46,11 +54,19 @@ def run_migrations_online() -> None:
 
     if hasattr(connectable, "connect"):
         with connectable.connect() as connection:
-            context.configure(connection=connection, target_metadata=target_metadata)
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                include_schemas=True,
+            )
             with context.begin_transaction():
                 context.run_migrations()
     else:
-        context.configure(connection=connectable, target_metadata=target_metadata)
+        context.configure(
+            connection=connectable,
+            target_metadata=target_metadata,
+            include_schemas=True,
+        )
         with context.begin_transaction():
             context.run_migrations()
 

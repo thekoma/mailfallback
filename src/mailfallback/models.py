@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    ARRAY,
     JSON,
     Boolean,
     Column,
@@ -11,11 +12,13 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Table,
     Text,
     text,
 )
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import relationship
 
 from mailfallback.db import Base
@@ -429,3 +432,74 @@ class Recovery(Base):
 
     account = relationship("Account", backref="recoveries")
     repository = relationship("Repository")
+
+
+class MailIndexMessage(Base):
+    """Per-account, per-message metadata index used by the search API.
+
+    One row per (account_id, message_id_hash). Headers only — no body content.
+    Deep search adds a full-folder Dovecot body search and unions the matches
+    into this index query by message_id_hash (see services/search_service.py).
+    """
+
+    __tablename__ = "messages"
+    __table_args__ = {"schema": "mail_index"}  # noqa: RUF012
+
+    account_id = Column(String, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
+    message_id_hash = Column(LargeBinary(20), primary_key=True)
+    message_id = Column(Text, nullable=False)
+    date_sent = Column(DateTime(timezone=True))
+    from_addr = Column(Text)
+    from_name = Column(Text)
+    subject = Column(Text)
+    to_addrs = Column(ARRAY(Text).with_variant(JSON(), "sqlite"))
+    folder_path = Column(Text, nullable=False)
+    maildir_filename = Column(Text, nullable=False)
+    size_bytes = Column(Integer)
+    first_seen_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
+        server_default=text("now()"),
+    )
+    last_seen_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
+        server_default=text("now()"),
+    )
+    deleted_at = Column(DateTime(timezone=True))
+    tsv = Column(TSVECTOR().with_variant(Text(), "sqlite"))
+
+
+class SnapshotMessage(Base):
+    """Join table: which messages exist in which restic snapshots.
+
+    Forward-only at install: bits are set by backup_worker after each restic
+    backup succeeds. CLI command `mfb index backfill-snapshots` populates the
+    history retroactively.
+    """
+
+    __tablename__ = "snapshot_messages"
+    __table_args__ = {"schema": "mail_index"}  # noqa: RUF012
+
+    snapshot_id = Column(Text, primary_key=True)
+    account_id = Column(String, primary_key=True)
+    message_id_hash = Column(LargeBinary(20), primary_key=True)
+
+
+class MailIndexRebuildStatus(Base):
+    """Per-account watermark + state for the index lifecycle.
+
+    states: idle | live_indexing | snap_backfilling | failed
+    """
+
+    __tablename__ = "rebuild_status"
+    __table_args__ = {"schema": "mail_index"}  # noqa: RUF012
+
+    account_id = Column(String, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
+    state = Column(Text, nullable=False, default="idle", server_default="idle")
+    last_indexed_at = Column(DateTime(timezone=True))
+    backfill_progress = Column(Integer)
+    backfill_total = Column(Integer)
+    last_error = Column(Text)

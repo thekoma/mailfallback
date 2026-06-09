@@ -26,6 +26,8 @@ def db_session():
     def set_sqlite_pragma(dbapi_conn, connection_record):
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        # mail_index schema needs an attached DB on SQLite (no native schemas)
+        cursor.execute("ATTACH DATABASE ':memory:' AS mail_index")
         cursor.close()
 
     Base.metadata.create_all(engine)

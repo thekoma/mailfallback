@@ -56,6 +56,18 @@
             show(oauthBlock);
             hide(imapBlock);
             oauthLabel.textContent = "Sign in with " + providerLabel;
+            // Populate hidden IMAP server fields — the account record needs a host
+            // even for OAuth (it's the IMAP endpoint mbsync syncs from).
+            var oauthPresets = {
+                google: { host: "imap.gmail.com", port: 993, tls: "IMAPS" },
+                microsoft: { host: "outlook.office365.com", port: 993, tls: "IMAPS" }
+            };
+            var op = oauthPresets[provider];
+            if (op) {
+                $("imap_host").value = op.host;
+                $("imap_port").value = op.port;
+                $("tls_type").value = op.tls;
+            }
         } else {
             // IMAP path — pre-fill server settings if known
             $("auth_type").value = "app_password";
@@ -86,15 +98,39 @@
 
     window.wizardStartOAuth = function () {
         var provider = $("provider").value;
-        // Stash a partially-collected form payload so the OAuth callback can resume.
-        // For now, we'll just redirect to the OAuth start endpoint — the existing
-        // OAuth flow already creates the account on success and redirects back.
-        // We carry the (optional) nickname via query string so the callback can
-        // read it; if missing, the callback will use a default.
-        var name = $("name").value || "";
-        var url = "/auth/" + provider + "/start";
-        if (name) url += "?name=" + encodeURIComponent(name);
-        window.location.href = url;
+        var email = ($("oauth_email").value || "").trim();
+        if (!email) {
+            alert("Enter the email address of the mailbox you're authorising.");
+            return;
+        }
+        // Derive a friendly nickname from the local part if none was given.
+        var name = ($("oauth_name").value || "").trim();
+        if (!name) {
+            var local = email.split("@")[0];
+            name = local.charAt(0).toUpperCase() + local.slice(1);
+        }
+        var storeEl = $("store_id");
+        var payload = {
+            name: name,
+            email_address: email,
+            imap_host: $("imap_host").value,
+            imap_port: parseInt($("imap_port").value, 10),
+            tls_type: $("tls_type").value,
+            provider: provider,
+            auth_type: "oauth2"
+        };
+        if (storeEl) payload.store_id = storeEl.value;
+        // Reuse the shared create-then-redirect path: it POSTs /api/accounts and,
+        // when given an oauthProvider, redirects to /auth/{provider}/start?account_id=…
+        var btn = $("wizard-oauth-btn");
+        var label = $("wizard-oauth-label");
+        if (btn) btn.disabled = true;
+        if (label) label.textContent = "Connecting…";
+        _createAccountAndRedirect(payload, provider).catch(function (err) {
+            if (btn) btn.disabled = false;
+            if (label) label.textContent = "Sign in";
+            alert("Couldn't start sign-in: " + err.message);
+        });
     };
 
     window.wizardSwitchToImap = function () {
