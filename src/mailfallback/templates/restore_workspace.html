@@ -206,7 +206,7 @@
           <label class="ws-field">
             <span class="ws-field-label">Folder</span>
             <select x-model="selectedFolder">
-              <option value="">Loading folders…</option>
+              <option value="" x-text="folders.length ? 'Choose a folder…' : 'Loading folders…'"></option>
               <template x-for="f in folders" :key="f.full_name || f.name">
                 <option :value="f.full_name || f.name" x-text="f.name"></option>
               </template>
