@@ -1,19 +1,14 @@
 {% extends "base.html" %}
-{% block title %}Settings — MFB{% endblock %}
+{% block title %}System — MFB{% endblock %}
 {% block content %}
-<h2><i data-lucide="settings" class="icon-xl icon-inline"></i>Settings</h2>
+<h2><i data-lucide="sliders" class="icon-xl icon-inline"></i>System</h2>
 
-<h3>Config Export/Import</h3>
-<div class="flex gap-1">
-    <a href="/api/config/export" role="button" class="outline">Export Config (JSON)</a>
-</div>
-
-<h3 class="mt-1">System Info</h3>
+<h3>System info</h3>
 <table>
-    <tr><td><i data-lucide="mail" class="icon-sm icon-inline"></i>Total Accounts</td><td>{{ total_accounts }}</td></tr>
-    <tr><td><i data-lucide="user-circle" class="icon-sm icon-inline"></i>Total Users</td><td>{{ total_users }}</td></tr>
+    <tr><td><i data-lucide="mail" class="icon-sm icon-inline"></i>Accounts</td><td>{{ total_accounts }}</td></tr>
+    <tr><td><i data-lucide="user-circle" class="icon-sm icon-inline"></i>Users</td><td>{{ total_users }}</td></tr>
     <tr><td><i data-lucide="database" class="icon-sm icon-inline"></i>Mail stores</td><td>{{ total_stores }}</td></tr>
-    <tr><td><i data-lucide="key-round" class="icon-sm icon-inline"></i>OIDC Enabled</td><td>{{ 'Yes' if oidc_enabled else 'No' }}</td></tr>
+    <tr><td><i data-lucide="key-round" class="icon-sm icon-inline"></i>OIDC</td><td>{{ 'Enabled' if oidc_enabled else 'Disabled' }}</td></tr>
 </table>
 
 <h3>Modules</h3>
@@ -45,7 +40,7 @@
     </tr>
 </table>
 
-<h3>Service Status</h3>
+<h3>Service status</h3>
 <table>
     <tr>
         <td><i data-lucide="clock" class="icon-sm icon-inline"></i>Scheduler</td>
@@ -64,7 +59,7 @@
     </tr>
 </table>
 
-<h3><i data-lucide="server" class="icon-lg icon-inline"></i>Dovecot Management</h3>
+<h3><i data-lucide="server" class="icon-lg icon-inline"></i>Dovecot management</h3>
 {% if dovecot_status %}
 <p>
     {% if dovecot_status == 'ok' %}
@@ -109,5 +104,10 @@
             <i data-lucide="search" class="icon-md"></i> FTS Reindex
         </button>
     </form>
+</div>
+
+<h3 class="mt-1">Configuration backup</h3>
+<div class="flex gap-1">
+    <a href="/api/config/export" role="button" class="outline">Export config (JSON)</a>
 </div>
 {% endblock %}
