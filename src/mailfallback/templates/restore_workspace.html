@@ -25,8 +25,8 @@
       <label class="ws-field">
         <span class="ws-field-label">Mailbox</span>
         <select x-model="accountId" @change="onAccountChange()">
-          {% for acct in protected | map(attribute=0) %}
-          <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address }})</option>
+          {% for acct in all_accounts %}
+          <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address or "—" }})</option>
           {% endfor %}
         </select>
       </label>
