@@ -217,29 +217,45 @@ def _dovecot_body_search(
             for folder in folders:
                 if time.monotonic() > deadline:
                     return matched, True
-                target = f'"{ns}{_sanitize_imap_string(folder)}"'
-                typ, _ = conn.select(target, readonly=True)
-                if typ != "OK":
-                    continue
-                typ, data = conn.uid("SEARCH", "BODY", f'"{quoted_kw}"')
-                if typ != "OK" or not data or not data[0]:
-                    continue
-                uids = data[0].decode().split()
-                if not uids:
-                    continue
-                for i in range(0, len(uids), 500):
-                    if time.monotonic() > deadline:
-                        return matched, True
-                    batch = uids[i : i + 500]
-                    typ, fdata = conn.uid(
-                        "FETCH", ",".join(batch), "(BODY[HEADER.FIELDS (MESSAGE-ID)])"
-                    )
-                    if typ != "OK" or not fdata:
+                try:
+                    target = f'"{ns}{_sanitize_imap_string(folder)}"'
+                    typ, _ = conn.select(target, readonly=True)
+                    if typ != "OK":
                         continue
-                    for item in fdata:
-                        msgid = _parse_message_id_from_fetch(item)
-                        if msgid:
-                            matched.add(_hash_message_id(msgid))
+                    if quoted_kw.isascii():
+                        typ, data = conn.uid("SEARCH", "BODY", f'"{quoted_kw}"')
+                    else:
+                        # imaplib encodes command args as ASCII; a non-ASCII
+                        # keyword must go as a UTF-8 literal with an explicit
+                        # CHARSET (RFC 3501 §6.4.4).
+                        conn.literal = quoted_kw.encode("utf-8")
+                        typ, data = conn.uid("SEARCH", "CHARSET", "UTF-8", "BODY")
+                    if typ != "OK" or not data or not data[0]:
+                        continue
+                    uids = data[0].decode().split()
+                    if not uids:
+                        continue
+                    for i in range(0, len(uids), 500):
+                        if time.monotonic() > deadline:
+                            return matched, True
+                        batch = uids[i : i + 500]
+                        typ, fdata = conn.uid(
+                            "FETCH", ",".join(batch), "(BODY[HEADER.FIELDS (MESSAGE-ID)])"
+                        )
+                        if typ != "OK" or not fdata:
+                            continue
+                        for item in fdata:
+                            msgid = _parse_message_id_from_fetch(item)
+                            if msgid:
+                                matched.add(_hash_message_id(msgid))
+                except Exception:
+                    logger.warning(
+                        "Deep search: folder search failed for %s in %s",
+                        folder,
+                        account_id,
+                        exc_info=True,
+                    )
+                    continue
         finally:
             with contextlib.suppress(Exception):
                 conn.logout()

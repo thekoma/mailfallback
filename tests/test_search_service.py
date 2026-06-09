@@ -325,6 +325,70 @@ def test_dovecot_body_search_sanitises_crlf_in_keyword(db_session, search_setup,
         assert "\n" not in joined
 
 
+def test_dovecot_body_search_non_ascii_keyword_uses_utf8_literal(
+    db_session, search_setup, monkeypatch
+):
+    """imaplib encodes command args as ASCII, so a keyword like "caffè" must be
+    sent as a UTF-8 literal with CHARSET UTF-8 instead of an inline quoted
+    string — otherwise the whole search 500s with UnicodeEncodeError."""
+    from mailfallback.services.index_service import _hash_message_id
+
+    search_calls = []
+
+    class FakeConn:
+        def __init__(self):
+            self.literal = None
+
+        def select(self, target, readonly=True):
+            return ("OK", [b"1"])
+
+        def uid(self, *args):
+            for a in args:
+                a.encode("ascii")  # raises UnicodeEncodeError like imaplib
+            lit, self.literal = self.literal, None
+            if args[0] == "SEARCH":
+                search_calls.append((args, lit))
+                return ("OK", [b"7"])
+            if args[0] == "FETCH":
+                return ("OK", [(b"1 (UID 7 ...", b"Message-ID: <2@h>\r\n"), b")"])
+            return ("NO", [b""])
+
+        def logout(self):
+            pass
+
+    _install_fake_dovecot(monkeypatch, FakeConn())
+    acct = search_setup["account"]
+    deadline = _time.monotonic() + 10
+    matched, partial = _dovecot_body_search(db_session, [acct.id], "caffè", deadline)
+
+    assert _hash_message_id("<2@h>") in matched
+    assert partial is False
+    assert search_calls == [(("SEARCH", "CHARSET", "UTF-8", "BODY"), "caffè".encode())]
+
+
+def test_dovecot_body_search_swallows_per_folder_errors(db_session, search_setup, monkeypatch):
+    """The docstring contract is that per-folder errors never fail the search,
+    but an exception from SEARCH/FETCH must not propagate as a 500 either."""
+
+    class FakeConn:
+        def select(self, target, readonly=True):
+            return ("OK", [b"1"])
+
+        def uid(self, *args):
+            raise RuntimeError("boom")
+
+        def logout(self):
+            pass
+
+    _install_fake_dovecot(monkeypatch, FakeConn())
+    acct = search_setup["account"]
+    deadline = _time.monotonic() + 10
+    matched, partial = _dovecot_body_search(db_session, [acct.id], "hello", deadline)
+
+    assert matched == set()
+    assert partial is False
+
+
 @patch("mailfallback.services.search_service._dovecot_body_search")
 def test_deep_search_unions_body_only_matches(mock_body, db_session, search_setup):
     """deep=True folds body-only matches (whose subject does NOT match the query)
