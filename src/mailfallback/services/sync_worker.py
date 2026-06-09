@@ -32,6 +32,11 @@ def get_live_log(job_id: str) -> str | None:
     return None
 
 
+# Sentinel error message: set on the account when the OAuth refresh token is
+# rejected, matched by the UI to surface the re-authenticate flow.
+TOKEN_REFRESH_FAILED = "Failed to refresh OAuth2 token"
+
+
 def get_sync_executor() -> ThreadPoolExecutor:
     """Return the module-level sync executor, creating it on first use."""
     global _sync_executor
@@ -175,7 +180,7 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             access_token = _refresh_oauth_token(creds, db, account)
             if not access_token:
                 job.status = JobStatus.failed
-                job.log = "Failed to refresh OAuth2 token"
+                job.log = TOKEN_REFRESH_FAILED
                 job.completed_at = datetime.now(UTC)
                 account.sync_state = SyncState.error
                 account.last_error = job.log

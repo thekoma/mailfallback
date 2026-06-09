@@ -39,6 +39,7 @@ from mailfallback.services.store_service import (
 )
 from mailfallback.services.sync_progress import parse_mbsync_lines
 from mailfallback.services.sync_service import list_jobs_for_account
+from mailfallback.services.sync_worker import TOKEN_REFRESH_FAILED
 from mailfallback.services.user_service import list_users
 
 router = APIRouter(tags=["ui"])
@@ -199,6 +200,10 @@ def _compute_hero_state(account, db):
         return "syncing", snap, last_job
 
     if account.sync_state.value == "error":
+        # A rejected refresh token leaves credentials in place, so
+        # is_authenticated stays True — surface the reconnect flow anyway.
+        if account.auth_type.value == "oauth2" and account.last_error == TOKEN_REFRESH_FAILED:
+            return "sign-in-needed", snap, last_job
         if last_job and last_job.parsed_summary:
             with contextlib.suppress(json.JSONDecodeError, TypeError):
                 import dataclasses
