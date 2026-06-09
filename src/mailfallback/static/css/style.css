@@ -1583,8 +1583,21 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 }
 
 .ws-calendar-wrap .flatpickr-calendar.inline {
-  position: static;
+  /* relative, not static: the absolute prev/next month arrows anchor here —
+     with static they escape to the sticky .ws-sidebar and land on its labels */
+  position: relative;
   width: 100% !important;
+}
+
+/* Stock flatpickr sizes the day grid at a fixed 307.875px, wider than the
+   320px sidebar minus padding — make it fluid so it fits the wrap. */
+.ws-calendar-wrap .flatpickr-months { position: relative; }
+.ws-calendar-wrap .flatpickr-days,
+.ws-calendar-wrap .dayContainer,
+.ws-calendar-wrap .flatpickr-weekdays {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
 }
 
 /* Day/weekday/month colors come from the workspace theme vars — the stock
@@ -1593,6 +1606,9 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   position: relative;
   border-radius: .35rem;
   color: var(--ws-text);
+  max-width: none;
+  height: 34px;
+  line-height: 34px;
 }
 .ws-calendar-wrap .flatpickr-day.prevMonthDay,
 .ws-calendar-wrap .flatpickr-day.nextMonthDay,
@@ -1669,6 +1685,16 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   min-width: 0;
 }
 
+/* Search pane — uniform vertical rhythm between row, deep toggle, filters,
+   status and results (children come and go via Alpine templates). */
+.ws-search {
+  display: flex;
+  flex-direction: column;
+  gap: .65rem;
+}
+.ws-search .ws-deep-toggle { margin: 0; }
+.ws-search .ws-status { margin: 0; }
+
 /* Search row */
 
 .ws-root .ws-search-row {
@@ -1739,7 +1765,7 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 /* Filters disclosure */
 
 .ws-filters {
-  margin-top: .75rem;
+  margin-top: 0;
   padding: .5rem .75rem;
   background: var(--ws-card);
   border: 1px solid var(--ws-border);
@@ -1761,8 +1787,9 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 .ws-filters[open] summary::before { transform: rotate(90deg); }
 .ws-filters-grid {
   display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 1rem;
+  /* cap the Type column so the two groups don't drift apart on wide panels */
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 200px);
+  gap: 1rem 2rem;
   margin-top: .75rem;
   padding-top: .75rem;
   border-top: 1px solid var(--ws-border);
