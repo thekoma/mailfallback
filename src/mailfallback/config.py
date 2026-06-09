@@ -55,6 +55,9 @@ class Settings(BaseSettings):
 
     confs_path: str = "/confs"
 
+    deep_search_timeout_seconds: int = 10
+    use_index_search: bool = True
+
     db_host: str = "db"
     db_port: int = 5432
     db_name: str = "mailfallback"

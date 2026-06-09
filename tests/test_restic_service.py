@@ -192,3 +192,54 @@ class TestListSnapshots:
         )
         with pytest.raises(RuntimeError, match="Restic snapshots failed"):
             restic_service.list_snapshots(s3_destination, "acc-123")
+
+
+@patch("mailfallback.services.restic_service._run_restic")
+def test_list_files_parses_restic_ls_json(mock_run, db_session, default_store):
+    from mailfallback.models import Repository
+    from mailfallback.services import restic_service
+
+    repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
+    db_session.add(repo)
+    db_session.commit()
+
+    # restic ls --json emits one JSON object per line, type="node" for files
+    fake_stdout = "\n".join(
+        [
+            json.dumps({"struct_type": "snapshot", "id": "abc"}),
+            json.dumps(
+                {
+                    "type": "node",
+                    "name": "INBOX",
+                    "path": "/INBOX",
+                    "struct_type": "node",
+                    "node_type": "dir",
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "node",
+                    "name": "1234.host:2,S",
+                    "path": "/INBOX/cur/1234.host:2,S",
+                    "struct_type": "node",
+                    "node_type": "file",
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "node",
+                    "name": "1235.host:2,",
+                    "path": "/INBOX/cur/1235.host:2,",
+                    "struct_type": "node",
+                    "node_type": "file",
+                }
+            ),
+        ]
+    )
+    mock_run.return_value = MagicMock(returncode=0, stdout=fake_stdout, stderr="")
+
+    files = list(restic_service.list_files(repo, "abc12345", "abc"))
+    assert "/INBOX/cur/1234.host:2,S" in files
+    assert "/INBOX/cur/1235.host:2," in files
+    # Directory entries excluded
+    assert "/INBOX" not in files

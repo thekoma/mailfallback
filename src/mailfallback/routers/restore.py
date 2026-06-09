@@ -1,6 +1,7 @@
 # src/mailfallback/routers/restore.py
 import contextlib
 import email
+import logging
 import re
 from datetime import datetime
 
@@ -12,7 +13,7 @@ from mailfallback.config import settings
 from mailfallback.dependencies import get_current_user, get_db
 from mailfallback.models import BackupPolicy, RecoveryStatus, User
 from mailfallback.routers.dovecot import account_namespace_prefix
-from mailfallback.services import account_service, mount_service, restic_service
+from mailfallback.services import account_service, mount_service, restic_service, search_service
 from mailfallback.services.audit_service import log_action
 from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
 from mailfallback.services.imap_check import connect_imap
@@ -23,6 +24,8 @@ from mailfallback.services.restore_service import (
     get_restore_job,
 )
 from mailfallback.services.restore_worker import request_cancel, submit_restore_job
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/restore", tags=["restore"])
 browse_router = APIRouter(prefix="/api", tags=["browse"])
@@ -569,7 +572,7 @@ class WorkspaceSearchRequest(BaseModel):
     search_subject: bool = True
     search_from: bool = False
     search_to: bool = False
-    search_body: bool = False
+    deep: bool = False  # full-folder Dovecot body search
     type_filter: str = "all"  # all|unseen|flagged|unanswered
     ttl_minutes: int | None = None  # override default ephemeral TTL
 
@@ -581,6 +584,118 @@ def workspace_search(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """DEPRECATED — use POST /api/restore/search.
+
+    Translates the legacy single-account request to the new search_service
+    call and returns the legacy {results, mounted_snapshots} shape so the
+    pre-cycle-2 UI keeps working. Setting MAILFALLBACK_USE_INDEX_SEARCH=false
+    falls back to the legacy mount-based path.
+    """
+    if not settings.use_index_search:
+        return _legacy_mount_workspace_search(req, request, user, db)
+
+    new_result = search_service.search_messages(
+        db,
+        user=user,
+        query=req.query,
+        account_ids=[req.account_id],
+        range_start=req.range_start,
+        range_end=req.range_end,
+        include_deleted=req.include_snapshots,
+        deep=req.deep,
+        page=1,
+        page_size=200,
+    )
+
+    # Resolve IMAP UIDs by Message-Id so cycle-1 UI's Restore Selected works.
+    # The pre-cycle-2 UI passes location.uid back to /api/restore — without
+    # this lookup the wrapper would return null UIDs and the restore fails.
+    # Group by (account, folder) so we share the SELECT across messages in
+    # the same folder. Cap is page_size=200 above.
+    msgids_by_account_folder: dict[tuple[str, str], list[str]] = {}
+    for r in new_result["results"]:
+        if not r["alive_in_live"]:
+            continue
+        key = (r["account_id"], r["folder_path"])
+        msgids_by_account_folder.setdefault(key, []).append(r["message_id"])
+
+    uid_by_msgid: dict[str, str | None] = {}
+    if msgids_by_account_folder:
+        accounts_seen = {acct_id for acct_id, _ in msgids_by_account_folder}
+        for acct_id in accounts_seen:
+            account = account_service.get_account(db, acct_id, user)
+            if not account:
+                continue
+            try:
+                conn, temp_user = _connect_dovecot_for_account(db, account)
+            except Exception:
+                logger.warning(
+                    "UID resolution: Dovecot connect failed for %s",
+                    acct_id,
+                    exc_info=True,
+                )
+                continue
+            try:
+                ns = account_namespace_prefix(account)
+                folders_for_account = {
+                    folder for (a, folder), _ in msgids_by_account_folder.items() if a == acct_id
+                }
+                for folder in folders_for_account:
+                    target = f'"{ns}{_sanitize_imap_string(folder)}"'
+                    typ, _ = conn.select(target, readonly=True)
+                    if typ != "OK":
+                        continue
+                    msgids = msgids_by_account_folder[(acct_id, folder)]
+                    for msgid in msgids:
+                        quoted = _sanitize_imap_string(msgid)
+                        typ, data = conn.uid("SEARCH", "HEADER", "Message-Id", f'"{quoted}"')
+                        if typ == "OK" and data and data[0]:
+                            uids = data[0].decode().split()
+                            if uids:
+                                uid_by_msgid[msgid] = uids[0]
+            finally:
+                with contextlib.suppress(Exception):
+                    conn.logout()
+                with contextlib.suppress(Exception):
+                    delete_temp_imap_user(db, temp_user)
+
+    legacy_results = []
+    for r in new_result["results"]:
+        if r["alive_in_live"]:
+            primary_source = "live"
+        elif r["snapshots"]:
+            primary_source = r["snapshots"][0]
+        else:
+            primary_source = "?"
+        legacy_results.append(
+            {
+                "message_id": r["message_id"],
+                "subject": r["subject"],
+                "from": r["from_addr"] or "",
+                "folder": r["folder_path"],
+                "sources": (["live"] if r["alive_in_live"] else []) + r["snapshots"],
+                "locations": [
+                    {
+                        "source": primary_source,
+                        "namespace": "",
+                        "folder": r["folder_path"],
+                        "uid": uid_by_msgid.get(r["message_id"]),
+                    }
+                ],
+            }
+        )
+    return {
+        "results": legacy_results,
+        "mounted_snapshots": [],
+        "partial": new_result["partial"],
+    }
+
+
+def _legacy_mount_workspace_search(req, request, user, db):
+    """The pre-index-search implementation, kept behind the use_index_search=False
+    feature flag for fallback during rollout. Cycle-1 UI continues to work via
+    the dispatcher above.
+    """
     account = account_service.get_account(db, req.account_id, user)
     if not account:
         raise HTTPException(404, "account not found")
@@ -632,7 +747,7 @@ def workspace_search(
         criteria.append("FROM")
     if req.search_to:
         criteria.append("TO")
-    if req.search_body:
+    if req.deep:
         criteria.append("BODY")
     if not criteria:
         criteria = ["SUBJECT"]
@@ -672,6 +787,40 @@ def workspace_search(
         "results": list(results_by_msgid.values()),
         "mounted_snapshots": [s for s, _ in mounted],
     }
+
+
+class RestoreSearchRequest(BaseModel):
+    query: str = ""
+    account_ids: list[str] | None = None
+    range_start: datetime | None = None
+    range_end: datetime | None = None
+    include_deleted: bool = True
+    snapshot_id: str | None = None
+    deep: bool = False
+    page: int = 1
+    page_size: int = 50
+
+
+@router.post("/search")
+def api_restore_search(
+    req: RestoreSearchRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return search_service.search_messages(
+        db,
+        user=user,
+        query=req.query,
+        account_ids=req.account_ids,
+        range_start=req.range_start,
+        range_end=req.range_end,
+        include_deleted=req.include_deleted,
+        snapshot_id=req.snapshot_id,
+        deep=req.deep,
+        page=req.page,
+        page_size=req.page_size,
+    )
 
 
 class WorkspaceSnapshotCountRequest(BaseModel):
