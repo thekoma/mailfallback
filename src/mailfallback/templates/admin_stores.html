@@ -197,7 +197,11 @@
         </tr>
         {% endfor %}
         {% if not stores %}
-        <tr><td colspan="7" class="text-muted">No stores configured yet.</td></tr>
+        <tr><td colspan="7" class="empty-cell">
+            <i data-lucide="hard-drive"></i>
+            <strong>No mail stores yet</strong>
+            <span class="empty-hint">A store is a directory where Maildir data lives. Add one below to place accounts on a specific disk or volume.</span>
+        </td></tr>
         {% endif %}
     </tbody>
 </table>
