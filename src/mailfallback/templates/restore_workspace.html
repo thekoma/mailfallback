@@ -31,7 +31,10 @@
         </select>
       </label>
 
-      <div class="ws-field">
+      {# Search-only parameters — the folder and full presets restore from the
+         local backup and ignore these, so hide them there. x-show (not x-if)
+         keeps the inline flatpickr instance alive across preset switches. #}
+      <div class="ws-field" x-show="preset === 'single-mail'">
         <span class="ws-field-label">Time range</span>
         <div class="ws-calendar-wrap">
           {# flatpickr will replace this input with its inline calendar UI #}
@@ -42,13 +45,13 @@
            x-text="costText"></p>
       </div>
 
-      <fieldset class="ws-field">
+      <fieldset class="ws-field" x-show="preset === 'single-mail'">
         <legend class="ws-field-label">Sources</legend>
         <label class="ws-inline"><input type="checkbox" x-model="includeLive"> Live</label>
         <label class="ws-inline"><input type="checkbox" x-model="includeSnapshots"> Snapshots</label>
       </fieldset>
 
-      <details class="ws-field ws-advanced">
+      <details class="ws-field ws-advanced" x-show="preset === 'single-mail'">
         <summary class="ws-field-label">Advanced</summary>
         <label class="ws-inline">
           TTL ephemeral (min)
@@ -188,7 +191,7 @@
       {# Folder preset #}
       <template x-if="preset === 'folder'">
         <div class="ws-folder-flow">
-          <p class="text-muted">Pick a folder to restore in full from the source mailbox.</p>
+          <p class="text-muted">Pick a folder to copy in full from the source mailbox's local backup.</p>
           <label class="ws-field">
             <span class="ws-field-label">Folder</span>
             <select x-model="selectedFolder">
@@ -217,7 +220,7 @@
             <i data-lucide="alert-triangle" class="icon-md"></i>
             <div>
               <strong>Full mailbox restore</strong>
-              <p>Copies the entire latest snapshot in range to the destination mailbox. This can take a while.</p>
+              <p>Copies the source mailbox's entire local backup to the destination mailbox. This can take a while.</p>
             </div>
           </div>
           <button class="ws-btn-danger"
