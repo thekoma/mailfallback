@@ -388,3 +388,100 @@ class TestAttachmentRestore:
 
         assert resp.status_code == 200
         assert 'id="backup-snapshots"' not in resp.text
+
+
+class TestConfigBackupRoutes:
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_create_with_config_backup_requires_passphrase(
+        self, mock_probe, client, db_session, default_store
+    ):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": True, "error": None}
+        form = dict(S3_FORM, config_backup_enabled="1")
+
+        client.post("/admin/backup/new", data=form, follow_redirects=False)
+
+        assert db_session.query(Repository).count() == 0
+
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_create_with_short_passphrase_rejected(
+        self, mock_probe, client, db_session, default_store
+    ):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": True, "error": None}
+        form = dict(S3_FORM, config_backup_enabled="1", config_backup_passphrase="short")
+
+        client.post("/admin/backup/new", data=form, follow_redirects=False)
+
+        assert db_session.query(Repository).count() == 0
+        mock_probe.assert_not_called()
+
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_create_with_passphrase_enables(self, mock_probe, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": True, "error": None}
+        form = dict(
+            S3_FORM, config_backup_enabled="1", config_backup_passphrase="averylongpassphrase"
+        )
+
+        client.post("/admin/backup/new", data=form, follow_redirects=False)
+
+        repo = db_session.query(Repository).one()
+        assert repo.config_backup_enabled is True
+        assert repo.config_backup_passphrase is not None
+
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_edit_keeps_passphrase_when_blank(self, mock_probe, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": True, "error": None}
+        form = dict(
+            S3_FORM, config_backup_enabled="1", config_backup_passphrase="averylongpassphrase"
+        )
+        client.post("/admin/backup/new", data=form, follow_redirects=False)
+        repo = db_session.query(Repository).one()
+        old_pass = repo.config_backup_passphrase
+
+        client.post(
+            f"/admin/backup/{repo.id}/edit",
+            data={"name": "renamed", "config_backup_enabled": "1"},
+            follow_redirects=False,
+        )
+
+        db_session.expire_all()
+        repo = db_session.query(Repository).one()
+        assert repo.config_backup_enabled is True
+        assert repo.config_backup_passphrase == old_pass
+
+    @patch("mailfallback.services.config_backup_service.restic_service")
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_backup_now_runs(self, mock_probe, mock_restic, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": True, "error": None}
+        form = dict(
+            S3_FORM, config_backup_enabled="1", config_backup_passphrase="averylongpassphrase"
+        )
+        client.post("/admin/backup/new", data=form, follow_redirects=False)
+        repo = db_session.query(Repository).one()
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.return_value = {}
+        mock_restic.apply_retention.return_value = {"pruned": True}
+
+        resp = client.post(f"/admin/backup/{repo.id}/config-backup", follow_redirects=False)
+
+        assert resp.status_code == 303
+        db_session.expire_all()
+        repo = db_session.query(Repository).one()
+        assert repo.last_config_backup_status == "ok"
+
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_backup_now_rejected_when_disabled(self, mock_probe, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": True, "error": None}
+        client.post("/admin/backup/new", data=S3_FORM, follow_redirects=False)
+        repo = db_session.query(Repository).one()
+
+        resp = client.post(f"/admin/backup/{repo.id}/config-backup", follow_redirects=False)
+
+        assert resp.status_code == 303
+        db_session.expire_all()
+        assert db_session.query(Repository).one().last_config_backup_at is None

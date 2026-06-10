@@ -142,6 +142,25 @@ async def admin_create_backup_destination(request: Request, db: Session = Depend
             return RedirectResponse("/admin/backup", status_code=303)
         dest.local_path = encrypt_credentials(local_path, settings.secret_key)
 
+    config_backup_enabled = bool(form.get("config_backup_enabled"))
+    config_passphrase = form.get("config_backup_passphrase", "").strip()
+    if config_backup_enabled:
+        if config_passphrase:
+            if len(config_passphrase) < 12:
+                request.session["flash_error"] = (
+                    "Config snapshot passphrase must be at least 12 characters"
+                )
+                return RedirectResponse("/admin/backup", status_code=303)
+            dest.config_backup_passphrase = encrypt_credentials(
+                config_passphrase, settings.secret_key
+            )
+        elif not dest.config_backup_passphrase:
+            request.session["flash_error"] = (
+                "A passphrase is required to enable configuration snapshots"
+            )
+            return RedirectResponse("/admin/backup", status_code=303)
+    dest.config_backup_enabled = config_backup_enabled
+
     from mailfallback.services.restic_service import test_destination
 
     test_result = test_destination(dest)
@@ -153,6 +172,10 @@ async def admin_create_backup_destination(request: Request, db: Session = Depend
     db.add(dest)
     db.commit()
     db.refresh(dest)
+
+    from mailfallback.services.scheduler import config_backup_scheduler_jobs
+
+    config_backup_scheduler_jobs(db)
 
     log_action(
         db,
@@ -241,6 +264,27 @@ async def admin_edit_backup_destination(
 
     dest.insecure_tls = bool(form.get("insecure_tls"))
 
+    config_backup_enabled = bool(form.get("config_backup_enabled"))
+    config_passphrase = form.get("config_backup_passphrase", "").strip()
+    if config_backup_enabled:
+        if config_passphrase:
+            if len(config_passphrase) < 12:
+                db.rollback()
+                request.session["flash_error"] = (
+                    "Config snapshot passphrase must be at least 12 characters"
+                )
+                return RedirectResponse("/admin/backup", status_code=303)
+            dest.config_backup_passphrase = encrypt_credentials(
+                config_passphrase, settings.secret_key
+            )
+        elif not dest.config_backup_passphrase:
+            db.rollback()
+            request.session["flash_error"] = (
+                "A passphrase is required to enable configuration snapshots"
+            )
+            return RedirectResponse("/admin/backup", status_code=303)
+    dest.config_backup_enabled = config_backup_enabled
+
     from mailfallback.services.restic_service import test_destination
 
     test_result = test_destination(dest)
@@ -251,6 +295,10 @@ async def admin_edit_backup_destination(
         return RedirectResponse("/admin/backup", status_code=303)
 
     db.commit()
+
+    from mailfallback.services.scheduler import config_backup_scheduler_jobs
+
+    config_backup_scheduler_jobs(db)
 
     log_action(
         db,
@@ -298,6 +346,37 @@ async def admin_test_backup_destination(
     else:
         error_msg = result.get("error", "Unknown error")
         request.session["flash_error"] = f"{dest.name}: {error_msg}"
+    return RedirectResponse("/admin/backup", status_code=303)
+
+
+@router.post("/admin/backup/{dest_id}/config-backup")
+def admin_run_config_backup(dest_id: str, request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
+    if not dest or not dest.config_backup_enabled:
+        request.session["flash_error"] = (
+            "Configuration snapshots are not enabled for this repository"
+        )
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    from mailfallback.services.config_backup_service import run_config_backup
+
+    result = run_config_backup(db, dest)
+    if result["ok"]:
+        request.session["flash_success"] = f"Configuration snapshot stored in {dest.name}"
+    else:
+        request.session["flash_error"] = f"Configuration snapshot failed: {result['error']}"
+    log_action(
+        db,
+        user=user,
+        action="backup_destination.config_backup",
+        resource_type="backup_destination",
+        resource_id=dest.id,
+        resource_name=dest.name,
+        ip_address=request.client.host if request.client else None,
+    )
     return RedirectResponse("/admin/backup", status_code=303)
 
 
