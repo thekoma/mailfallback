@@ -108,6 +108,18 @@ class TestEnvelope:
         with pytest.raises(cbs.ConfigDecryptError):
             cbs.decrypt_export(b"not an envelope", "whatever")
 
+    def test_unknown_kdf_raises_clean_error(self):
+        import json
+
+        blob = json.loads(cbs.encrypt_export({"schema_version": 1, "tables": {}}, "pw"))
+        blob["kdf"] = "pbkdf2"
+        with pytest.raises(cbs.ConfigDecryptError, match="Unsupported KDF"):
+            cbs.decrypt_export(json.dumps(blob).encode(), "pw")
+
+    def test_empty_passphrase_rejected(self):
+        with pytest.raises(ValueError):
+            cbs.encrypt_export({"schema_version": 1, "tables": {}}, "")
+
 
 class TestImport:
     def test_import_into_empty_db_preserves_ids_and_rekeys(self, db_session, populated):
@@ -143,9 +155,15 @@ class TestImport:
 
     def test_import_partial_failure_keeps_other_tables(self, db_session, populated):
         """A broken record (FK to a nonexistent store) must not poison the
-        rest of the import: stores/users/repos still land, error is reported."""
+        rest of the import: stores/users/repos still land, error is reported,
+        and a valid row AFTER the broken one in the same table still inserts."""
         data = cbs.build_export(db_session)
         data["tables"]["accounts"][0]["store_id"] = "no-such-store"
+        good = dict(data["tables"]["accounts"][0])
+        good["id"] = "second-account-id"
+        good["maildir_path"] = "/data/mailboxes/second-account-id"
+        good["store_id"] = populated["store"].id
+        data["tables"]["accounts"].append(good)
         for model in (RepositoryAttachment, BackupPolicy, Account, Repository, User, MailStore):
             for row in db_session.query(model).all():
                 db_session.delete(row)
@@ -154,13 +172,55 @@ class TestImport:
         report = cbs.import_export(db_session, data)
 
         assert any(e.startswith("accounts:") for e in report["errors"])
-        assert report["imported"]["accounts"] == 0
+        # no SQLAlchemy parameter dump (row values / secrets) in errors
+        assert all("parameters" not in e for e in report["errors"])
+        assert all("bcrypt$x" not in e for e in report["errors"])
+        assert report["imported"]["accounts"] == 1  # the good row after the bad one
         assert report["imported"]["mail_stores"] == 1
         assert report["imported"]["users"] == 1
         assert report["imported"]["backup_destinations"] == 1
         assert db_session.query(User).count() == 1
         assert db_session.query(Repository).count() == 1
-        assert db_session.query(Account).count() == 0
+        assert db_session.query(Account).one().id == "second-account-id"
+
+    def test_import_into_seeded_fresh_install_remaps(self, db_session, populated):
+        """The real DR scenario: a fresh install has already seeded a default
+        MailStore (same path, new UUID) and an admin user (same username, new
+        UUID) before import runs. Those rows are skipped via natural keys and
+        every FK pointing at the old UUIDs is remapped to the seeded rows."""
+        data = cbs.build_export(db_session)
+        old_account_id = populated["account"].id
+        for model in (RepositoryAttachment, BackupPolicy, Account, Repository, User, MailStore):
+            for row in db_session.query(model).all():
+                db_session.delete(row)
+        db_session.commit()
+
+        seeded_store = MailStore(name="default", path="/data/mailboxes")
+        db_session.add(seeded_store)
+        db_session.flush()
+        seeded_user = User(
+            username="alice",
+            password_hash="seeded-hash",  # pragma: allowlist secret
+            role=UserRole.admin,
+            store_id=seeded_store.id,
+        )
+        db_session.add(seeded_user)
+        db_session.commit()
+        assert seeded_store.id != populated["store"].id
+        assert seeded_user.id != populated["user"].id
+
+        report = cbs.import_export(db_session, data)
+
+        assert report["errors"] == []
+        assert report["skipped"]["mail_stores"] == 1
+        assert report["skipped"]["users"] == 1
+        acc = db_session.query(Account).one()
+        assert acc.id == old_account_id  # original UUID preserved
+        assert acc.store_id == seeded_store.id  # FK remapped to seeded store
+        assert [u.id for u in acc.owners] == [seeded_user.id]  # association remapped
+        assert db_session.query(Repository).count() == 1
+        assert db_session.query(BackupPolicy).count() == 1
+        assert db_session.query(RepositoryAttachment).count() == 1
 
     def test_import_round_trips_preferences_json(self, db_session, populated):
         populated["user"].preferences = {"theme": "dark", "n": 3}

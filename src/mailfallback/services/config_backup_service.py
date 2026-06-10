@@ -60,6 +60,16 @@ _SECRET_COLUMNS: dict[str, list[str]] = {
 }
 
 
+# Unique columns used to detect "same thing, different UUID" rows on import
+# (e.g. the default store and admin user seeded by a fresh install). Matching
+# rows are skipped and their old PK is remapped onto the existing row's PK.
+_NATURAL_KEYS: dict[str, str] = {
+    "users": "username",
+    "mail_stores": "path",
+    "accounts": "maildir_path",
+}
+
+
 class ConfigDecryptError(Exception):
     """Wrong passphrase or corrupt envelope."""
 
@@ -104,6 +114,8 @@ def _derive_key(passphrase: str, salt: bytes) -> bytes:
 
 
 def encrypt_export(data: dict, passphrase: str) -> bytes:
+    if not passphrase:
+        raise ValueError("Passphrase must not be empty")
     salt = os.urandom(16)
     token = Fernet(_derive_key(passphrase, salt)).encrypt(
         json.dumps(data, separators=(",", ":")).encode()
@@ -124,6 +136,8 @@ def decrypt_export(blob: bytes, passphrase: str) -> dict:
         token = envelope["ciphertext"].encode()
     except (ValueError, KeyError, TypeError, AttributeError) as e:
         raise ConfigDecryptError(f"Not a valid MFB config backup: {e}") from e
+    if envelope.get("kdf") != "scrypt":
+        raise ConfigDecryptError(f"Unsupported KDF: {envelope.get('kdf')!r}")
     try:
         plaintext = Fernet(_derive_key(passphrase, salt)).decrypt(token)
     except InvalidToken as e:
@@ -141,10 +155,30 @@ def _coerce_types(table: Table, record: dict) -> dict:
     return out
 
 
+def _safe_error(e: Exception) -> str:
+    """Exception description WITHOUT row values: SQLAlchemy's str(e) appends a
+    '[parameters: (...)]' dump containing full row contents (password hashes,
+    ciphertexts). Only the type name plus, for DBAPI errors, the first line of
+    e.orig (constraint info, no parameters) is safe to surface."""
+    detail = type(e).__name__
+    orig = getattr(e, "orig", None)
+    if orig is not None:
+        detail += f" ({str(orig).splitlines()[0][:120]})"
+    return detail
+
+
 def import_export(db: Session, data: dict) -> dict:
     """Insert exported rows, preserving IDs, re-encrypting secrets locally.
 
-    Collisions (existing PK, or username for users) are skipped and counted.
+    Collision handling:
+    - Same primary key already present -> row skipped (identity, no remap).
+    - Same natural key (_NATURAL_KEYS: username / store path / maildir_path)
+      under a DIFFERENT id -> row skipped and old_id remapped onto the
+      existing row's id. This makes restore work on a seeded fresh install,
+      where lifespan already created a default MailStore and admin user with
+      new UUIDs: every FK column (derived from table metadata, including the
+      association tables) is rewritten through the remap before insert.
+
     Each record is inserted inside its own SAVEPOINT (begin_nested), so a
     single broken row (e.g. dangling FK) is rolled back alone and reported
     without discarding rows already inserted in the same run.
@@ -156,21 +190,35 @@ def import_export(db: Session, data: dict) -> dict:
     imported: dict[str, int] = dict.fromkeys(_EXPORT_TABLES, 0)
     skipped: dict[str, int] = dict.fromkeys(_EXPORT_TABLES, 0)
     errors: list[str] = []
+    remap: dict[str, str] = {}  # old exported id -> id of the existing local row
 
     for name in _EXPORT_TABLES:
         table = _table(name)
         pk_cols = [c.name for c in table.primary_key.columns]
+        fk_cols = [c.name for c in table.columns if c.foreign_keys]
+        natural_key = _NATURAL_KEYS.get(name)
         for record in data["tables"].get(name, []):
             try:
+                record = dict(record)
+                for col in fk_cols:
+                    if record.get(col) in remap:
+                        record[col] = remap[record[col]]
                 pk_filter = [table.c[c] == record[c] for c in pk_cols]
-                exists = db.execute(table.select().where(*pk_filter)).first()
-                if not exists and name == "users":
-                    exists = db.execute(
-                        table.select().where(table.c.username == record["username"])
-                    ).first()
-                if exists:
+                if db.execute(table.select().where(*pk_filter)).first():
                     skipped[name] += 1
                     continue
+                if natural_key and record.get(natural_key) is not None:
+                    existing = (
+                        db.execute(
+                            table.select().where(table.c[natural_key] == record[natural_key])
+                        )
+                        .mappings()
+                        .first()
+                    )
+                    if existing:
+                        remap[record[pk_cols[0]]] = existing[pk_cols[0]]
+                        skipped[name] += 1
+                        continue
                 values = _coerce_types(table, record)
                 for col in _SECRET_COLUMNS.get(name, []):
                     if values.get(col):
@@ -179,7 +227,7 @@ def import_export(db: Session, data: dict) -> dict:
                     db.execute(table.insert().values(**values))
                 imported[name] += 1
             except Exception as e:
-                logger.warning("Config import: failed to restore %s row: %s", name, e)
-                errors.append(f"{name}: {str(e)[:200]}")
+                logger.warning("Config import: %s row failed: %s", name, type(e).__name__)
+                errors.append(f"{name}: {_safe_error(e)}")
     db.commit()
     return {"imported": imported, "skipped": skipped, "errors": errors}
