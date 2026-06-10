@@ -33,6 +33,7 @@
             </td>
             <td class="text-right">
                 {% if e.kind == "orphan" %}
+                {% if accounts %}
                 <form method="post" action="/admin/backup/{{ dest.id }}/attach" class="inline-form">
                     <input type="hidden" name="prefix" value="{{ e.prefix }}">
                     <select name="account_id" required>
@@ -45,6 +46,9 @@
                         <i data-lucide="link" class="icon-md"></i> Attach
                     </button>
                 </form>
+                {% else %}
+                <span class="text-muted text-small">No mailboxes available to attach</span>
+                {% endif %}
                 {% elif e.kind == "attached" %}
                 <form method="post" action="/admin/backup/attachments/{{ e.attachment.id }}/delete"
                       class="inline-form"

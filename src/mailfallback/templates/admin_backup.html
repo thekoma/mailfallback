@@ -80,7 +80,7 @@
                             hx-get="/admin/backup/{{ dest.id }}/contents"
                             hx-target="#repo-contents-{{ dest.id }}"
                             hx-swap="innerHTML"
-                            onclick="document.getElementById('contents-{{ dest.id }}').classList.remove('hidden')">
+                            data-show-target="#contents-{{ dest.id }}">
                         <i data-lucide="folder-search" class="icon-md"></i>
                     </button>
                     {% if dest.config_backup_enabled %}
@@ -155,7 +155,7 @@
                         <label>
                             <input type="checkbox" name="config_backup_enabled" value="1"
                                    {% if dest.config_backup_enabled %}checked{% endif %}
-                                   onchange="this.closest('form').querySelector('.config-passphrase-block').hidden = !this.checked">
+                                   data-toggle-target=".config-passphrase-block">
                             <strong>Store configuration snapshots in this repository</strong>
                             <small class="text-muted">— nightly encrypted export of users, mailboxes, and settings for disaster recovery.</small>
                         </label>
@@ -299,7 +299,7 @@
             <div class="mt-1">
                 <label>
                     <input type="checkbox" name="config_backup_enabled" value="1"
-                           onchange="this.closest('form').querySelector('.config-passphrase-block').hidden = !this.checked">
+                           data-toggle-target=".config-passphrase-block">
                     <strong>Store configuration snapshots in this repository</strong>
                     <small class="text-muted">— nightly encrypted export of users, mailboxes, and settings for disaster recovery.</small>
                 </label>
