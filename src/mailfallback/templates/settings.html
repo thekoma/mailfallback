@@ -121,8 +121,7 @@
         <div class="grid-2 mt-1">
             <div>
                 <label for="dr_backend">Backend</label>
-                <select id="dr_backend" name="backend_type"
-                        onchange="document.getElementById('dr-s3').hidden = this.value !== 's3'; document.getElementById('dr-local').hidden = this.value !== 'local'">
+                <select id="dr_backend" name="backend_type">
                     <option value="s3">S3-compatible</option>
                     <option value="local">Local path</option>
                 </select>
