@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
-from mailfallback.models import BackupPolicy, Repository
+from mailfallback.models import BackendType, BackupPolicy, Repository
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import encrypt_credentials
 from mailfallback.services.account_service import get_account
@@ -102,7 +102,7 @@ async def admin_create_backup_destination(request: Request, db: Session = Depend
 
     dest = Repository(
         name=name,
-        backend_type=backend_type,
+        backend_type=BackendType(backend_type),
         restic_password=encrypt_credentials(restic_password, settings.secret_key),
         insecure_tls=insecure_tls,
     )
@@ -126,19 +126,17 @@ async def admin_create_backup_destination(request: Request, db: Session = Depend
             return RedirectResponse("/admin/backup", status_code=303)
         dest.local_path = encrypt_credentials(local_path, settings.secret_key)
 
-    db.add(dest)
-    db.commit()
-    db.refresh(dest)
-
     from mailfallback.services.restic_service import test_destination
 
     test_result = test_destination(dest)
     if not test_result["ok"]:
-        db.delete(dest)
-        db.commit()
         error_msg = test_result.get("error", "Unknown error")
         request.session["flash_error"] = f"Connection test failed: {error_msg}"
         return RedirectResponse("/admin/backup", status_code=303)
+
+    db.add(dest)
+    db.commit()
+    db.refresh(dest)
 
     log_action(
         db,
@@ -220,6 +218,15 @@ async def admin_edit_backup_destination(
         dest.restic_password = encrypt_credentials(restic_password, settings.secret_key)
 
     dest.insecure_tls = bool(form.get("insecure_tls"))
+
+    from mailfallback.services.restic_service import test_destination
+
+    test_result = test_destination(dest)
+    if not test_result["ok"]:
+        db.rollback()
+        error_msg = test_result.get("error", "Unknown error")
+        request.session["flash_error"] = f"Connection test failed — changes not saved: {error_msg}"
+        return RedirectResponse("/admin/backup", status_code=303)
 
     db.commit()
 
