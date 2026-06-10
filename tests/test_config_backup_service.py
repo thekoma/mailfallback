@@ -14,6 +14,7 @@ from mailfallback.models import (
     RepositoryAttachment,
     User,
     UserRole,
+    user_allowed_repositories,
 )
 from mailfallback.security import decrypt_credentials, encrypt_credentials
 from mailfallback.services import config_backup_service as cbs
@@ -342,3 +343,24 @@ class TestFetchLatestConfig:
         mock_restic.list_snapshots.return_value = []
         with pytest.raises(ValueError):
             cbs.fetch_latest_config(populated["repo"], str(tmp_path))
+
+
+class TestExportAllowedRepositories:
+    def test_grants_round_trip(self, db_session, populated):
+        user = populated["user"]
+        repo = populated["repo"]
+        user.allowed_repositories.append(repo)
+        db_session.commit()
+
+        data = cbs.build_export(db_session)
+        assert data["tables"]["user_allowed_repositories"] == [
+            {"user_id": user.id, "repository_id": repo.id}
+        ]
+
+        db_session.execute(user_allowed_repositories.delete())
+        db_session.commit()
+        report = cbs.import_export(db_session, data)
+        assert report["errors"] == []
+        db_session.expire_all()
+        refreshed = db_session.query(User).filter(User.id == user.id).one()
+        assert [r.id for r in refreshed.allowed_repositories] == [repo.id]

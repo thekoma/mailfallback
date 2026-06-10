@@ -39,6 +39,7 @@ _EXPORT_TABLES: list[str] = [
     "users",
     "user_allowed_stores",
     "backup_destinations",
+    "user_allowed_repositories",
     "accounts",
     "account_owners",
     "groups",
