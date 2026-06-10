@@ -8,7 +8,7 @@ from email.utils import formatdate
 
 from sqlalchemy.orm import Session
 
-from mailfallback.models import User, UserRole
+from mailfallback.models import Repository, User, UserRole
 from mailfallback.security import hash_password, verify_password
 
 logger = logging.getLogger(__name__)
@@ -92,6 +92,17 @@ def delete_user(db: Session, user_id: str) -> bool:
     db.delete(user)
     db.commit()
     return True
+
+
+def set_allowed_repositories(db: Session, user_id: str, repository_ids: list[str]) -> str | None:
+    """Replace the user's allowed-repositories set. Returns an error string or None."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return "User not found"
+    repositories = db.query(Repository).filter(Repository.id.in_(repository_ids)).all()
+    user.allowed_repositories = repositories
+    db.commit()
+    return None
 
 
 def ensure_admin_exists(db: Session, default_store_id: str) -> None:
