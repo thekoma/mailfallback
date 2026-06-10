@@ -130,3 +130,62 @@ def test_namespace_prefix_uses_recovery_id_for_uniqueness(db_session, default_st
     assert p2.startswith("Recovery - koma (2026-05-11) [")
     assert p1 != p2  # the [<rec.id[:8]>] differentiator
     assert p1.endswith("/")
+
+
+@patch("mailfallback.services.recovery_service.restic_service")
+def test_create_recovery_from_attached_source(mock_restic, db_session, tmp_store):
+    """An attachment source restores from its own prefix, ignoring BackupPolicy.
+
+    The account deliberately has NO BackupPolicy: an orphan prefix attached to
+    a policy-less account must still be restorable.
+    """
+    repo = Repository(
+        name="ghost-repo",
+        backend_type="local",
+        local_path="/tmp/r",
+        restic_password="secret",
+    )
+    db_session.add(repo)
+    acct = Account(
+        name="a",
+        store=tmp_store,
+        maildir_path=f"{tmp_store.path}/a",
+        imap_host="imap.example.com",
+    )
+    db_session.add(acct)
+    db_session.commit()
+
+    mock_restic.restore_snapshot.return_value = {"snapshot_id": "ab12"}
+    mock_restic.list_snapshots.return_value = [{"short_id": "ab12", "time": "2026-06-01T00:00:00Z"}]
+
+    rec = recovery_service.create_recovery(
+        db_session,
+        acct.id,
+        "ab12",
+        source_repository=repo,
+        source_prefix="old-ghost-prefix",
+    )
+
+    assert rec.status.value == "ready"
+    assert rec.repository_id == repo.id
+    args = mock_restic.restore_snapshot.call_args.args
+    assert args[1] == "old-ghost-prefix"
+    # Snapshot metadata lookup must also use the attachment prefix.
+    list_args = mock_restic.list_snapshots.call_args.args
+    assert list_args[1] == "old-ghost-prefix"
+
+
+@patch("mailfallback.services.recovery_service.restic_service")
+def test_create_recovery_without_source_still_requires_policy(mock_restic, db_session, tmp_store):
+    """No source kwargs + no BackupPolicy keeps raising ValueError."""
+    acct = Account(
+        name="a",
+        store=tmp_store,
+        maildir_path=f"{tmp_store.path}/a",
+        imap_host="imap.example.com",
+    )
+    db_session.add(acct)
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="no backup policy"):
+        recovery_service.create_recovery(db_session, acct.id, "ab12")

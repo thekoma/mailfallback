@@ -535,17 +535,31 @@ def account_backup_snapshots(account_id: str, request: Request, db: Session = De
     if not account:
         return HTMLResponse("")
 
+    from mailfallback.services import restic_service
+
     backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
-    if not backup:
+    attachments = (
+        db.query(RepositoryAttachment).filter(RepositoryAttachment.account_id == account_id).all()
+    )
+    if not backup and not attachments:
         return HTMLResponse('<p class="text-muted">No backup configured.</p>')
 
-    try:
-        from mailfallback.services.restic_service import list_snapshots
+    snapshots = []
+    if backup:
+        try:
+            snapshots = restic_service.list_snapshots(backup.destination, account.id)
+        except Exception as e:
+            logger.warning("Failed to list snapshots for account %s: %s", account_id, e)
+            snapshots = []
 
-        snapshots = list_snapshots(backup.destination, account.id)
-    except Exception as e:
-        logger.warning("Failed to list snapshots for account %s: %s", account_id, e)
-        snapshots = []
+    attached_sources = []
+    for att in attachments:
+        try:
+            snaps = restic_service.list_snapshots(att.repository, att.prefix)
+        except Exception as e:
+            snaps = []
+            logger.warning("Cannot list attached prefix %s: %s", att.prefix, e)
+        attached_sources.append({"attachment": att, "snapshots": snaps})
 
     return templates.TemplateResponse(
         request=request,
@@ -553,6 +567,7 @@ def account_backup_snapshots(account_id: str, request: Request, db: Session = De
         context={
             "account": account,
             "snapshots": snapshots,
+            "attached_sources": attached_sources,
         },
     )
 
@@ -595,6 +610,81 @@ async def account_backup_restore(
         resource_name=account.email_address or account.name,
         ip_address=request.client.host if request.client else None,
         details={"snapshot_id": snapshot_id, "recovery_id": recovery.id},
+    )
+
+    if recovery.status.value == "ready":
+        request.session["flash_success"] = (
+            f"Snapshot {snapshot_id} recovered. Browse it in webmail under the "
+            f"'Recovered {snapshot_id}' folder, or delete it from the account page when done."
+        )
+    else:
+        request.session["flash_error"] = f"Recovery failed: {recovery.error or 'unknown error'}"
+
+    return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+
+
+@router.post("/accounts/{account_id}/backup/attachments/{attachment_id}/restore/{snapshot_id}")
+async def account_attachment_restore(
+    account_id: str,
+    attachment_id: str,
+    snapshot_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Restore a snapshot from an attached repository prefix into a Recovery.
+
+    Same flow as account_backup_restore, but the repository and restic prefix
+    come from the RepositoryAttachment instead of the account's BackupPolicy —
+    works even when the account has no backup policy of its own.
+    """
+    from mailfallback.services.recovery_service import create_recovery
+
+    user = _get_session_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    account = get_account(db, account_id, user)
+    if not account:
+        return RedirectResponse("/", status_code=303)
+
+    att = (
+        db.query(RepositoryAttachment)
+        .filter(
+            RepositoryAttachment.id == attachment_id,
+            RepositoryAttachment.account_id == account_id,
+        )
+        .first()
+    )
+    if not att:
+        request.session["flash_error"] = "Attachment not found"
+        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+
+    try:
+        recovery = create_recovery(
+            db,
+            account.id,
+            snapshot_id,
+            source_repository=att.repository,
+            source_prefix=att.prefix,
+        )
+    except ValueError as e:
+        request.session["flash_error"] = str(e)
+        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+
+    log_action(
+        db,
+        user=user,
+        action="account.backup_restore",
+        resource_type="account",
+        resource_id=account_id,
+        resource_name=account.email_address or account.name,
+        ip_address=request.client.host if request.client else None,
+        details={
+            "snapshot_id": snapshot_id,
+            "recovery_id": recovery.id,
+            "attachment_id": att.id,
+            "prefix": att.prefix,
+        },
     )
 
     if recovery.status.value == "ready":

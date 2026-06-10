@@ -34,3 +34,42 @@
 {% else %}
 <p class="text-muted text-small">No snapshots found.</p>
 {% endif %}
+{% for src in attached_sources %}
+<h4 class="text-small">Attached: <code>{{ src.attachment.prefix }}</code></h4>
+{% if src.snapshots %}
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Snapshot</th>
+            <th>Date</th>
+            <th>Hostname</th>
+            <th class="text-right">Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for snap in src.snapshots %}
+        <tr>
+            <td><code>{{ snap.short_id }}</code></td>
+            <td>{{ snap.time[:19] | replace('T', ' ') }}</td>
+            <td>{{ snap.hostname }}</td>
+            <td>
+                <div class="actions flex-end">
+                    <form method="post" action="/accounts/{{ account.id }}/backup/attachments/{{ src.attachment.id }}/restore/{{ snap.short_id }}"
+                        data-confirm="Restore snapshot {{ snap.short_id }} from attached prefix {{ src.attachment.prefix }}?"
+                        onsubmit="return confirm(this.dataset.confirm)">
+                        <button type="submit" class="icon-btn" title="Restore this snapshot">
+                            <i data-lucide="archive-restore" class="icon-md"></i>
+                        </button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="text-muted text-small">No snapshots readable.</p>
+{% endif %}
+{% endfor %}

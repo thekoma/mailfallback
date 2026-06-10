@@ -20,7 +20,14 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from mailfallback.models import Account, BackupPolicy, Recovery, RecoveryKind, RecoveryStatus
+from mailfallback.models import (
+    Account,
+    BackupPolicy,
+    Recovery,
+    RecoveryKind,
+    RecoveryStatus,
+    Repository,
+)
 from mailfallback.services import restic_service
 
 logger = logging.getLogger(__name__)
@@ -92,8 +99,15 @@ def create_recovery(
     *,
     kind: RecoveryKind = RecoveryKind.persistent,
     ttl_minutes: int | None = None,
+    source_repository: Repository | None = None,
+    source_prefix: str | None = None,
 ) -> Recovery:
     """Restore a snapshot to disk and create a Recovery row.
+
+    By default the repository and restic prefix come from the account's
+    BackupPolicy. Passing both source_repository and source_prefix overrides
+    that (RepositoryAttachment flow: orphan prefixes attached to an account
+    as read-only restore sources — works even without a BackupPolicy).
 
     Returns the Recovery (status=ready on success, status=failed on error).
     Never raises — the caller can inspect status/error on the returned row.
@@ -102,16 +116,22 @@ def create_recovery(
     if not account:
         raise ValueError(f"Account {account_id} not found")
 
-    backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
-    if not backup:
-        raise ValueError("Account has no backup policy; nothing to restore from")
+    if source_repository is not None and source_prefix:
+        destination = source_repository
+        repo_prefix = source_prefix
+    else:
+        backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
+        if not backup:
+            raise ValueError("Account has no backup policy; nothing to restore from")
+        destination = backup.destination
+        repo_prefix = account.id
 
     restore_root = _build_restore_root(account)
     os.makedirs(restore_root, exist_ok=True)
 
     recovery = Recovery(
         account_id=account.id,
-        repository_id=backup.destination_id,
+        repository_id=destination.id,
         snapshot_id=snapshot_id,
         restore_path=restore_root,  # placeholder; updated after extract
         status=RecoveryStatus.restoring,
@@ -123,14 +143,14 @@ def create_recovery(
     db.refresh(recovery)
 
     try:
-        restic_service.restore_snapshot(backup.destination, account.id, snapshot_id, restore_root)
+        restic_service.restore_snapshot(destination, repo_prefix, snapshot_id, restore_root)
         maildir_root = _resolve_maildir_inside_restore(restore_root, account)
         recovery.restore_path = maildir_root
         recovery.status = RecoveryStatus.ready
         recovery.size_bytes = _compute_size(maildir_root)
         # Best-effort: extract the snapshot's time from restic's snapshots list.
         try:
-            snapshots = restic_service.list_snapshots(backup.destination, account.id)
+            snapshots = restic_service.list_snapshots(destination, repo_prefix)
             for s in snapshots:
                 if s.get("short_id") == snapshot_id or s.get("id", "").startswith(snapshot_id):
                     ts = s.get("time", "").replace("Z", "+00:00")
