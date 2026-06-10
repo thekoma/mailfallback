@@ -258,6 +258,17 @@
                 </p>
             </div>
 
+            <div class="mt-1">
+                <button type="button" class="icon-btn"
+                        hx-post="/admin/backup/test-connection"
+                        hx-include="#repo-wizard-form"
+                        hx-target="#wizard-test-result"
+                        hx-swap="innerHTML">
+                    <i data-lucide="plug-zap" class="icon-md"></i> Test connection
+                </button>
+                <span id="wizard-test-result" class="text-small"></span>
+            </div>
+
             <div class="wizard-nav mt-1">
                 <button type="button" class="icon-btn" onclick="repoWizardGoTo(1)">← Back</button>
                 <button type="button" class="icon-btn primary" onclick="repoWizardStep2Next()">Continue →</button>

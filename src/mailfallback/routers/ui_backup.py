@@ -17,6 +17,7 @@ from mailfallback.models import (
     RepositoryAttachment,
 )
 from mailfallback.routers.ui import _get_session_user, templates
+from mailfallback.routers.ui_admin import _transient_repository_from_form
 from mailfallback.security import encrypt_credentials
 from mailfallback.services.account_service import get_account
 from mailfallback.services.audit_service import log_action
@@ -317,10 +318,40 @@ async def admin_edit_backup_destination(
     return RedirectResponse("/admin/backup", status_code=303)
 
 
+def _test_result_context(dest) -> dict:
+    """Probe + best-effort prefix count for the enriched test partial."""
+    from mailfallback.services import repo_inventory
+    from mailfallback.services.restic_service import test_destination
+
+    result = test_destination(dest)
+    count = None
+    if result["ok"]:
+        try:
+            count = len(repo_inventory.list_prefixes(dest))
+        except Exception:
+            count = None
+    return {"ok": result["ok"], "error": result.get("error"), "count": count}
+
+
+@router.post("/admin/backup/test-connection", response_class=HTMLResponse)
+async def admin_test_connection_transient(request: Request, db: Session = Depends(get_db)):
+    """Test connection details from the wizard form before the Repository exists."""
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+
+    form = await request.form()
+    from starlette.concurrency import run_in_threadpool
+
+    dest = _transient_repository_from_form(form)
+    context = await run_in_threadpool(_test_result_context, dest)
+    return templates.TemplateResponse(
+        request=request, name="partials/repo_test_result.html", context=context
+    )
+
+
 @router.post("/admin/backup/{dest_id}/test")
-async def admin_test_backup_destination(
-    dest_id: str, request: Request, db: Session = Depends(get_db)
-):
+def admin_test_backup_destination(dest_id: str, request: Request, db: Session = Depends(get_db)):
     user = _get_session_user(request, db)
     if not user or user.role.value != "admin":
         return RedirectResponse("/", status_code=303)
@@ -336,19 +367,17 @@ async def admin_test_backup_destination(
         request.session["flash_error"] = "Destination not found"
         return RedirectResponse("/admin/backup", status_code=303)
 
-    from mailfallback.services.restic_service import test_destination
-
-    result = test_destination(dest)
+    context = _test_result_context(dest)
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(
             request=request,
             name="partials/repo_test_result.html",
-            context={"ok": result["ok"], "error": result.get("error")},
+            context=context,
         )
-    if result["ok"]:
+    if context["ok"]:
         request.session["flash_success"] = f"{dest.name}: connection OK"
     else:
-        error_msg = result.get("error", "Unknown error")
+        error_msg = context["error"] or "Unknown error"
         request.session["flash_error"] = f"{dest.name}: {error_msg}"
     return RedirectResponse("/admin/backup", status_code=303)
 

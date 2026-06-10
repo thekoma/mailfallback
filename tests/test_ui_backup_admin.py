@@ -523,3 +523,88 @@ class TestReservedPrefix:
 
         assert resp.status_code == 303
         assert db_session.query(RepositoryAttachment).count() == 0
+
+
+TEST_CONN_FORM = {
+    "backend_type": "s3",
+    "s3_endpoint": "https://s3.example.com",
+    "s3_bucket": "bucket",
+    "s3_access_key": "ak",
+    "s3_secret_key": "sk",  # pragma: allowlist secret
+}
+
+
+class TestTransientConnectionTest:
+    @patch("mailfallback.services.repo_inventory.list_prefixes")
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_ok_with_count(self, mock_probe, mock_list, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": True, "error": None}
+        mock_list.return_value = ["aaa", "bbb", "ccc", "ddd"]
+
+        resp = client.post("/admin/backup/test-connection", data=TEST_CONN_FORM)
+
+        assert resp.status_code == 200
+        assert "Connection OK" in resp.text
+        assert "4 existing" in resp.text
+
+    @patch("mailfallback.services.repo_inventory.list_prefixes")
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_ok_empty(self, mock_probe, mock_list, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": True, "error": None}
+        mock_list.return_value = []
+
+        resp = client.post("/admin/backup/test-connection", data=TEST_CONN_FORM)
+
+        assert resp.status_code == 200
+        assert "empty repository" in resp.text
+
+    @patch("mailfallback.services.repo_inventory.list_prefixes")
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_ok_when_listing_fails(self, mock_probe, mock_list, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": True, "error": None}
+        mock_list.side_effect = RuntimeError("listing boom")
+
+        resp = client.post("/admin/backup/test-connection", data=TEST_CONN_FORM)
+
+        assert resp.status_code == 200
+        assert "Connection OK" in resp.text
+
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_probe_failure_renders_error(self, mock_probe, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": False, "error": "AccessDenied"}
+
+        resp = client.post("/admin/backup/test-connection", data=TEST_CONN_FORM)
+
+        assert resp.status_code == 200
+        assert "AccessDenied" in resp.text
+
+    def test_requires_admin(self, client, db_session, default_store):
+        create_user(db_session, "u3", "pass", UserRole.user, store_id=default_store.id)
+        client.post("/api/auth/login", json={"username": "u3", "password": "pass"})
+
+        resp = client.post(
+            "/admin/backup/test-connection", data=TEST_CONN_FORM, follow_redirects=False
+        )
+
+        assert resp.status_code == 303
+
+
+class TestEnrichedRowTest:
+    @patch("mailfallback.services.repo_inventory.list_prefixes")
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_row_test_includes_count(
+        self, mock_probe, mock_list, client, db_session, default_store
+    ):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": True, "error": None}
+        repo = _mk_repo(client, db_session, default_store)
+        mock_list.return_value = ["one", "two"]
+
+        resp = client.post(f"/admin/backup/{repo.id}/test", headers={"HX-Request": "true"})
+
+        assert resp.status_code == 200
+        assert "2 existing" in resp.text
