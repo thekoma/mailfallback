@@ -20,7 +20,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import TSVECTOR
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import backref, relationship
 
 from mailfallback.db import Base
 
@@ -346,7 +346,8 @@ class Repository(Base):
     config_backup_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     config_backup_passphrase = Column(String, nullable=True)  # Fernet-encrypted at rest
     last_config_backup_at = Column(DateTime(timezone=True), nullable=True)
-    last_config_backup_status = Column(String, nullable=True)  # "ok" | "failed: <msg>"
+    last_config_backup_status = Column(String, nullable=True)  # "ok" | "failed"
+    last_config_backup_error = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -379,8 +380,14 @@ class RepositoryAttachment(Base):
         UniqueConstraint("repository_id", "prefix", name="uq_repo_attachment_prefix"),
     )
 
-    repository = relationship("Repository", backref="attachments")
-    account = relationship("Account", backref="repo_attachments")
+    repository = relationship(
+        "Repository",
+        backref=backref("attachments", passive_deletes=True, cascade="all, delete-orphan"),
+    )
+    account = relationship(
+        "Account",
+        backref=backref("repo_attachments", passive_deletes=True, cascade="all, delete-orphan"),
+    )
 
 
 class BackupPolicy(Base):
