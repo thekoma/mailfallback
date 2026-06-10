@@ -13,6 +13,7 @@ from mailfallback.models import (
     BackupPolicy,
     JobStatus,
     Repository,
+    RepositoryAttachment,
     StoreMigration,
     SyncJob,
 )
@@ -445,6 +446,10 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
         .first()
     )
     backup_destinations = db.query(Repository).all()
+    has_attachments = (
+        db.query(RepositoryAttachment).filter(RepositoryAttachment.account_id == account_id).count()
+        > 0
+    )
 
     from mailfallback.services.recovery_service import list_recoveries_for_account
 
@@ -471,6 +476,7 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
             "migration": migration,
             "backup_config": backup_config,
             "backup_destinations": backup_destinations,
+            "has_attachments": has_attachments,
             "recoveries": recoveries,
             "timeline_global": timeline_global,
             "folder_timeline_data": folder_timeline_data,

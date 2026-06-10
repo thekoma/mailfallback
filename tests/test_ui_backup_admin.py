@@ -366,3 +366,25 @@ class TestAttachmentRestore:
         assert "Attached:" in resp.text
         assert "ghost-uuid" in resp.text
         assert f"/accounts/{acc.id}/backup/attachments/{att.id}/restore/ab12" in resp.text
+
+    def test_account_page_shows_snapshots_panel_without_policy(
+        self, client, db_session, default_store
+    ):
+        """Attachments alone must surface the #backup-snapshots container."""
+        acc, _, _ = self._attach(client, db_session, default_store)
+
+        resp = client.get(f"/accounts/{acc.id}")
+
+        assert resp.status_code == 200
+        assert 'id="backup-snapshots"' in resp.text
+
+    def test_account_page_hides_snapshots_panel_when_nothing_configured(
+        self, client, db_session, default_store
+    ):
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+
+        resp = client.get(f"/accounts/{acc.id}")
+
+        assert resp.status_code == 200
+        assert 'id="backup-snapshots"' not in resp.text
