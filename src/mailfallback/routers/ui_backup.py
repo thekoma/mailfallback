@@ -415,6 +415,39 @@ def admin_run_config_backup(dest_id: str, request: Request, db: Session = Depend
     return RedirectResponse("/admin/backup", status_code=303)
 
 
+@router.post("/admin/backup/{dest_id}/backfill-tags")
+def admin_backfill_tags(dest_id: str, request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
+    if not dest:
+        request.session["flash_error"] = "Repository not found"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    from mailfallback.services import repo_inventory
+
+    report = repo_inventory.backfill_tags(db, dest)
+    total = sum(report.values())
+    log_action(
+        db,
+        user=user,
+        action="backup_destination.backfill_tags",
+        resource_type="backup_destination",
+        resource_id=dest.id,
+        resource_name=dest.name,
+        details={"tagged": report},
+        ip_address=request.client.host if request.client else None,
+    )
+    if total:
+        request.session["flash_success"] = (
+            f"Tagged {total} snapshot(s) across {len(report)} prefix(es)"
+        )
+    else:
+        request.session["flash_success"] = "All snapshots already tagged"
+    return RedirectResponse("/admin/backup", status_code=303)
+
+
 @router.get("/admin/backup/{dest_id}/contents", response_class=HTMLResponse)
 def admin_repo_contents(dest_id: str, request: Request, db: Session = Depends(get_db)):
     user = _get_session_user(request, db)

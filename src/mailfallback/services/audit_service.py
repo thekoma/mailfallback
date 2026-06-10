@@ -49,6 +49,7 @@ ACTION_LABELS = {
     ),
     "backup_destination.detach": "Repository prefix detached",
     "backup_destination.config_backup": "Configuration snapshot stored",
+    "backup_destination.backfill_tags": "Snapshot tags backfilled",
     "account.backup_configure": "Backup policy configured",
     "account.backup_now": "Manual back-up triggered",
     "account.backup_restore": "Recovered from snapshot",

@@ -780,3 +780,18 @@ class TestAttachPassword:
         kwargs = mock_inv_restic.list_snapshots.call_args.kwargs
         assert kwargs["restic_password_enc"] is not None
         assert kwargs["restic_password_enc"] == att.restic_password
+
+
+class TestBackfillRoute:
+    @patch("mailfallback.services.repo_inventory.backfill_tags")
+    def test_backfill_route_runs_and_flashes(
+        self, mock_backfill, client, db_session, default_store
+    ):
+        _login_admin(client, db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        mock_backfill.return_value = {"some-prefix": 3}
+
+        resp = client.post(f"/admin/backup/{repo.id}/backfill-tags", follow_redirects=False)
+
+        assert resp.status_code == 303
+        mock_backfill.assert_called_once()
