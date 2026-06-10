@@ -73,7 +73,14 @@ def execute_backup(db: Session, account_backup_id: str) -> None:
 
         # Phase 2: run backup
         _backup_progress[account_backup_id] = {"phase": "backup"}
-        summary = restic_service.run_backup(backup.destination, account.id, account.maildir_path)
+        # Restic splits a tag value on commas into multiple tags — strip them.
+        tags = [
+            f"mfb:email={(account.email_address or '').replace(',', ' ')}",
+            f"mfb:name={(account.name or '').replace(',', ' ')}",
+        ]
+        summary = restic_service.run_backup(
+            backup.destination, account.id, account.maildir_path, tags=tags
+        )
         _backup_progress[account_backup_id] = {"phase": "backup", "summary": summary}
 
         # Index hook: record_snapshot for the freshly-created snapshot.
