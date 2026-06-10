@@ -1,5 +1,7 @@
 """Config backup: export, scrypt+Fernet envelope, import round-trip."""
 
+from unittest.mock import patch
+
 import pytest
 
 from mailfallback.config import settings
@@ -236,3 +238,93 @@ class TestImport:
         assert report["errors"] == []
         user = db_session.query(User).one()
         assert user.preferences == {"theme": "dark", "n": 3}
+
+
+class TestRunConfigBackup:
+    @patch("mailfallback.services.config_backup_service.restic_service")
+    def test_success_updates_status(self, mock_restic, db_session, populated):
+        repo = populated["repo"]
+        repo.config_backup_enabled = True
+        repo.config_backup_passphrase = _enc("a-strong-passphrase")
+        db_session.commit()
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.return_value = {"message_type": "summary"}
+        mock_restic.apply_retention.return_value = {"pruned": True}
+
+        result = cbs.run_config_backup(db_session, repo)
+
+        assert result["ok"] is True
+        db_session.refresh(repo)
+        assert repo.last_config_backup_status == "ok"
+        assert repo.last_config_backup_error is None
+        assert repo.last_config_backup_at is not None
+        run_args = mock_restic.run_backup.call_args.args
+        assert run_args[1] == "__mfb_config__"
+        assert run_args[2].endswith("mfb-config.json.enc")
+        ret_args = mock_restic.apply_retention.call_args
+        assert ret_args.args[1] == "__mfb_config__"
+        assert ret_args.kwargs.get("keep_daily") == 30
+
+    @patch("mailfallback.services.config_backup_service.restic_service")
+    def test_failure_records_error(self, mock_restic, db_session, populated):
+        repo = populated["repo"]
+        repo.config_backup_enabled = True
+        repo.config_backup_passphrase = _enc("a-strong-passphrase")
+        db_session.commit()
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.side_effect = RuntimeError("S3 down")
+
+        result = cbs.run_config_backup(db_session, repo)
+
+        assert result["ok"] is False
+        db_session.refresh(repo)
+        assert repo.last_config_backup_status == "failed"
+        assert "S3 down" in repo.last_config_backup_error
+        assert repo.last_config_backup_at is not None
+
+    @patch("mailfallback.services.config_backup_service.restic_service")
+    def test_missing_passphrase_fails_cleanly(self, mock_restic, db_session, populated):
+        repo = populated["repo"]
+        repo.config_backup_enabled = True
+        repo.config_backup_passphrase = None
+        db_session.commit()
+
+        result = cbs.run_config_backup(db_session, repo)
+
+        assert result["ok"] is False
+        db_session.refresh(repo)
+        assert repo.last_config_backup_status == "failed"
+        mock_restic.run_backup.assert_not_called()
+
+
+class TestFetchLatestConfig:
+    @patch("mailfallback.services.config_backup_service.restic_service")
+    def test_fetches_and_finds_file(self, mock_restic, populated, tmp_path):
+        import os
+
+        repo = populated["repo"]
+        mock_restic.list_snapshots.return_value = [
+            {"short_id": "ab12", "time": "2026-06-09T03:00:00Z"}
+        ]
+
+        def fake_restore(dest, prefix, snap_id, target):
+            nested = os.path.join(target, "tmp", "cfg")
+            os.makedirs(nested, exist_ok=True)
+            with open(os.path.join(nested, "mfb-config.json.enc"), "wb") as f:
+                f.write(b"blob")
+            return {}
+
+        mock_restic.restore_snapshot.side_effect = fake_restore
+
+        path = cbs.fetch_latest_config(repo, str(tmp_path))
+
+        assert path.endswith("mfb-config.json.enc")
+        with open(path, "rb") as f:
+            assert f.read() == b"blob"
+        mock_restic.list_snapshots.assert_called_once_with(repo, "__mfb_config__")
+
+    @patch("mailfallback.services.config_backup_service.restic_service")
+    def test_no_snapshots_raises(self, mock_restic, populated, tmp_path):
+        mock_restic.list_snapshots.return_value = []
+        with pytest.raises(ValueError):
+            cbs.fetch_latest_config(populated["repo"], str(tmp_path))
