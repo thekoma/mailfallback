@@ -3,7 +3,14 @@
 from unittest.mock import patch
 
 from mailfallback.config import settings
-from mailfallback.models import Account, BackendType, Repository, RepositoryAttachment, UserRole
+from mailfallback.models import (
+    Account,
+    BackendType,
+    BackupPolicy,
+    Repository,
+    RepositoryAttachment,
+    UserRole,
+)
 from mailfallback.security import decrypt_credentials
 from mailfallback.services.user_service import create_user
 
@@ -313,6 +320,23 @@ class TestPrefixValidation:
 
         assert resp.status_code == 303
         assert db_session.query(RepositoryAttachment).count() == 0
+
+
+class TestPolicyDisplay:
+    def test_backup_section_shows_destination_prefix(self, client, db_session, default_store):
+        """The policy display includes repository name and the account's prefix."""
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        db_session.add(
+            BackupPolicy(account_id=acc.id, destination_id=repo.id, schedule="0 2 * * *")
+        )
+        db_session.commit()
+
+        resp = client.get(f"/accounts/{acc.id}")
+
+        assert resp.status_code == 200
+        assert f"<code>{acc.id}</code>" in resp.text
 
 
 class TestAttachmentRestore:
