@@ -540,7 +540,7 @@ class TestTransientConnectionTest:
     def test_ok_with_count(self, mock_probe, mock_list, client, db_session, default_store):
         _login_admin(client, db_session, default_store)
         mock_probe.return_value = {"ok": True, "error": None}
-        mock_list.return_value = ["aaa", "bbb", "ccc", "ddd"]
+        mock_list.return_value = ["aaa", "bbb", "ccc", "ddd", "__mfb_config__"]
 
         resp = client.post("/admin/backup/test-connection", data=TEST_CONN_FORM)
 
@@ -556,6 +556,21 @@ class TestTransientConnectionTest:
         mock_list.return_value = []
 
         resp = client.post("/admin/backup/test-connection", data=TEST_CONN_FORM)
+
+        assert resp.status_code == 200
+        assert "empty repository" in resp.text
+
+    @patch("mailfallback.services.repo_inventory.list_prefixes")
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_local_backend(self, mock_probe, mock_list, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": True, "error": None}
+        mock_list.return_value = []
+
+        resp = client.post(
+            "/admin/backup/test-connection",
+            data={"backend_type": "local", "local_path": "/some/path"},
+        )
 
         assert resp.status_code == 200
         assert "empty repository" in resp.text

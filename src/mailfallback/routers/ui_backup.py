@@ -327,7 +327,9 @@ def _test_result_context(dest) -> dict:
     count = None
     if result["ok"]:
         try:
-            count = len(repo_inventory.list_prefixes(dest))
+            count = len(
+                [p for p in repo_inventory.list_prefixes(dest) if p != repo_inventory.CONFIG_PREFIX]
+            )
         except Exception:
             count = None
     return {"ok": result["ok"], "error": result.get("error"), "count": count}
