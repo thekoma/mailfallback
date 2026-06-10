@@ -68,6 +68,38 @@ def classify(db: Session, destination: Repository, prefixes: list[str]) -> list[
     return entries
 
 
+def backfill_tags(db: Session, destination: Repository) -> dict[str, int]:
+    """Add mfb:email/mfb:name tags to untagged snapshots of account prefixes.
+
+    Returns {prefix: snapshots_tagged}. Orphan/config prefixes are skipped
+    (their owner is unknown); unreadable prefixes are skipped with a warning.
+    """
+    prefixes = list_prefixes(destination)
+    entries = classify(db, destination, prefixes)
+    report: dict[str, int] = {}
+    for entry in entries:
+        if entry["kind"] != "account":
+            continue
+        account = entry["account"]
+        tags = [
+            f"mfb:email={(account.email_address or '').replace(',', ' ')}",
+            f"mfb:name={(account.name or '').replace(',', ' ')}",
+        ]
+        try:
+            snapshots = restic_service.list_snapshots(destination, entry["prefix"])
+        except Exception:
+            logger.warning("Backfill: cannot read prefix %s", entry["prefix"])
+            continue
+        untagged = [
+            s["short_id"]
+            for s in snapshots
+            if not any(t.startswith("mfb:email=") for t in (s.get("tags") or []))
+        ]
+        if untagged and restic_service.add_tags(destination, entry["prefix"], untagged, tags):
+            report[entry["prefix"]] = len(untagged)
+    return report
+
+
 def prefix_detail(
     destination: Repository, prefix: str, restic_password_enc: str | None = None
 ) -> dict:

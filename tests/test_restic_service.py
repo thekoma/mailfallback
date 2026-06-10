@@ -334,12 +334,17 @@ class TestAddTags:
 
         assert ok is True
         args = mock_run.call_args.args[0]
-        assert args[0] == "tag"
-        assert "--add" in args and "mfb:email=a@b.c" in args
-        assert "ab12" in args and "cd34" in args
+        assert args == ["tag", "--add", "mfb:email=a@b.c", "--add", "mfb:name=Work", "ab12", "cd34"]
 
     @patch("mailfallback.services.restic_service._run_restic")
     def test_add_tags_failure_returns_false(self, mock_run, s3_destination):
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="boom")
 
         assert restic_service.add_tags(s3_destination, "acc-id", ["ab12"], ["t"]) is False
+
+    @patch("mailfallback.services.restic_service._run_restic")
+    def test_add_tags_empty_ids_is_noop(self, mock_run, s3_destination):
+        from mailfallback.services.restic_service import add_tags
+
+        assert add_tags(s3_destination, "acc-id", [], ["t"]) is True
+        mock_run.assert_not_called()

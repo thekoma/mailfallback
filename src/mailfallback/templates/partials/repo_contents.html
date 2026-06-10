@@ -6,6 +6,11 @@
 {% elif not entries %}
 <p class="text-muted text-small">This repository is empty.</p>
 {% else %}
+<form method="post" action="/admin/backup/{{ dest.id }}/backfill-tags" class="inline-form mb-05">
+    <button type="submit" class="icon-btn" title="Add mailbox metadata tags to existing snapshots">
+        <i data-lucide="tags" class="icon-md"></i> Tag existing snapshots
+    </button>
+</form>
 <table class="text-small">
     <thead>
         <tr><th>Prefix</th><th>Kind</th><th>Snapshots</th><th class="text-right">Actions</th></tr>

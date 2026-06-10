@@ -180,3 +180,41 @@ class TestPrefixDetailOverride:
 
         kwargs = mock_restic.list_snapshots.call_args.kwargs
         assert kwargs["restic_password_enc"] == "enc-override"
+
+
+class TestBackfillTags:
+    @patch("mailfallback.services.repo_inventory.restic_service")
+    @patch("mailfallback.services.repo_inventory.list_prefixes")
+    def test_backfills_only_untagged_account_prefixes(
+        self, mock_list, mock_restic, db_session, s3_repo, account
+    ):
+        account.email_address = "w@x.y"
+        db_session.commit()
+        mock_list.return_value = [account.id, "__mfb_config__", "stranger"]
+        mock_restic.list_snapshots.return_value = [
+            {"short_id": "ab12", "tags": []},
+            {"short_id": "cd34", "tags": ["mfb:email=w@x.y", "mfb:name=acc"]},
+        ]
+        mock_restic.add_tags.return_value = True
+
+        report = repo_inventory.backfill_tags(db_session, s3_repo)
+
+        mock_restic.add_tags.assert_called_once()
+        args = mock_restic.add_tags.call_args.args
+        assert args[1] == account.id
+        assert args[2] == ["ab12"]
+        assert any(t.startswith("mfb:email=") for t in args[3])
+        assert report == {account.id: 1}
+
+    @patch("mailfallback.services.repo_inventory.restic_service")
+    @patch("mailfallback.services.repo_inventory.list_prefixes")
+    def test_backfill_skips_unreadable_prefixes(
+        self, mock_list, mock_restic, db_session, s3_repo, account
+    ):
+        mock_list.return_value = [account.id]
+        mock_restic.list_snapshots.side_effect = RuntimeError("locked")
+
+        report = repo_inventory.backfill_tags(db_session, s3_repo)
+
+        assert report == {}
+        mock_restic.add_tags.assert_not_called()
