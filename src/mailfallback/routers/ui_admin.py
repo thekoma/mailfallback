@@ -16,6 +16,7 @@ from mailfallback.models import (
     Group,
     MailStore,
     MigrationStatus,
+    Repository,
     StoreMigration,
     User,
     UserRole,
@@ -55,6 +56,7 @@ from mailfallback.services.user_service import (
     create_user,
     delete_user,
     list_users,
+    set_allowed_repositories,
     update_user,
 )
 
@@ -341,6 +343,7 @@ def admin_users_page(request: Request, db: Session = Depends(get_db)):
             "user": user,
             "users": users,
             "stores": stores,
+            "repositories": db.query(Repository).all(),
             "admin_verified": _admin_pw_verified(request),
         },
     )
@@ -393,6 +396,29 @@ async def admin_set_allowed_stores(
         db,
         user=user,
         action="user.set_allowed_stores",
+        resource_type="user",
+        resource_id=target_user_id,
+        ip_address=request.client.host if request.client else None,
+    )
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@router.post("/admin/users/{target_user_id}/allowed-repositories")
+async def admin_set_allowed_repositories(
+    target_user_id: str, request: Request, db: Session = Depends(get_db)
+):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    form = await request.form()
+    repository_ids = form.getlist("repository_ids")
+    error = set_allowed_repositories(db, target_user_id, repository_ids)
+    if error:
+        logger.warning("set_allowed_repositories refused for %s: %s", target_user_id, error)
+    log_action(
+        db,
+        user=user,
+        action="user.set_allowed_repositories",
         resource_type="user",
         resource_id=target_user_id,
         ip_address=request.client.host if request.client else None,
