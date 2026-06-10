@@ -90,3 +90,41 @@ class TestEdit:
         repo = db_session.query(Repository).one()
         assert repo.name == "renamed"
         assert decrypt_credentials(repo.s3_bucket, settings.secret_key) == "other-bucket"
+
+
+class TestInlineTest:
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_htmx_test_returns_partial_ok(self, mock_probe, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": True, "error": None}
+        client.post("/admin/backup/new", data=S3_FORM, follow_redirects=False)
+        repo = db_session.query(Repository).one()
+
+        resp = client.post(f"/admin/backup/{repo.id}/test", headers={"HX-Request": "true"})
+
+        assert resp.status_code == 200
+        assert "Connection OK" in resp.text
+
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_htmx_test_returns_partial_error(self, mock_probe, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": True, "error": None}
+        client.post("/admin/backup/new", data=S3_FORM, follow_redirects=False)
+        repo = db_session.query(Repository).one()
+        mock_probe.return_value = {"ok": False, "error": "AccessDenied"}
+
+        resp = client.post(f"/admin/backup/{repo.id}/test", headers={"HX-Request": "true"})
+
+        assert resp.status_code == 200
+        assert "AccessDenied" in resp.text
+
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_non_htmx_test_still_redirects(self, mock_probe, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        mock_probe.return_value = {"ok": True, "error": None}
+        client.post("/admin/backup/new", data=S3_FORM, follow_redirects=False)
+        repo = db_session.query(Repository).one()
+
+        resp = client.post(f"/admin/backup/{repo.id}/test", follow_redirects=False)
+
+        assert resp.status_code == 303
