@@ -89,16 +89,14 @@ def _is_insecure(destination: Repository) -> bool:
 
 
 def test_destination(destination: Repository) -> dict:
-    """Test connectivity to a backup destination. Returns {ok: bool, error: str}."""
-    test_id = "__mfb_connection_test__"
-    env = build_env(destination, test_id)
-    try:
-        result = _run_restic(["init", "--json"], env, _is_insecure(destination))
-    except Exception as e:
-        return {"ok": False, "error": str(e)[:200]}
-    if result.returncode == 0 or "already initialized" in result.stderr.lower():
-        return {"ok": True}
-    return {"ok": False, "error": result.stderr.strip()[:200]}
+    """Test connectivity to a backup destination. Returns {ok: bool, error: str}.
+
+    Delegates to s3_probe: validates reachability and write permission with a
+    probe object (S3) or a probe file (local), creating no restic repositories.
+    """
+    from mailfallback.services import s3_probe
+
+    return s3_probe.probe(destination)
 
 
 def init_repo(destination: Repository, account_id: str) -> bool:
