@@ -214,6 +214,10 @@ async def admin_delete_backup_destination(
         db.delete(dest)
         db.commit()
 
+        from mailfallback.services.scheduler import config_backup_scheduler_jobs
+
+        config_backup_scheduler_jobs(db)
+
     log_action(
         db,
         user=user,
@@ -778,7 +782,7 @@ def account_attachment_restore(
 
 
 @router.post("/accounts/{account_id}/recoveries/{recovery_id}/delete")
-async def account_recovery_delete(
+def account_recovery_delete(
     account_id: str,
     recovery_id: str,
     request: Request,

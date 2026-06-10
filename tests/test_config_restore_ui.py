@@ -121,3 +121,9 @@ class TestConfirm:
         )
 
         assert resp.status_code == 303
+
+        # Follow the redirect: the flash error must render on the target page.
+        followed = client.get(resp.headers["location"])
+        assert followed.status_code == 200
+        assert "Restore failed" in followed.text
+        assert "bucket unreachable" in followed.text

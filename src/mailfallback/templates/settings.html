@@ -131,15 +131,15 @@
         <div id="dr-s3" class="grid-2 mt-05">
             <div><label>S3 Endpoint</label><input type="text" name="s3_endpoint" placeholder="https://s3.example.com"></div>
             <div><label>S3 Bucket</label><input type="text" name="s3_bucket"></div>
-            <div><label>Access Key</label><input type="password" name="s3_access_key"></div>
-            <div><label>Secret Key</label><input type="password" name="s3_secret_key"></div>
+            <div><label>Access Key</label><input type="password" name="s3_access_key" autocomplete="off"></div>
+            <div><label>Secret Key</label><input type="password" name="s3_secret_key" autocomplete="off"></div>
         </div>
         <div id="dr-local" class="mt-05" hidden>
             <label>Local path</label><input type="text" name="local_path" placeholder="/backups/restic">
         </div>
         <div class="grid-2 mt-05">
-            <div><label>Restic password</label><input type="password" name="restic_password" required></div>
-            <div><label>Passphrase</label><input type="password" name="passphrase" required></div>
+            <div><label>Restic password</label><input type="password" name="restic_password" required autocomplete="off"></div>
+            <div><label>Passphrase</label><input type="password" name="passphrase" required autocomplete="off"></div>
         </div>
         <button type="submit" class="icon-btn mt-05">
             <i data-lucide="search" class="icon-md"></i> Fetch and preview
