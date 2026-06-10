@@ -1,4 +1,5 @@
 # tests/test_models.py
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -479,3 +480,90 @@ def test_rebuild_status_defaults(db_session, default_store):
 
     assert rs.state == "idle"
     assert rs.last_indexed_at is None
+
+
+def test_repository_attachment_unique_per_prefix(db_session):
+    from sqlalchemy.exc import IntegrityError
+
+    from mailfallback.models import Repository, RepositoryAttachment
+
+    store = MailStore(name="s", path="/data/m")
+    db_session.add(store)
+    db_session.flush()
+    acc = Account(name="a", imap_host="h", maildir_path="/data/m/x", store_id=store.id)
+    repo = Repository(name="r", backend_type="s3", restic_password="enc")
+    db_session.add_all([acc, repo])
+    db_session.flush()
+
+    db_session.add(
+        RepositoryAttachment(repository_id=repo.id, account_id=acc.id, prefix="old-uuid")
+    )
+    db_session.commit()
+
+    db_session.add(
+        RepositoryAttachment(repository_id=repo.id, account_id=acc.id, prefix="old-uuid")
+    )
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+
+def test_repository_config_backup_defaults(db_session):
+    from mailfallback.models import Repository
+
+    repo = Repository(name="r2", backend_type="local", local_path="enc", restic_password="enc")
+    db_session.add(repo)
+    db_session.commit()
+    db_session.refresh(repo)
+    assert repo.config_backup_enabled is False
+    assert repo.config_backup_passphrase is None
+    assert repo.last_config_backup_at is None
+    assert repo.last_config_backup_status is None
+    assert repo.last_config_backup_error is None
+
+
+def test_delete_account_cascades_repo_attachments(db_session, default_store):
+    from mailfallback.models import Repository, RepositoryAttachment
+
+    acc = Account(
+        name="a",
+        imap_host="h",
+        maildir_path="/data/mailboxes/a",
+        store=default_store,
+    )
+    repo = Repository(name="r", backend_type="s3", restic_password="enc")
+    db_session.add_all([acc, repo])
+    db_session.flush()
+    db_session.add(
+        RepositoryAttachment(repository_id=repo.id, account_id=acc.id, prefix="old-uuid")
+    )
+    db_session.commit()
+
+    db_session.delete(acc)
+    db_session.commit()
+
+    assert db_session.query(RepositoryAttachment).count() == 0
+
+
+def test_delete_repository_cascades_repo_attachments(db_session, default_store):
+    from mailfallback.models import Repository, RepositoryAttachment
+
+    acc = Account(
+        name="a",
+        imap_host="h",
+        maildir_path="/data/mailboxes/a",
+        store=default_store,
+    )
+    repo = Repository(name="r", backend_type="s3", restic_password="enc")
+    db_session.add_all([acc, repo])
+    db_session.flush()
+    db_session.add(
+        RepositoryAttachment(repository_id=repo.id, account_id=acc.id, prefix="old-uuid")
+    )
+    db_session.commit()
+
+    db_session.delete(repo)
+    db_session.commit()
+
+    assert db_session.query(RepositoryAttachment).count() == 0
+    assert db_session.query(Account).count() == 1

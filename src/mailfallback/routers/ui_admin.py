@@ -7,6 +7,7 @@ import time
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
@@ -20,7 +21,8 @@ from mailfallback.models import (
     UserRole,
 )
 from mailfallback.routers.ui import _get_session_user, templates
-from mailfallback.security import verify_password
+from mailfallback.security import encrypt_credentials, verify_password
+from mailfallback.services import config_backup_service
 from mailfallback.services.audit_service import log_action
 from mailfallback.services.group_service import (
     can_manage_group,
@@ -495,6 +497,107 @@ async def admin_force_resync(request: Request, db: Session = Depends(get_db)):
     )
     status = "started" if task else "already_running"
     return RedirectResponse(f"/settings?resync_status={status}", status_code=303)
+
+
+# --- Disaster-recovery configuration restore ---
+
+
+def _transient_repository_from_form(form):
+    """Build a NOT-persisted Repository from DR-restore form fields, with
+    values encrypted so the normal decrypt paths work."""
+    from mailfallback.models import BackendType, Repository
+
+    backend = form.get("backend_type", "s3")
+    repo = Repository(
+        name="__dr_restore__",
+        backend_type=BackendType(backend),
+        restic_password=encrypt_credentials(
+            form.get("restic_password", "").strip(), settings.secret_key
+        ),
+        insecure_tls=bool(form.get("insecure_tls")),
+    )
+    if backend == "s3":
+        for field in ("s3_endpoint", "s3_bucket", "s3_access_key", "s3_secret_key"):
+            setattr(
+                repo, field, encrypt_credentials(form.get(field, "").strip(), settings.secret_key)
+            )
+    else:
+        repo.local_path = encrypt_credentials(
+            form.get("local_path", "").strip(), settings.secret_key
+        )
+    return repo
+
+
+def _fetch_and_decrypt(form) -> dict:
+    import tempfile
+
+    repo = _transient_repository_from_form(form)
+    passphrase = form.get("passphrase", "")
+    with tempfile.TemporaryDirectory(prefix="mfb-config-restore-") as tmpdir:
+        path = config_backup_service.fetch_latest_config(repo, tmpdir)
+        with open(path, "rb") as f:
+            blob = f.read()
+    return config_backup_service.decrypt_export(blob, passphrase)
+
+
+@router.post("/admin/system/config-restore/preview", response_class=HTMLResponse)
+async def config_restore_preview(request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    form = await request.form()
+    error = None
+    counts: dict[str, int] = {}
+    try:
+        data = await run_in_threadpool(_fetch_and_decrypt, form)
+        counts = {name: len(rows) for name, rows in data["tables"].items()}
+    except config_backup_service.ConfigDecryptError as e:
+        error = str(e)
+    except Exception as e:
+        error = str(e)[:200]
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/config_restore_preview.html",
+        context={"error": error, "counts": counts, "form": dict(form)},
+    )
+
+
+@router.post("/admin/system/config-restore/confirm")
+async def config_restore_confirm(request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    form = await request.form()
+    try:
+        data = await run_in_threadpool(_fetch_and_decrypt, form)
+        report = await run_in_threadpool(config_backup_service.import_export, db, data)
+    except Exception as e:
+        request.session["flash_error"] = f"Restore failed: {str(e)[:200]}"
+        return RedirectResponse("/settings", status_code=303)
+
+    imported = sum(report["imported"].values())
+    skipped = sum(report["skipped"].values())
+    log_action(
+        db,
+        user=user,
+        action="config.restore",
+        resource_type="config",
+        details={
+            "imported": report["imported"],
+            "skipped": report["skipped"],
+            "errors": report["errors"],
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+    msg = f"Configuration restored: {imported} rows imported, {skipped} skipped"
+    if report["errors"]:
+        request.session["flash_error"] = f"{msg}, {len(report['errors'])} errors (see audit log)"
+    else:
+        request.session["flash_success"] = msg
+    from mailfallback.services.scheduler import refresh_scheduler
+
+    refresh_scheduler()
+    return RedirectResponse("/settings", status_code=303)
 
 
 # --- Store management ---

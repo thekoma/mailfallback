@@ -112,6 +112,31 @@ document.addEventListener('keydown', function(e) {
     items[idx].focus();
 });
 
+/* === Generic show/toggle delegation (works with HTMX-swapped content) === */
+
+document.addEventListener('click', function(e) {
+    var btn = e.target.closest('[data-show-target]');
+    if (!btn) return;
+    var el = document.querySelector(btn.dataset.showTarget);
+    if (el) el.classList.remove('hidden');
+});
+
+document.addEventListener('change', function(e) {
+    var input = e.target.closest('[data-toggle-target]');
+    if (input) {
+        var form = input.closest('form');
+        var target = form ? form.querySelector(input.dataset.toggleTarget) : null;
+        if (target) target.hidden = !input.checked;
+        return;
+    }
+    if (e.target.id === 'dr_backend') {
+        var s3 = document.getElementById('dr-s3');
+        var local = document.getElementById('dr-local');
+        if (s3) s3.hidden = e.target.value !== 's3';
+        if (local) local.hidden = e.target.value !== 'local';
+    }
+});
+
 /* === Log modal === */
 
 function showLogModal(btn) {

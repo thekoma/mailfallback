@@ -104,6 +104,9 @@
     </form>
 </details>
 
+{% endif %}
+
+{% if backup_config or has_attachments %}
 <h4 class="mt-1 mb-025">Snapshots</h4>
 <div id="backup-snapshots"
     hx-get="/accounts/{{ account.id }}/backup/snapshots"

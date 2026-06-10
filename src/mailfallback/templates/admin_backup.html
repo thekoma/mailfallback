@@ -7,9 +7,8 @@
 
 <p class="text-small text-muted">
     <i data-lucide="info" class="icon-sm icon-inline"></i>
-    Snapshots are useless without your <code>MAILFALLBACK_SECRET_KEY</code> and a Postgres dump. See
-    <a href="https://thekoma.github.io/mailfallback/admin-guide/disaster-recovery/" target="_blank" rel="noopener">disaster recovery</a>
-    for what to back up alongside your repositories.
+    Enable <strong>configuration snapshots</strong> on a repository to store an encrypted export of users, mailboxes, and settings alongside your mail snapshots — together they make a repository fully restorable on a fresh installation. See
+    <a href="https://thekoma.github.io/mailfallback/admin-guide/disaster-recovery/" target="_blank" rel="noopener">disaster recovery</a>.
 </p>
 
 <div class="table-wrap">
@@ -67,14 +66,30 @@
             </td>
             <td>
                 <div class="actions flex-end">
+                    <span id="repo-test-result-{{ dest.id }}" class="text-small"></span>
                     <button class="icon-btn" title="Edit" onclick="toggleRow('edit-{{ dest.id }}')">
                         <i data-lucide="pencil" class="icon-md"></i>
                     </button>
-                    <form method="post" action="/admin/backup/{{ dest.id }}/test" class="inline-form">
-                        <button type="submit" class="icon-btn" title="Test connection">
-                            <i data-lucide="plug-zap" class="icon-md"></i>
+                    <button class="icon-btn" title="Test connection"
+                            hx-post="/admin/backup/{{ dest.id }}/test"
+                            hx-target="#repo-test-result-{{ dest.id }}"
+                            hx-swap="innerHTML">
+                        <i data-lucide="plug-zap" class="icon-md"></i>
+                    </button>
+                    <button class="icon-btn" title="Contents"
+                            hx-get="/admin/backup/{{ dest.id }}/contents"
+                            hx-target="#repo-contents-{{ dest.id }}"
+                            hx-swap="innerHTML"
+                            data-show-target="#contents-{{ dest.id }}">
+                        <i data-lucide="folder-search" class="icon-md"></i>
+                    </button>
+                    {% if dest.config_backup_enabled %}
+                    <form method="post" action="/admin/backup/{{ dest.id }}/config-backup" class="inline-form">
+                        <button type="submit" class="icon-btn" title="Store configuration snapshot now{% if dest.last_config_backup_at %} — last: {{ dest.last_config_backup_at | time_ago }} ({{ dest.last_config_backup_status }}){% endif %}">
+                            <i data-lucide="file-lock" class="icon-md"></i>
                         </button>
                     </form>
+                    {% endif %}
                     <form method="post" action="/admin/backup/{{ dest.id }}/delete" class="inline-form"
                         data-confirm="Delete Repository {{ dest.name }}?"
                         onsubmit="return confirm(this.dataset.confirm)">
@@ -119,7 +134,7 @@
                         {% endif %}
                         <div>
                             <label>Restic Password</label>
-                            <input type="password" name="restic_password" placeholder="Leave blank to keep current">
+                            <input type="password" name="restic_password" placeholder="Leave blank to keep current" autocomplete="new-password">
                         </div>
                     </div>
                     <div class="mt-05">
@@ -136,11 +151,29 @@
                             <strong>Warning:</strong> certificate verification is disabled. The connection is encrypted but the server's identity is NOT verified.
                         </div>
                     </div>
+                    <div class="mt-05">
+                        <label>
+                            <input type="checkbox" name="config_backup_enabled" value="1"
+                                   {% if dest.config_backup_enabled %}checked{% endif %}
+                                   data-toggle-target=".config-passphrase-block">
+                            <strong>Store configuration snapshots in this repository</strong>
+                            <small class="text-muted">— nightly encrypted export of users, mailboxes, and settings for disaster recovery.</small>
+                        </label>
+                        <div class="config-passphrase-block mt-05" {% if not dest.config_backup_enabled %}hidden{% endif %}>
+                            <label>Passphrase</label>
+                            <input type="password" name="config_backup_passphrase"
+                                   placeholder="Leave blank to keep current" autocomplete="new-password">
+                            <small class="text-muted">Separate from the Restic password. Needed to restore the configuration on a new installation — store it safely.</small>
+                        </div>
+                    </div>
                     <button type="submit" class="icon-btn primary mt-05">
                         <i data-lucide="save" class="icon-md"></i> Save
                     </button>
                 </form>
             </td>
+        </tr>
+        <tr id="contents-{{ dest.id }}" class="hidden">
+            <td colspan="8"><div id="repo-contents-{{ dest.id }}"></div></td>
         </tr>
         {% endfor %}
         {% if not destinations %}
@@ -246,7 +279,7 @@
                 </div>
                 <div>
                     <label for="restic_password">Restic password</label>
-                    <input type="password" id="restic_password" name="restic_password" placeholder="strong passphrase" required>
+                    <input type="password" id="restic_password" name="restic_password" placeholder="strong passphrase" required autocomplete="new-password">
                 </div>
             </div>
 
@@ -263,6 +296,21 @@
                 </div>
             </div>
 
+            <div class="mt-1">
+                <label>
+                    <input type="checkbox" name="config_backup_enabled" value="1"
+                           data-toggle-target=".config-passphrase-block">
+                    <strong>Store configuration snapshots in this repository</strong>
+                    <small class="text-muted">— nightly encrypted export of users, mailboxes, and settings for disaster recovery.</small>
+                </label>
+                <div class="config-passphrase-block mt-05" hidden>
+                    <label for="config_backup_passphrase">Passphrase</label>
+                    <input type="password" id="config_backup_passphrase" name="config_backup_passphrase"
+                           minlength="12" placeholder="at least 12 characters" autocomplete="new-password">
+                    <small class="text-muted">Separate from the Restic password. Needed to restore the configuration on a new installation — store it safely.</small>
+                </div>
+            </div>
+
             <div class="confirm-summary mt-1">
                 <strong>Backend:</strong> <span id="repo-summary-backend">—</span><br>
                 <strong>Target:</strong> <span id="repo-summary-target">—</span>
@@ -275,7 +323,7 @@
                 </button>
             </div>
             <p class="text-muted text-small mt-05">
-                We'll run <code>restic init</code> against this Repository. If it fails (bad credentials, unreachable host, etc.), nothing is saved.
+                We'll verify connectivity and write permission before saving. If the check fails (bad credentials, unreachable host, etc.), nothing is saved.
             </p>
         </section>
     </form>

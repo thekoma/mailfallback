@@ -25,6 +25,7 @@ dependencies = [
     "dnspython>=2.7",
     "defusedxml>=0.7",
     "psycopg2-binary>=2.9",
+    "boto3>=1.35",
 ]
 
 [project.scripts]
