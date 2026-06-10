@@ -44,6 +44,9 @@ ACTION_LABELS = {
     "backup_destination.delete": "Repository deleted",
     "backup_destination.edit": "Repository edited",
     "backup_destination.attach": "Repository prefix attached",
+    "backup_destination.attach_password": (  # pragma: allowlist secret
+        "Repository prefix password updated"
+    ),
     "backup_destination.detach": "Repository prefix detached",
     "backup_destination.config_backup": "Configuration snapshot stored",
     "account.backup_configure": "Backup policy configured",

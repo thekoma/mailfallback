@@ -68,13 +68,18 @@ def classify(db: Session, destination: Repository, prefixes: list[str]) -> list[
     return entries
 
 
-def prefix_detail(destination: Repository, prefix: str) -> dict:
-    """Open the sub-repo with the repository's restic password and summarize.
+def prefix_detail(
+    destination: Repository, prefix: str, restic_password_enc: str | None = None
+) -> dict:
+    """Open the sub-repo and summarize. Validates the effective password.
 
-    This is where the restic password gets genuinely validated.
+    restic_password_enc: optional per-attachment Fernet password; falls back
+    to the repository's own restic password when None.
     """
     try:
-        snapshots = restic_service.list_snapshots(destination, prefix)
+        snapshots = restic_service.list_snapshots(
+            destination, prefix, restic_password_enc=restic_password_enc
+        )
     except Exception as e:
         return {"ok": False, "error": str(e)[:200]}
     return {

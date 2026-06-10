@@ -120,6 +120,7 @@ def create_recovery(
     ttl_minutes: int | None = None,
     source_repository: Repository | None = None,
     source_prefix: str | None = None,
+    source_password_enc: str | None = None,
 ) -> Recovery:
     """Restore a snapshot to disk and create a Recovery row.
 
@@ -127,6 +128,8 @@ def create_recovery(
     BackupPolicy. Passing both source_repository and source_prefix overrides
     that (RepositoryAttachment flow: orphan prefixes attached to an account
     as read-only restore sources — works even without a BackupPolicy).
+    source_password_enc optionally carries the attachment's own Fernet
+    restic password; when None, restic falls back to the repository's.
 
     Returns the Recovery (status=ready on success, status=failed on error).
     Never raises — the caller can inspect status/error on the returned row.
@@ -169,14 +172,22 @@ def create_recovery(
     db.refresh(recovery)
 
     try:
-        restic_service.restore_snapshot(destination, repo_prefix, snapshot_id, restore_root)
+        restic_service.restore_snapshot(
+            destination,
+            repo_prefix,
+            snapshot_id,
+            restore_root,
+            restic_password_enc=source_password_enc,
+        )
         maildir_root = _resolve_maildir_inside_restore(restore_root, account, prefix_hint)
         recovery.restore_path = maildir_root
         recovery.status = RecoveryStatus.ready
         recovery.size_bytes = _compute_size(maildir_root)
         # Best-effort: extract the snapshot's time from restic's snapshots list.
         try:
-            snapshots = restic_service.list_snapshots(destination, repo_prefix)
+            snapshots = restic_service.list_snapshots(
+                destination, repo_prefix, restic_password_enc=source_password_enc
+            )
             for s in snapshots:
                 if s.get("short_id") == snapshot_id or s.get("id", "").startswith(snapshot_id):
                     ts = s.get("time", "").replace("Z", "+00:00")
