@@ -138,9 +138,51 @@ def backup_scheduler_jobs(db: Session) -> None:
             scheduler.remove_job(job_id)
 
 
+def _run_scheduled_config_backup(repository_id: str) -> None:
+    from mailfallback.models import Repository
+    from mailfallback.services.config_backup_service import run_config_backup
+
+    db = SessionLocal()
+    try:
+        repo = db.query(Repository).filter(Repository.id == repository_id).first()
+        if repo and repo.config_backup_enabled:
+            run_config_backup(db, repo)
+    except Exception:
+        logger.exception("Scheduled config backup failed for %s", repository_id)
+    finally:
+        db.close()
+
+
+def config_backup_scheduler_jobs(db: Session) -> None:
+    from mailfallback.models import Repository
+
+    existing_job_ids = {j.id for j in scheduler.get_jobs()}
+    enabled = db.query(Repository).filter(Repository.config_backup_enabled.is_(True)).all()
+    trigger = CronTrigger(hour=3, minute=0)
+
+    for repo in enabled:
+        job_id = f"config-backup-{repo.id}"
+        if job_id in existing_job_ids:
+            scheduler.reschedule_job(job_id, trigger=trigger)
+        else:
+            scheduler.add_job(
+                _run_scheduled_config_backup,
+                trigger,
+                args=[repo.id],
+                id=job_id,
+                replace_existing=True,
+            )
+
+    active_ids = {f"config-backup-{r.id}" for r in enabled}
+    for job_id in existing_job_ids:
+        if job_id.startswith("config-backup-") and job_id not in active_ids:
+            scheduler.remove_job(job_id)
+
+
 def start_scheduler(db: Session) -> None:
     sync_scheduler_jobs(db)
     backup_scheduler_jobs(db)
+    config_backup_scheduler_jobs(db)
     if not any(j.id == "mount-cleanup" for j in scheduler.get_jobs()):
         scheduler.add_job(
             _run_mount_cleanup,
@@ -159,6 +201,7 @@ def refresh_scheduler() -> None:
     try:
         sync_scheduler_jobs(db)
         backup_scheduler_jobs(db)
+        config_backup_scheduler_jobs(db)
     finally:
         db.close()
 

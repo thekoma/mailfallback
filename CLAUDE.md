@@ -49,6 +49,9 @@ src/mailfallback/
 │   ├── migration_service.py  # Store migration orchestration (validate, copy, verify, cleanup)
 │   ├── migration_worker.py   # Low-level file copy engine with progress tracking
 │   ├── provider_discovery.py # Auto-discover IMAP settings
+│   ├── s3_probe.py           # boto3 connection probe + bucket helpers (no restic side effects)
+│   ├── repo_inventory.py     # List/classify restic prefixes in a Repository (orphan detection)
+│   ├── config_backup_service.py # Encrypted full-config export/import + scheduled backup runner
 │   └── oauth2.py             # Google + Microsoft OAuth2 token management
 ├── templates/                # Jinja2 HTML templates
 └── static/                   # CSS + JS

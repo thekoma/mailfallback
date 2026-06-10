@@ -1,5 +1,6 @@
 # src/mailfallback/routers/ui_backup.py
 import logging
+import re
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Request
@@ -8,7 +9,13 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
-from mailfallback.models import BackupPolicy, Repository
+from mailfallback.models import (
+    Account,
+    BackendType,
+    BackupPolicy,
+    Repository,
+    RepositoryAttachment,
+)
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import encrypt_credentials
 from mailfallback.services.account_service import get_account
@@ -17,6 +24,15 @@ from mailfallback.services.audit_service import log_action
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ui"])
+
+# Restic prefixes are single path segments (account UUIDs, the config prefix,
+# or operator-named directories). Anything else could escape the repo root in
+# build_repo_url's os.path.join for local backends.
+_VALID_PREFIX_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _is_valid_prefix(prefix: str) -> bool:
+    return bool(_VALID_PREFIX_RE.match(prefix)) and prefix not in (".", "..")
 
 
 # --- Backup Destination admin routes ---
@@ -102,7 +118,7 @@ async def admin_create_backup_destination(request: Request, db: Session = Depend
 
     dest = Repository(
         name=name,
-        backend_type=backend_type,
+        backend_type=BackendType(backend_type),
         restic_password=encrypt_credentials(restic_password, settings.secret_key),
         insecure_tls=insecure_tls,
     )
@@ -126,19 +142,40 @@ async def admin_create_backup_destination(request: Request, db: Session = Depend
             return RedirectResponse("/admin/backup", status_code=303)
         dest.local_path = encrypt_credentials(local_path, settings.secret_key)
 
-    db.add(dest)
-    db.commit()
-    db.refresh(dest)
+    config_backup_enabled = bool(form.get("config_backup_enabled"))
+    config_passphrase = form.get("config_backup_passphrase", "").strip()
+    if config_backup_enabled:
+        if config_passphrase:
+            if len(config_passphrase) < 12:
+                request.session["flash_error"] = (
+                    "Config snapshot passphrase must be at least 12 characters"
+                )
+                return RedirectResponse("/admin/backup", status_code=303)
+            dest.config_backup_passphrase = encrypt_credentials(
+                config_passphrase, settings.secret_key
+            )
+        elif not dest.config_backup_passphrase:
+            request.session["flash_error"] = (
+                "A passphrase is required to enable configuration snapshots"
+            )
+            return RedirectResponse("/admin/backup", status_code=303)
+    dest.config_backup_enabled = config_backup_enabled
 
     from mailfallback.services.restic_service import test_destination
 
     test_result = test_destination(dest)
     if not test_result["ok"]:
-        db.delete(dest)
-        db.commit()
         error_msg = test_result.get("error", "Unknown error")
         request.session["flash_error"] = f"Connection test failed: {error_msg}"
         return RedirectResponse("/admin/backup", status_code=303)
+
+    db.add(dest)
+    db.commit()
+    db.refresh(dest)
+
+    from mailfallback.services.scheduler import config_backup_scheduler_jobs
+
+    config_backup_scheduler_jobs(db)
 
     log_action(
         db,
@@ -168,11 +205,18 @@ async def admin_delete_backup_destination(
         )
         return RedirectResponse("/admin/backup", status_code=303)
 
+    att_count = (
+        db.query(RepositoryAttachment).filter(RepositoryAttachment.repository_id == dest_id).count()
+    )
     dest = db.query(Repository).filter(Repository.id == dest_id).first()
     dest_name = dest.name if dest else dest_id
     if dest:
         db.delete(dest)
         db.commit()
+
+        from mailfallback.services.scheduler import config_backup_scheduler_jobs
+
+        config_backup_scheduler_jobs(db)
 
     log_action(
         db,
@@ -183,7 +227,10 @@ async def admin_delete_backup_destination(
         resource_name=dest_name,
         ip_address=request.client.host if request.client else None,
     )
-    request.session["flash_success"] = f"Repository {dest_name} deleted"
+    msg = f"Repository {dest_name} deleted"
+    if att_count:
+        msg += f" ({att_count} attached prefix(es) unlinked)"
+    request.session["flash_success"] = msg
     return RedirectResponse("/admin/backup", status_code=303)
 
 
@@ -221,7 +268,41 @@ async def admin_edit_backup_destination(
 
     dest.insecure_tls = bool(form.get("insecure_tls"))
 
+    config_backup_enabled = bool(form.get("config_backup_enabled"))
+    config_passphrase = form.get("config_backup_passphrase", "").strip()
+    if config_backup_enabled:
+        if config_passphrase:
+            if len(config_passphrase) < 12:
+                db.rollback()
+                request.session["flash_error"] = (
+                    "Config snapshot passphrase must be at least 12 characters"
+                )
+                return RedirectResponse("/admin/backup", status_code=303)
+            dest.config_backup_passphrase = encrypt_credentials(
+                config_passphrase, settings.secret_key
+            )
+        elif not dest.config_backup_passphrase:
+            db.rollback()
+            request.session["flash_error"] = (
+                "A passphrase is required to enable configuration snapshots"
+            )
+            return RedirectResponse("/admin/backup", status_code=303)
+    dest.config_backup_enabled = config_backup_enabled
+
+    from mailfallback.services.restic_service import test_destination
+
+    test_result = test_destination(dest)
+    if not test_result["ok"]:
+        db.rollback()
+        error_msg = test_result.get("error", "Unknown error")
+        request.session["flash_error"] = f"Connection test failed — changes not saved: {error_msg}"
+        return RedirectResponse("/admin/backup", status_code=303)
+
     db.commit()
+
+    from mailfallback.services.scheduler import config_backup_scheduler_jobs
+
+    config_backup_scheduler_jobs(db)
 
     log_action(
         db,
@@ -246,17 +327,202 @@ async def admin_test_backup_destination(
 
     dest = db.query(Repository).filter(Repository.id == dest_id).first()
     if not dest:
+        if request.headers.get("HX-Request"):
+            return templates.TemplateResponse(
+                request=request,
+                name="partials/repo_test_result.html",
+                context={"ok": False, "error": "Repository not found"},
+            )
         request.session["flash_error"] = "Destination not found"
         return RedirectResponse("/admin/backup", status_code=303)
 
     from mailfallback.services.restic_service import test_destination
 
     result = test_destination(dest)
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(
+            request=request,
+            name="partials/repo_test_result.html",
+            context={"ok": result["ok"], "error": result.get("error")},
+        )
     if result["ok"]:
         request.session["flash_success"] = f"{dest.name}: connection OK"
     else:
         error_msg = result.get("error", "Unknown error")
         request.session["flash_error"] = f"{dest.name}: {error_msg}"
+    return RedirectResponse("/admin/backup", status_code=303)
+
+
+@router.post("/admin/backup/{dest_id}/config-backup")
+def admin_run_config_backup(dest_id: str, request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
+    if not dest or not dest.config_backup_enabled:
+        request.session["flash_error"] = (
+            "Configuration snapshots are not enabled for this repository"
+        )
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    from mailfallback.services.config_backup_service import run_config_backup
+
+    result = run_config_backup(db, dest)
+    if result["ok"]:
+        request.session["flash_success"] = f"Configuration snapshot stored in {dest.name}"
+    else:
+        request.session["flash_error"] = f"Configuration snapshot failed: {result['error']}"
+    log_action(
+        db,
+        user=user,
+        action="backup_destination.config_backup",
+        resource_type="backup_destination",
+        resource_id=dest.id,
+        resource_name=dest.name,
+        ip_address=request.client.host if request.client else None,
+    )
+    return RedirectResponse("/admin/backup", status_code=303)
+
+
+@router.get("/admin/backup/{dest_id}/contents", response_class=HTMLResponse)
+def admin_repo_contents(dest_id: str, request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
+    if not dest:
+        return HTMLResponse("Repository not found", status_code=404)
+
+    from mailfallback.services import repo_inventory
+
+    error = None
+    entries: list[dict] = []
+    try:
+        prefixes = repo_inventory.list_prefixes(dest)
+        entries = repo_inventory.classify(db, dest, prefixes)
+    except Exception as e:
+        error = str(e)[:200]
+
+    accounts = db.query(Account).order_by(Account.name).all()
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/repo_contents.html",
+        context={"dest": dest, "entries": entries, "error": error, "accounts": accounts},
+    )
+
+
+@router.get("/admin/backup/{dest_id}/contents/{prefix}/detail", response_class=HTMLResponse)
+def admin_repo_prefix_detail(
+    dest_id: str, prefix: str, request: Request, db: Session = Depends(get_db)
+):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
+    if not dest:
+        return HTMLResponse("Repository not found", status_code=404)
+    if not _is_valid_prefix(prefix):
+        return HTMLResponse("Invalid prefix", status_code=400)
+
+    from mailfallback.services import repo_inventory
+
+    detail = repo_inventory.prefix_detail(dest, prefix)
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/repo_prefix_detail.html",
+        context={"detail": detail},
+    )
+
+
+@router.post("/admin/backup/{dest_id}/attach")
+async def admin_repo_attach(dest_id: str, request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
+    if not dest:
+        request.session["flash_error"] = "Repository not found"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    form = await request.form()
+    prefix = form.get("prefix", "").strip()
+    account_id = form.get("account_id", "").strip()
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not prefix or not account:
+        request.session["flash_error"] = "Prefix and account are required"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    if not _is_valid_prefix(prefix):
+        request.session["flash_error"] = "Invalid prefix"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    from mailfallback.services.repo_inventory import CONFIG_PREFIX
+    from mailfallback.services.s3_probe import LEGACY_TEST_PREFIX
+
+    if prefix in (CONFIG_PREFIX, LEGACY_TEST_PREFIX.rstrip("/")):
+        request.session["flash_error"] = "This prefix is reserved and cannot be attached"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    if db.query(Account).filter(Account.id == prefix).first():
+        request.session["flash_error"] = (
+            "This prefix belongs to a live mailbox and cannot be attached"
+        )
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    existing = (
+        db.query(RepositoryAttachment)
+        .filter(
+            RepositoryAttachment.repository_id == dest_id,
+            RepositoryAttachment.prefix == prefix,
+        )
+        .first()
+    )
+    if existing:
+        request.session["flash_error"] = f"Prefix {prefix} is already attached"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    att = RepositoryAttachment(repository_id=dest_id, account_id=account.id, prefix=prefix)
+    db.add(att)
+    db.commit()
+    log_action(
+        db,
+        user=user,
+        action="backup_destination.attach",
+        resource_type="backup_destination",
+        resource_id=dest_id,
+        resource_name=dest.name,
+        ip_address=request.client.host if request.client else None,
+        details={"prefix": prefix, "account_id": account.id},
+    )
+    request.session["flash_success"] = f"Attached {prefix} to {account.name}"
+    return RedirectResponse("/admin/backup", status_code=303)
+
+
+@router.post("/admin/backup/attachments/{attachment_id}/delete")
+async def admin_repo_detach(attachment_id: str, request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    att = db.query(RepositoryAttachment).filter(RepositoryAttachment.id == attachment_id).first()
+    if att:
+        repo_id = att.repository_id
+        repo_name = att.repository.name if att.repository else repo_id
+        prefix = att.prefix
+        db.delete(att)
+        db.commit()
+        log_action(
+            db,
+            user=user,
+            action="backup_destination.detach",
+            resource_type="backup_destination",
+            resource_id=repo_id,
+            resource_name=repo_name,
+            ip_address=request.client.host if request.client else None,
+            details={"prefix": prefix},
+        )
+        request.session["flash_success"] = "Prefix detached"
+    else:
+        request.session["flash_error"] = "Attachment not found"
     return RedirectResponse("/admin/backup", status_code=303)
 
 
@@ -359,17 +625,31 @@ def account_backup_snapshots(account_id: str, request: Request, db: Session = De
     if not account:
         return HTMLResponse("")
 
+    from mailfallback.services import restic_service
+
     backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
-    if not backup:
+    attachments = (
+        db.query(RepositoryAttachment).filter(RepositoryAttachment.account_id == account_id).all()
+    )
+    if not backup and not attachments:
         return HTMLResponse('<p class="text-muted">No backup configured.</p>')
 
-    try:
-        from mailfallback.services.restic_service import list_snapshots
+    snapshots = []
+    if backup:
+        try:
+            snapshots = restic_service.list_snapshots(backup.destination, account.id)
+        except Exception as e:
+            logger.warning("Failed to list snapshots for account %s: %s", account_id, e)
+            snapshots = []
 
-        snapshots = list_snapshots(backup.destination, account.id)
-    except Exception as e:
-        logger.warning("Failed to list snapshots for account %s: %s", account_id, e)
-        snapshots = []
+    attached_sources = []
+    for att in attachments:
+        try:
+            snaps = restic_service.list_snapshots(att.repository, att.prefix)
+        except Exception as e:
+            snaps = []
+            logger.warning("Cannot list attached prefix %s: %s", att.prefix, e)
+        attached_sources.append({"attachment": att, "snapshots": snaps})
 
     return templates.TemplateResponse(
         request=request,
@@ -377,12 +657,13 @@ def account_backup_snapshots(account_id: str, request: Request, db: Session = De
         context={
             "account": account,
             "snapshots": snapshots,
+            "attached_sources": attached_sources,
         },
     )
 
 
 @router.post("/accounts/{account_id}/backup/restore/{snapshot_id}")
-async def account_backup_restore(
+def account_backup_restore(
     account_id: str,
     snapshot_id: str,
     request: Request,
@@ -432,8 +713,83 @@ async def account_backup_restore(
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
 
+@router.post("/accounts/{account_id}/backup/attachments/{attachment_id}/restore/{snapshot_id}")
+def account_attachment_restore(
+    account_id: str,
+    attachment_id: str,
+    snapshot_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Restore a snapshot from an attached repository prefix into a Recovery.
+
+    Same flow as account_backup_restore, but the repository and restic prefix
+    come from the RepositoryAttachment instead of the account's BackupPolicy —
+    works even when the account has no backup policy of its own.
+    """
+    from mailfallback.services.recovery_service import create_recovery
+
+    user = _get_session_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    account = get_account(db, account_id, user)
+    if not account:
+        return RedirectResponse("/", status_code=303)
+
+    att = (
+        db.query(RepositoryAttachment)
+        .filter(
+            RepositoryAttachment.id == attachment_id,
+            RepositoryAttachment.account_id == account_id,
+        )
+        .first()
+    )
+    if not att:
+        request.session["flash_error"] = "Attachment not found"
+        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+
+    try:
+        recovery = create_recovery(
+            db,
+            account.id,
+            snapshot_id,
+            source_repository=att.repository,
+            source_prefix=att.prefix,
+        )
+    except ValueError as e:
+        request.session["flash_error"] = str(e)
+        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+
+    log_action(
+        db,
+        user=user,
+        action="account.backup_restore",
+        resource_type="account",
+        resource_id=account_id,
+        resource_name=account.email_address or account.name,
+        ip_address=request.client.host if request.client else None,
+        details={
+            "snapshot_id": snapshot_id,
+            "recovery_id": recovery.id,
+            "attachment_id": att.id,
+            "prefix": att.prefix,
+        },
+    )
+
+    if recovery.status.value == "ready":
+        request.session["flash_success"] = (
+            f"Snapshot {snapshot_id} recovered. Browse it in webmail under the "
+            f"'Recovered {snapshot_id}' folder, or delete it from the account page when done."
+        )
+    else:
+        request.session["flash_error"] = f"Recovery failed: {recovery.error or 'unknown error'}"
+
+    return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+
+
 @router.post("/accounts/{account_id}/recoveries/{recovery_id}/delete")
-async def account_recovery_delete(
+def account_recovery_delete(
     account_id: str,
     recovery_id: str,
     request: Request,
