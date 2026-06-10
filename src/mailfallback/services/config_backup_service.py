@@ -15,6 +15,8 @@ import hashlib
 import json
 import logging
 import os
+import tempfile
+from pathlib import Path
 
 import sqlalchemy as sa
 from cryptography.fernet import Fernet, InvalidToken
@@ -22,8 +24,9 @@ from sqlalchemy import Table
 from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
-from mailfallback.models import Base
+from mailfallback.models import Base, Repository
 from mailfallback.security import decrypt_credentials, encrypt_credentials
+from mailfallback.services import restic_service
 
 logger = logging.getLogger(__name__)
 
@@ -231,3 +234,57 @@ def import_export(db: Session, data: dict) -> dict:
                 errors.append(f"{name}: {_safe_error(e)}")
     db.commit()
     return {"imported": imported, "skipped": skipped, "errors": errors}
+
+
+def _utcnow() -> datetime.datetime:
+    return datetime.datetime.now(datetime.UTC)
+
+
+def run_config_backup(db: Session, repository: Repository) -> dict:
+    """Export, encrypt, and snapshot the configuration into __mfb_config__.
+
+    Sets last_config_backup_at/status ("ok"|"failed") and last_config_backup_error.
+    """
+    from mailfallback.services.repo_inventory import CONFIG_PREFIX
+
+    try:
+        if not repository.config_backup_passphrase:
+            raise ValueError("Repository has no config backup passphrase")
+        passphrase = decrypt_credentials(repository.config_backup_passphrase, settings.secret_key)
+        blob = encrypt_export(build_export(db), passphrase)
+        with tempfile.TemporaryDirectory(prefix="mfb-config-backup-") as tmpdir:
+            file_path = os.path.join(tmpdir, CONFIG_FILENAME)
+            with open(file_path, "wb") as f:
+                f.write(blob)
+            if not restic_service.init_repo(repository, CONFIG_PREFIX):
+                raise RuntimeError("Could not initialize config repository")
+            restic_service.run_backup(repository, CONFIG_PREFIX, file_path)
+            restic_service.apply_retention(repository, CONFIG_PREFIX, "custom", keep_daily=30)
+        repository.last_config_backup_at = _utcnow()
+        repository.last_config_backup_status = "ok"
+        repository.last_config_backup_error = None
+        db.commit()
+        logger.info("Config backup completed for repository %s", repository.name)
+        return {"ok": True, "error": None}
+    except Exception as e:
+        db.rollback()
+        repository.last_config_backup_at = _utcnow()
+        repository.last_config_backup_status = "failed"
+        repository.last_config_backup_error = str(e)[:500]
+        db.commit()
+        logger.error("Config backup failed for %s: %s", repository.name, e)
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def fetch_latest_config(repository: Repository, target_dir: str) -> str:
+    """Restore the newest __mfb_config__ snapshot and return the file path."""
+    from mailfallback.services.repo_inventory import CONFIG_PREFIX
+
+    snapshots = restic_service.list_snapshots(repository, CONFIG_PREFIX)
+    if not snapshots:
+        raise ValueError("No configuration snapshots found in this repository")
+    restic_service.restore_snapshot(repository, CONFIG_PREFIX, snapshots[0]["short_id"], target_dir)
+    matches = list(Path(target_dir).rglob(CONFIG_FILENAME))
+    if not matches:
+        raise ValueError("Snapshot did not contain a configuration file")
+    return str(matches[0])
