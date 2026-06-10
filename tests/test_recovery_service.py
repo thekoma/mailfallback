@@ -285,6 +285,15 @@ def test_create_recovery_rejects_partial_source_kwargs(db_session, tmp_store):
         )
 
 
+def test_create_recovery_rejects_password_without_source_repo(db_session, tmp_store):
+    _repo, acct = _mk_policyless_account(db_session, tmp_store)
+
+    with pytest.raises(ValueError, match="source_password_enc requires"):
+        recovery_service.create_recovery(
+            db_session, acct.id, "ab12", source_password_enc="enc-att-pass"
+        )
+
+
 @patch("mailfallback.services.recovery_service.restic_service")
 def test_attached_restore_threads_password(mock_restic, db_session, tmp_store):
     """An attachment with its own restic password threads it to restic calls."""

@@ -122,6 +122,14 @@ def init_repo(destination: Repository, account_id: str) -> bool:
     return False
 
 
+def account_tags(account) -> list[str]:
+    """Metadata tags for an account's snapshots (commas break restic tag values)."""
+    return [
+        f"mfb:email={(account.email_address or '').replace(',', ' ')}",
+        f"mfb:name={(account.name or '').replace(',', ' ')}",
+    ]
+
+
 def run_backup(
     destination: Repository,
     account_id: str,
