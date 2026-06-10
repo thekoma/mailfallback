@@ -3,7 +3,7 @@
 from unittest.mock import patch
 
 from mailfallback.config import settings
-from mailfallback.models import BackendType, Repository, UserRole
+from mailfallback.models import Account, BackendType, Repository, RepositoryAttachment, UserRole
 from mailfallback.security import decrypt_credentials
 from mailfallback.services.user_service import create_user
 
@@ -136,3 +136,126 @@ class TestInlineTest:
 
         assert resp.status_code == 200
         assert "Repository not found" in resp.text
+
+
+def _mk_account(db_session, default_store, name="acc1", path="/data/m/acc1"):
+    acc = Account(name=name, imap_host="h", maildir_path=path, store_id=default_store.id)
+    db_session.add(acc)
+    db_session.commit()
+    return acc
+
+
+def _mk_repo(client, db_session, default_store):
+    with patch("mailfallback.services.s3_probe.probe") as mock_probe:
+        mock_probe.return_value = {"ok": True, "error": None}
+        client.post("/admin/backup/new", data=S3_FORM, follow_redirects=False)
+    return db_session.query(Repository).one()
+
+
+class TestContents:
+    @patch("mailfallback.services.repo_inventory.list_prefixes")
+    def test_contents_panel_classifies(self, mock_list, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        mock_list.return_value = [acc.id, "__mfb_config__", "ghost-uuid"]
+
+        resp = client.get(f"/admin/backup/{repo.id}/contents")
+
+        assert resp.status_code == 200
+        assert "ghost-uuid" in resp.text
+        assert "Orphan" in resp.text
+        assert "Attach" in resp.text
+
+    @patch("mailfallback.services.repo_inventory.list_prefixes")
+    def test_contents_error_is_rendered(self, mock_list, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        mock_list.side_effect = RuntimeError("boom")
+
+        resp = client.get(f"/admin/backup/{repo.id}/contents")
+
+        assert resp.status_code == 200
+        assert "boom" in resp.text
+
+    @patch("mailfallback.services.repo_inventory.restic_service")
+    def test_prefix_detail_partial(self, mock_restic, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        mock_restic.list_snapshots.return_value = [
+            {"short_id": "ab12", "time": "2026-06-09T03:00:00Z"}
+        ]
+
+        resp = client.get(f"/admin/backup/{repo.id}/contents/ghost-uuid/detail")
+
+        assert resp.status_code == 200
+        assert "1" in resp.text
+
+
+class TestAttach:
+    def test_attach_creates_row(self, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+
+        resp = client.post(
+            f"/admin/backup/{repo.id}/attach",
+            data={"prefix": "ghost-uuid", "account_id": acc.id},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        att = db_session.query(RepositoryAttachment).one()
+        assert att.prefix == "ghost-uuid"
+        assert att.account_id == acc.id
+
+    def test_attach_duplicate_prefix_rejected(self, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        client.post(
+            f"/admin/backup/{repo.id}/attach",
+            data={"prefix": "ghost-uuid", "account_id": acc.id},
+            follow_redirects=False,
+        )
+
+        resp = client.post(
+            f"/admin/backup/{repo.id}/attach",
+            data={"prefix": "ghost-uuid", "account_id": acc.id},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        assert db_session.query(RepositoryAttachment).count() == 1
+
+    def test_attach_prefix_matching_account_id_rejected(self, client, db_session, default_store):
+        """A prefix equal to a live Account.id would be shadowed in classify()."""
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        other = _mk_account(db_session, default_store, name="acc2", path="/data/m/acc2")
+        repo = _mk_repo(client, db_session, default_store)
+
+        resp = client.post(
+            f"/admin/backup/{repo.id}/attach",
+            data={"prefix": acc.id, "account_id": other.id},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        assert db_session.query(RepositoryAttachment).count() == 0
+
+    def test_detach_deletes_row(self, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        client.post(
+            f"/admin/backup/{repo.id}/attach",
+            data={"prefix": "ghost-uuid", "account_id": acc.id},
+            follow_redirects=False,
+        )
+        att = db_session.query(RepositoryAttachment).one()
+
+        resp = client.post(f"/admin/backup/attachments/{att.id}/delete", follow_redirects=False)
+
+        assert resp.status_code == 303
+        assert db_session.query(RepositoryAttachment).count() == 0

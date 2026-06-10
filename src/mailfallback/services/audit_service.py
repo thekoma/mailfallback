@@ -42,6 +42,8 @@ ACTION_LABELS = {
     "backup_destination.create": "Repository created",
     "backup_destination.delete": "Repository deleted",
     "backup_destination.edit": "Repository edited",
+    "backup_destination.attach": "Repository prefix attached",
+    "backup_destination.detach": "Repository prefix detached",
     "account.backup_configure": "Backup policy configured",
     "account.backup_now": "Manual back-up triggered",
     "account.backup_restore": "Recovered from snapshot",

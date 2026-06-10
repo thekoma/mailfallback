@@ -1,0 +1,63 @@
+{% if error %}
+<div class="alert-error" role="alert">
+    <i data-lucide="alert-triangle" class="icon-md icon-inline"></i>
+    Could not list repository contents: {{ error }}
+</div>
+{% elif not entries %}
+<p class="text-muted text-small">This repository is empty.</p>
+{% else %}
+<table class="text-small">
+    <thead>
+        <tr><th>Prefix</th><th>Kind</th><th>Snapshots</th><th class="text-right">Actions</th></tr>
+    </thead>
+    <tbody>
+        {% for e in entries %}
+        <tr>
+            <td><code>{{ e.prefix }}</code></td>
+            <td>
+                {% if e.kind == "account" %}
+                <span class="badge">{{ e.account.name }}</span>
+                {% elif e.kind == "config" %}
+                <span class="badge badge-admin">Config snapshots</span>
+                {% elif e.kind == "attached" %}
+                <span class="badge">Attached → {{ e.account.name if e.account else "?" }}</span>
+                {% else %}
+                <span class="badge badge-warning">Orphan</span>
+                {% endif %}
+            </td>
+            <td>
+                <span hx-get="/admin/backup/{{ dest.id }}/contents/{{ e.prefix }}/detail"
+                      hx-trigger="load" hx-swap="innerHTML">
+                    <span class="text-muted">loading…</span>
+                </span>
+            </td>
+            <td class="text-right">
+                {% if e.kind == "orphan" %}
+                <form method="post" action="/admin/backup/{{ dest.id }}/attach" class="inline-form">
+                    <input type="hidden" name="prefix" value="{{ e.prefix }}">
+                    <select name="account_id" required>
+                        <option value="" disabled selected>Attach to mailbox…</option>
+                        {% for acc in accounts %}
+                        <option value="{{ acc.id }}">{{ acc.name }} ({{ acc.email_address }})</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="icon-btn" title="Attach as restore source">
+                        <i data-lucide="link" class="icon-md"></i> Attach
+                    </button>
+                </form>
+                {% elif e.kind == "attached" %}
+                <form method="post" action="/admin/backup/attachments/{{ e.attachment.id }}/delete"
+                      class="inline-form"
+                      data-confirm="Detach {{ e.prefix }}? Bucket data is not touched."
+                      onsubmit="return confirm(this.dataset.confirm)">
+                    <button type="submit" class="icon-btn" title="Detach">
+                        <i data-lucide="unlink" class="icon-md"></i> Detach
+                    </button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}

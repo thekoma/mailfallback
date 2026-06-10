@@ -8,7 +8,13 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
-from mailfallback.models import BackendType, BackupPolicy, Repository
+from mailfallback.models import (
+    Account,
+    BackendType,
+    BackupPolicy,
+    Repository,
+    RepositoryAttachment,
+)
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import encrypt_credentials
 from mailfallback.services.account_service import get_account
@@ -166,6 +172,9 @@ async def admin_delete_backup_destination(
         )
         return RedirectResponse("/admin/backup", status_code=303)
 
+    att_count = (
+        db.query(RepositoryAttachment).filter(RepositoryAttachment.repository_id == dest_id).count()
+    )
     dest = db.query(Repository).filter(Repository.id == dest_id).first()
     dest_name = dest.name if dest else dest_id
     if dest:
@@ -181,7 +190,10 @@ async def admin_delete_backup_destination(
         resource_name=dest_name,
         ip_address=request.client.host if request.client else None,
     )
-    request.session["flash_success"] = f"Repository {dest_name} deleted"
+    msg = f"Repository {dest_name} deleted"
+    if att_count:
+        msg += f" ({att_count} attached prefix(es) unlinked)"
+    request.session["flash_success"] = msg
     return RedirectResponse("/admin/backup", status_code=303)
 
 
@@ -276,6 +288,131 @@ async def admin_test_backup_destination(
     else:
         error_msg = result.get("error", "Unknown error")
         request.session["flash_error"] = f"{dest.name}: {error_msg}"
+    return RedirectResponse("/admin/backup", status_code=303)
+
+
+@router.get("/admin/backup/{dest_id}/contents", response_class=HTMLResponse)
+def admin_repo_contents(dest_id: str, request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
+    if not dest:
+        return HTMLResponse("Repository not found", status_code=404)
+
+    from mailfallback.services import repo_inventory
+
+    error = None
+    entries: list[dict] = []
+    try:
+        prefixes = repo_inventory.list_prefixes(dest)
+        entries = repo_inventory.classify(db, dest, prefixes)
+    except Exception as e:
+        error = str(e)[:200]
+
+    accounts = db.query(Account).order_by(Account.name).all()
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/repo_contents.html",
+        context={"dest": dest, "entries": entries, "error": error, "accounts": accounts},
+    )
+
+
+@router.get("/admin/backup/{dest_id}/contents/{prefix}/detail", response_class=HTMLResponse)
+def admin_repo_prefix_detail(
+    dest_id: str, prefix: str, request: Request, db: Session = Depends(get_db)
+):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
+    if not dest:
+        return HTMLResponse("Repository not found", status_code=404)
+
+    from mailfallback.services import repo_inventory
+
+    detail = repo_inventory.prefix_detail(dest, prefix)
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/repo_prefix_detail.html",
+        context={"detail": detail},
+    )
+
+
+@router.post("/admin/backup/{dest_id}/attach")
+async def admin_repo_attach(dest_id: str, request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
+    if not dest:
+        request.session["flash_error"] = "Repository not found"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    form = await request.form()
+    prefix = form.get("prefix", "").strip()
+    account_id = form.get("account_id", "").strip()
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not prefix or not account:
+        request.session["flash_error"] = "Prefix and account are required"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    if db.query(Account).filter(Account.id == prefix).first():
+        request.session["flash_error"] = (
+            "This prefix belongs to a live mailbox and cannot be attached"
+        )
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    existing = (
+        db.query(RepositoryAttachment)
+        .filter(
+            RepositoryAttachment.repository_id == dest_id,
+            RepositoryAttachment.prefix == prefix,
+        )
+        .first()
+    )
+    if existing:
+        request.session["flash_error"] = f"Prefix {prefix} is already attached"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    att = RepositoryAttachment(repository_id=dest_id, account_id=account.id, prefix=prefix)
+    db.add(att)
+    db.commit()
+    log_action(
+        db,
+        user=user,
+        action="backup_destination.attach",
+        resource_type="backup_destination",
+        resource_id=dest_id,
+        resource_name=dest.name,
+        ip_address=request.client.host if request.client else None,
+        details={"prefix": prefix, "account_id": account.id},
+    )
+    request.session["flash_success"] = f"Attached {prefix} to {account.name}"
+    return RedirectResponse("/admin/backup", status_code=303)
+
+
+@router.post("/admin/backup/attachments/{attachment_id}/delete")
+async def admin_repo_detach(attachment_id: str, request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    att = db.query(RepositoryAttachment).filter(RepositoryAttachment.id == attachment_id).first()
+    if att:
+        repo_id = att.repository_id
+        prefix = att.prefix
+        db.delete(att)
+        db.commit()
+        log_action(
+            db,
+            user=user,
+            action="backup_destination.detach",
+            resource_type="backup_destination",
+            resource_id=repo_id,
+            ip_address=request.client.host if request.client else None,
+            details={"prefix": prefix},
+        )
+    request.session["flash_success"] = "Prefix detached"
     return RedirectResponse("/admin/backup", status_code=303)
 
 
