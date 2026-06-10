@@ -136,6 +136,32 @@ class TestPrefixDetail:
         )
 
     @patch("mailfallback.services.repo_inventory.restic_service")
+    def test_detail_extracts_mfb_tags(self, mock_restic, s3_repo):
+        mock_restic.list_snapshots.return_value = [
+            {
+                "short_id": "ab12",
+                "time": "2026-06-09T03:00:00Z",
+                "tags": ["mfb:email=w@x.y", "mfb:name=Work"],
+            },
+        ]
+
+        detail = repo_inventory.prefix_detail(s3_repo, "ghost")
+
+        assert detail["email"] == "w@x.y"
+        assert detail["name"] == "Work"
+
+    @patch("mailfallback.services.repo_inventory.restic_service")
+    def test_detail_without_tags_has_none(self, mock_restic, s3_repo):
+        mock_restic.list_snapshots.return_value = [
+            {"short_id": "ab12", "time": "2026-06-09T03:00:00Z"}
+        ]
+
+        detail = repo_inventory.prefix_detail(s3_repo, "ghost")
+
+        assert detail["email"] is None
+        assert detail["name"] is None
+
+    @patch("mailfallback.services.repo_inventory.restic_service")
     def test_detail_reports_error(self, mock_restic, s3_repo):
         mock_restic.list_snapshots.side_effect = RuntimeError("wrong password")
 

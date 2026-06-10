@@ -82,8 +82,17 @@ def prefix_detail(
         )
     except Exception as e:
         return {"ok": False, "error": str(e)[:200]}
+    email = name = None
+    if snapshots:
+        for tag in snapshots[0].get("tags") or []:
+            if tag.startswith("mfb:email="):
+                email = tag.removeprefix("mfb:email=")
+            elif tag.startswith("mfb:name="):
+                name = tag.removeprefix("mfb:name=")
     return {
         "ok": True,
         "snapshot_count": len(snapshots),
         "latest": snapshots[0]["time"] if snapshots else None,
+        "email": email,
+        "name": name,
     }
