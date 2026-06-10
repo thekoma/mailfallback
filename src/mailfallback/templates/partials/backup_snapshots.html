@@ -18,7 +18,7 @@
             <td>
                 <div class="actions flex-end">
                     <form method="post" action="/accounts/{{ account.id }}/backup/restore/{{ snap.short_id }}"
-                        data-confirm="Restore snapshot {{ snap.short_id }}? This will create a new suspended account with the restored data."
+                        data-confirm="Restore snapshot {{ snap.short_id }}? This creates a read-only recovery you can browse in webmail and delete when done."
                         onsubmit="return confirm(this.dataset.confirm)">
                         <button type="submit" class="icon-btn" title="Restore this snapshot">
                             <i data-lucide="archive-restore" class="icon-md"></i>

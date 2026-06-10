@@ -56,26 +56,45 @@ def _build_restore_root(account: Account) -> str:
     return f"{account.store.path}/.offsite-restore/{account.id}-{ts}"
 
 
-def _resolve_maildir_inside_restore(restore_root: str, account: Account) -> str:
+def _resolve_maildir_inside_restore(
+    restore_root: str, account: Account, repo_prefix: str | None = None
+) -> str:
     """Compute the actual Maildir path inside the restored tree.
 
     restic restore preserves absolute paths from the original. The original
     Maildir was at e.g. /data/mailboxes/<account-uuid>, so restic restores
     it to <restore_root>/data/mailboxes/<account-uuid>.
 
-    If the layout doesn't match, fall back to the restore root and let the
-    caller deal with it.
+    For attached foreign prefixes the account's own maildir_path never
+    matches; in MFB's layout the restic prefix IS the old account's uuid
+    directory name, so the first directory whose basename equals repo_prefix
+    is the maildir root.
+
+    Generic fallback: under LAYOUT=fs each mail FOLDER (INBOX, Sent, ...)
+    contains the cur/new/tmp triplet — the maildir root is the common parent
+    of all such folders, never the first folder found. Last resort:
+    restore_root itself.
     """
     rel = account.maildir_path.lstrip("/")
     candidate = os.path.join(restore_root, rel)
     if os.path.isdir(candidate):
         return candidate
-    # Walk one level down and pick a directory that looks like a Maildir
-    # (has cur/, new/, tmp/ at some depth).
+    if repo_prefix:
+        for root, _, _ in os.walk(restore_root):
+            if os.path.basename(root) == repo_prefix:
+                return root
+    # Collect every directory containing the cur/new/tmp triplet (a mail
+    # folder) and return the common path of their PARENTS (the maildir root).
+    folder_parents = []
     for root, dirs, _ in os.walk(restore_root):
         if {"cur", "new", "tmp"}.issubset(set(dirs)):
-            # Return the parent of the cur/new/tmp triplet.
-            return root
+            folder_parents.append(os.path.dirname(root))
+    if folder_parents:
+        common = os.path.commonpath(folder_parents)
+        # Never escape the restore tree (triplet directly under restore_root
+        # would make the common parent point outside it).
+        if os.path.commonpath([common, restore_root]) == restore_root:
+            return common
     return restore_root
 
 
@@ -116,15 +135,22 @@ def create_recovery(
     if not account:
         raise ValueError(f"Account {account_id} not found")
 
-    if source_repository is not None and source_prefix:
+    has_source_repo = source_repository is not None
+    has_source_prefix = bool(source_prefix)
+    if has_source_repo != has_source_prefix:
+        raise ValueError("source_repository and source_prefix must be provided together")
+
+    if has_source_repo:
         destination = source_repository
         repo_prefix = source_prefix
+        prefix_hint = source_prefix
     else:
         backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
         if not backup:
             raise ValueError("Account has no backup policy; nothing to restore from")
         destination = backup.destination
         repo_prefix = account.id
+        prefix_hint = None
 
     restore_root = _build_restore_root(account)
     os.makedirs(restore_root, exist_ok=True)
@@ -144,7 +170,7 @@ def create_recovery(
 
     try:
         restic_service.restore_snapshot(destination, repo_prefix, snapshot_id, restore_root)
-        maildir_root = _resolve_maildir_inside_restore(restore_root, account)
+        maildir_root = _resolve_maildir_inside_restore(restore_root, account, prefix_hint)
         recovery.restore_path = maildir_root
         recovery.status = RecoveryStatus.ready
         recovery.size_bytes = _compute_size(maildir_root)

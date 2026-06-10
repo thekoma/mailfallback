@@ -573,7 +573,7 @@ def account_backup_snapshots(account_id: str, request: Request, db: Session = De
 
 
 @router.post("/accounts/{account_id}/backup/restore/{snapshot_id}")
-async def account_backup_restore(
+def account_backup_restore(
     account_id: str,
     snapshot_id: str,
     request: Request,
@@ -624,7 +624,7 @@ async def account_backup_restore(
 
 
 @router.post("/accounts/{account_id}/backup/attachments/{attachment_id}/restore/{snapshot_id}")
-async def account_attachment_restore(
+def account_attachment_restore(
     account_id: str,
     attachment_id: str,
     snapshot_id: str,
