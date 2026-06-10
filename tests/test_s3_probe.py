@@ -96,6 +96,61 @@ class TestProbeS3:
 
         assert mock_boto3.client.call_args.kwargs["verify"] is False
 
+    @patch("mailfallback.services.s3_probe.boto3")
+    def test_bare_endpoint_is_normalized_to_https(self, mock_boto3, s3_destination):
+        s3_destination.s3_endpoint = _enc("s3.example.com")
+        client = MagicMock()
+        client.list_objects_v2.return_value = {"Contents": []}
+        mock_boto3.client.return_value = client
+
+        s3_probe.probe(s3_destination)
+
+        assert mock_boto3.client.call_args.kwargs["endpoint_url"] == "https://s3.example.com"
+
+    @patch("mailfallback.services.s3_probe.boto3")
+    def test_legacy_cleanup_failure_still_returns_ok(self, mock_boto3, s3_destination):
+        client = MagicMock()
+        client.list_objects_v2.side_effect = RuntimeError("listing exploded")
+        mock_boto3.client.return_value = client
+
+        result = s3_probe.probe(s3_destination)
+
+        assert result["ok"] is True
+
+    @patch("mailfallback.services.s3_probe.boto3")
+    def test_delete_denied_retries_cleanup_and_fails(self, mock_boto3, s3_destination):
+        client = MagicMock()
+        client.delete_object.side_effect = ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "DeleteObject"
+        )
+        mock_boto3.client.return_value = client
+
+        result = s3_probe.probe(s3_destination)
+
+        assert result["ok"] is False
+        assert "delete" in result["error"]
+        assert "AccessDenied" in result["error"]
+        # First delete failed; a best-effort cleanup retry must follow.
+        assert client.delete_object.call_count == 2
+
+    def test_missing_endpoint_returns_clean_error(self, s3_destination):
+        s3_destination.s3_endpoint = None
+
+        result = s3_probe.probe(s3_destination)
+
+        assert result["ok"] is False
+        assert "missing S3 settings" in result["error"]
+
+    def test_undecryptable_settings_return_clean_error(self, s3_destination):
+        s3_destination.s3_endpoint = encrypt_credentials(
+            "https://s3.example.com", "some-other-secret-key"
+        )
+
+        result = s3_probe.probe(s3_destination)
+
+        assert result["ok"] is False
+        assert "decrypt" in result["error"]
+
 
 class TestProbeLocal:
     def test_success_creates_and_removes_probe_file(self, local_destination, tmp_path):
@@ -106,6 +161,7 @@ class TestProbeLocal:
         assert repo_dir.is_dir()
         assert not any(f.name.startswith(".mfb-probe-") for f in repo_dir.iterdir())
 
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permissions")
     def test_unwritable_path_returns_error(self, tmp_path):
         target = tmp_path / "ro"
         target.mkdir()

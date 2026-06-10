@@ -1,6 +1,7 @@
 """Connection probing for backup repositories — validates reachability and
 write permission without restic side effects (no junk repos in the bucket)."""
 
+import contextlib
 import logging
 import os
 import uuid
@@ -8,9 +9,10 @@ import uuid
 import boto3
 from botocore.client import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
+from cryptography.fernet import InvalidToken
 
 from mailfallback.config import settings
-from mailfallback.models import Repository
+from mailfallback.models import BackendType, Repository
 from mailfallback.security import decrypt_credentials
 
 logger = logging.getLogger(__name__)
@@ -46,26 +48,54 @@ def probe(destination: Repository) -> dict:
     Does NOT validate the restic password: on a new prefix the password
     *defines* the repository, there is nothing to check it against.
     """
-    if destination.backend_type.value == "s3":
+    if destination.backend_type == BackendType.s3:
         return _probe_s3(destination)
     return _probe_local(destination)
 
 
 def _probe_s3(destination: Repository) -> dict:
-    key = f".mfb-probe-{uuid.uuid4()}"
+    required = (
+        destination.s3_endpoint,
+        destination.s3_bucket,
+        destination.s3_access_key,
+        destination.s3_secret_key,
+    )
+    if not all(required):
+        return {"ok": False, "error": "repository is missing S3 settings"}
     try:
         client = s3_client(destination)
         bucket = bucket_name(destination)
+    except InvalidToken:
+        return {"ok": False, "error": "cannot decrypt repository settings (secret key changed?)"}
+    key = f".mfb-probe-{uuid.uuid4()}"
+    put_succeeded = False
+    try:
         client.put_object(Bucket=bucket, Key=key, Body=b"mfb-probe")
+        put_succeeded = True
         client.delete_object(Bucket=bucket, Key=key)
     except (ClientError, BotoCoreError, ValueError) as e:
+        if put_succeeded:
+            # Don't leave the probe object orphaned in the bucket — retry best-effort.
+            with contextlib.suppress(Exception):
+                client.delete_object(Bucket=bucket, Key=key)
+            return {
+                "ok": False,
+                "error": (
+                    "write succeeded but delete was denied "
+                    f"(restic needs delete permission for lock files): {str(e)[:200]}"
+                ),
+            }
         return {"ok": False, "error": str(e)[:200]}
     _cleanup_legacy_junk(client, bucket)
     return {"ok": True, "error": None}
 
 
 def _cleanup_legacy_junk(client, bucket: str) -> None:
-    """Best-effort removal of leftover `__mfb_connection_test__` objects."""
+    """Best-effort removal of leftover `__mfb_connection_test__` objects.
+
+    Single-page listing (<=1000 keys) is enough: a legacy junk repo from
+    `restic init` holds only ~10 objects (config + empty key/lock dirs).
+    """
     try:
         resp = client.list_objects_v2(Bucket=bucket, Prefix=LEGACY_TEST_PREFIX)
         objs = [{"Key": o["Key"]} for o in resp.get("Contents", [])]
@@ -77,7 +107,12 @@ def _cleanup_legacy_junk(client, bucket: str) -> None:
 
 
 def _probe_local(destination: Repository) -> dict:
-    path = decrypt_credentials(destination.local_path, settings.secret_key)
+    if not destination.local_path:
+        return {"ok": False, "error": "repository is missing a local path"}
+    try:
+        path = decrypt_credentials(destination.local_path, settings.secret_key)
+    except InvalidToken:
+        return {"ok": False, "error": "cannot decrypt repository settings (secret key changed?)"}
     probe_file = os.path.join(path, f".mfb-probe-{uuid.uuid4()}")
     try:
         os.makedirs(path, exist_ok=True)
