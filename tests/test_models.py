@@ -1,4 +1,5 @@
 # tests/test_models.py
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -502,13 +503,9 @@ def test_repository_attachment_unique_per_prefix(db_session):
     db_session.add(
         RepositoryAttachment(repository_id=repo.id, account_id=acc.id, prefix="old-uuid")
     )
-    try:
+    with pytest.raises(IntegrityError):
         db_session.commit()
-        raised = False
-    except IntegrityError:
-        db_session.rollback()
-        raised = True
-    assert raised
+    db_session.rollback()
 
 
 def test_repository_config_backup_defaults(db_session):
@@ -522,3 +519,51 @@ def test_repository_config_backup_defaults(db_session):
     assert repo.config_backup_passphrase is None
     assert repo.last_config_backup_at is None
     assert repo.last_config_backup_status is None
+    assert repo.last_config_backup_error is None
+
+
+def test_delete_account_cascades_repo_attachments(db_session, default_store):
+    from mailfallback.models import Repository, RepositoryAttachment
+
+    acc = Account(
+        name="a",
+        imap_host="h",
+        maildir_path="/data/mailboxes/a",
+        store=default_store,
+    )
+    repo = Repository(name="r", backend_type="s3", restic_password="enc")
+    db_session.add_all([acc, repo])
+    db_session.flush()
+    db_session.add(
+        RepositoryAttachment(repository_id=repo.id, account_id=acc.id, prefix="old-uuid")
+    )
+    db_session.commit()
+
+    db_session.delete(acc)
+    db_session.commit()
+
+    assert db_session.query(RepositoryAttachment).count() == 0
+
+
+def test_delete_repository_cascades_repo_attachments(db_session, default_store):
+    from mailfallback.models import Repository, RepositoryAttachment
+
+    acc = Account(
+        name="a",
+        imap_host="h",
+        maildir_path="/data/mailboxes/a",
+        store=default_store,
+    )
+    repo = Repository(name="r", backend_type="s3", restic_password="enc")
+    db_session.add_all([acc, repo])
+    db_session.flush()
+    db_session.add(
+        RepositoryAttachment(repository_id=repo.id, account_id=acc.id, prefix="old-uuid")
+    )
+    db_session.commit()
+
+    db_session.delete(repo)
+    db_session.commit()
+
+    assert db_session.query(RepositoryAttachment).count() == 0
+    assert db_session.query(Account).count() == 1

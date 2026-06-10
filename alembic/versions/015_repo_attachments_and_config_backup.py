@@ -2,8 +2,8 @@
 
 - repository_attachments: orphan restic prefixes attached to accounts as
   read-only restore sources (unique per repository+prefix).
-- backup_destinations: config_backup_enabled/passphrase + last run status,
-  for the encrypted MFB configuration backup feature.
+- backup_destinations: config_backup_enabled/passphrase + last run
+  status/error, for the encrypted MFB configuration backup feature.
 
 Revision ID: 015
 Revises: 014
@@ -61,9 +61,14 @@ def upgrade() -> None:
         "backup_destinations",
         sa.Column("last_config_backup_status", sa.String(), nullable=True),
     )
+    op.add_column(
+        "backup_destinations",
+        sa.Column("last_config_backup_error", sa.Text(), nullable=True),
+    )
 
 
 def downgrade() -> None:
+    op.drop_column("backup_destinations", "last_config_backup_error")
     op.drop_column("backup_destinations", "last_config_backup_status")
     op.drop_column("backup_destinations", "last_config_backup_at")
     op.drop_column("backup_destinations", "config_backup_passphrase")
