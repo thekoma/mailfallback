@@ -89,11 +89,12 @@ def _is_insecure(destination: Repository) -> bool:
 
 
 def test_destination(destination: Repository) -> dict:
-    """Test connectivity to a backup destination. Returns {ok: bool, error: str}.
+    """Test connectivity to a backup destination. Returns {ok: bool, error: str|None}.
 
     Delegates to s3_probe: validates reachability and write permission with a
     probe object (S3) or a probe file (local), creating no restic repositories.
     """
+    # lazy: keeps boto3 out of the startup import chain
     from mailfallback.services import s3_probe
 
     return s3_probe.probe(destination)
