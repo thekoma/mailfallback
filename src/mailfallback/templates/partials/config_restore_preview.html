@@ -1,0 +1,21 @@
+{% if error %}
+<div class="alert-error" role="alert">
+    <i data-lucide="alert-triangle" class="icon-md icon-inline"></i> {{ error }}
+</div>
+{% else %}
+<div class="confirm-summary">
+    <strong>Snapshot found.</strong> It contains:
+    <ul>
+        {% for name, n in counts.items() %}{% if n %}<li>{{ n }} {{ name | replace("_", " ") }}</li>{% endif %}{% endfor %}
+    </ul>
+    <p class="text-small text-muted">Existing rows (matching ID, username, store path, or maildir path) are skipped, never overwritten.</p>
+</div>
+<form method="post" action="/admin/system/config-restore/confirm" class="mt-05">
+    {% for key, value in form.items() %}
+    <input type="hidden" name="{{ key }}" value="{{ value }}">
+    {% endfor %}
+    <button type="submit" class="icon-btn primary">
+        <i data-lucide="archive-restore" class="icon-md"></i> Confirm restore
+    </button>
+</form>
+{% endif %}
