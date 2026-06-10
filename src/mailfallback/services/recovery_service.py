@@ -143,6 +143,9 @@ def create_recovery(
     if has_source_repo != has_source_prefix:
         raise ValueError("source_repository and source_prefix must be provided together")
 
+    if source_password_enc and source_repository is None:
+        raise ValueError("source_password_enc requires source_repository and source_prefix")
+
     if has_source_repo:
         destination = source_repository
         repo_prefix = source_prefix

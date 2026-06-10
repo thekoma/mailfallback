@@ -10,6 +10,7 @@ from mailfallback.config import settings
 from mailfallback.models import Account, BackendType, Repository, RepositoryAttachment
 from mailfallback.security import decrypt_credentials
 from mailfallback.services import restic_service, s3_probe
+from mailfallback.services.restic_service import account_tags
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,8 @@ def backfill_tags(db: Session, destination: Repository) -> dict[str, int]:
     """Add mfb:email/mfb:name tags to untagged snapshots of account prefixes.
 
     Returns {prefix: snapshots_tagged}. Orphan/config prefixes are skipped
-    (their owner is unknown); unreadable prefixes are skipped with a warning.
+    (their owner is unknown); attached prefixes are skipped because add_tags
+    has no password override; unreadable prefixes are skipped with a warning.
     """
     prefixes = list_prefixes(destination)
     entries = classify(db, destination, prefixes)
@@ -81,10 +83,7 @@ def backfill_tags(db: Session, destination: Repository) -> dict[str, int]:
         if entry["kind"] != "account":
             continue
         account = entry["account"]
-        tags = [
-            f"mfb:email={(account.email_address or '').replace(',', ' ')}",
-            f"mfb:name={(account.name or '').replace(',', ' ')}",
-        ]
+        tags = account_tags(account)
         try:
             snapshots = restic_service.list_snapshots(destination, entry["prefix"])
         except Exception:
