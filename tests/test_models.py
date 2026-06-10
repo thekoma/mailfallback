@@ -479,3 +479,46 @@ def test_rebuild_status_defaults(db_session, default_store):
 
     assert rs.state == "idle"
     assert rs.last_indexed_at is None
+
+
+def test_repository_attachment_unique_per_prefix(db_session):
+    from sqlalchemy.exc import IntegrityError
+
+    from mailfallback.models import Repository, RepositoryAttachment
+
+    store = MailStore(name="s", path="/data/m")
+    db_session.add(store)
+    db_session.flush()
+    acc = Account(name="a", imap_host="h", maildir_path="/data/m/x", store_id=store.id)
+    repo = Repository(name="r", backend_type="s3", restic_password="enc")
+    db_session.add_all([acc, repo])
+    db_session.flush()
+
+    db_session.add(
+        RepositoryAttachment(repository_id=repo.id, account_id=acc.id, prefix="old-uuid")
+    )
+    db_session.commit()
+
+    db_session.add(
+        RepositoryAttachment(repository_id=repo.id, account_id=acc.id, prefix="old-uuid")
+    )
+    try:
+        db_session.commit()
+        raised = False
+    except IntegrityError:
+        db_session.rollback()
+        raised = True
+    assert raised
+
+
+def test_repository_config_backup_defaults(db_session):
+    from mailfallback.models import Repository
+
+    repo = Repository(name="r2", backend_type="local", local_path="enc", restic_password="enc")
+    db_session.add(repo)
+    db_session.commit()
+    db_session.refresh(repo)
+    assert repo.config_backup_enabled is False
+    assert repo.config_backup_passphrase is None
+    assert repo.last_config_backup_at is None
+    assert repo.last_config_backup_status is None

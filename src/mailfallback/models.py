@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import TSVECTOR
@@ -342,12 +343,44 @@ class Repository(Base):
     local_path = Column(String, nullable=True)
     restic_password = Column(String, nullable=False)
     insecure_tls = Column(Boolean, nullable=False, default=False, server_default="false")
+    config_backup_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    config_backup_passphrase = Column(String, nullable=True)  # Fernet-encrypted at rest
+    last_config_backup_at = Column(DateTime(timezone=True), nullable=True)
+    last_config_backup_status = Column(String, nullable=True)  # "ok" | "failed: <msg>"
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
 # Legacy alias — kept so external imports (notably alembic env.py) don't break
 # during the transition. New code MUST use Repository.
 BackupDestination = Repository
+
+
+class RepositoryAttachment(Base):
+    """Maps an orphan restic prefix in a Repository to an Account as a
+    read-only restore source. Future backups keep using the account's own
+    UUID prefix; detaching deletes only this row, never bucket data."""
+
+    __tablename__ = "repository_attachments"
+
+    id = Column(String, primary_key=True, default=_new_uuid)
+    repository_id = Column(
+        String,
+        ForeignKey("backup_destinations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    account_id = Column(
+        String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    prefix = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("repository_id", "prefix", name="uq_repo_attachment_prefix"),
+    )
+
+    repository = relationship("Repository", backref="attachments")
+    account = relationship("Account", backref="repo_attachments")
 
 
 class BackupPolicy(Base):
