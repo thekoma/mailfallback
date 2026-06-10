@@ -215,10 +215,12 @@ class TestContents:
 
 
 class TestAttach:
-    def test_attach_creates_row(self, client, db_session, default_store):
+    @patch("mailfallback.routers.ui_backup.restic_service")
+    def test_attach_creates_row(self, mock_restic, client, db_session, default_store):
         _login_admin(client, db_session, default_store)
         acc = _mk_account(db_session, default_store)
         repo = _mk_repo(client, db_session, default_store)
+        mock_restic.list_snapshots.return_value = []
 
         resp = client.post(
             f"/admin/backup/{repo.id}/attach",
@@ -231,10 +233,12 @@ class TestAttach:
         assert att.prefix == "ghost-uuid"
         assert att.account_id == acc.id
 
-    def test_attach_duplicate_prefix_rejected(self, client, db_session, default_store):
+    @patch("mailfallback.routers.ui_backup.restic_service")
+    def test_attach_duplicate_prefix_rejected(self, mock_restic, client, db_session, default_store):
         _login_admin(client, db_session, default_store)
         acc = _mk_account(db_session, default_store)
         repo = _mk_repo(client, db_session, default_store)
+        mock_restic.list_snapshots.return_value = []
         client.post(
             f"/admin/backup/{repo.id}/attach",
             data={"prefix": "ghost-uuid", "account_id": acc.id},
@@ -266,10 +270,12 @@ class TestAttach:
         assert resp.status_code == 303
         assert db_session.query(RepositoryAttachment).count() == 0
 
-    def test_detach_deletes_row(self, client, db_session, default_store):
+    @patch("mailfallback.routers.ui_backup.restic_service")
+    def test_detach_deletes_row(self, mock_restic, client, db_session, default_store):
         _login_admin(client, db_session, default_store)
         acc = _mk_account(db_session, default_store)
         repo = _mk_repo(client, db_session, default_store)
+        mock_restic.list_snapshots.return_value = []
         client.post(
             f"/admin/backup/{repo.id}/attach",
             data={"prefix": "ghost-uuid", "account_id": acc.id},
@@ -314,11 +320,13 @@ class TestAttachmentRestore:
         _login_admin(client, db_session, default_store)
         acc = _mk_account(db_session, default_store)
         repo = _mk_repo(client, db_session, default_store)
-        client.post(
-            f"/admin/backup/{repo.id}/attach",
-            data={"prefix": "ghost-uuid", "account_id": acc.id},
-            follow_redirects=False,
-        )
+        with patch("mailfallback.routers.ui_backup.restic_service") as mock_restic:
+            mock_restic.list_snapshots.return_value = []
+            client.post(
+                f"/admin/backup/{repo.id}/attach",
+                data={"prefix": "ghost-uuid", "account_id": acc.id},
+                follow_redirects=False,
+            )
         att = db_session.query(RepositoryAttachment).one()
         return acc, repo, att
 
@@ -623,3 +631,123 @@ class TestEnrichedRowTest:
 
         assert resp.status_code == 200
         assert "2 existing" in resp.text
+
+
+class TestAttachPassword:
+    @patch("mailfallback.routers.ui_backup.restic_service")
+    def test_attach_validates_and_stores_password(
+        self, mock_restic, client, db_session, default_store
+    ):
+        from mailfallback.config import settings
+        from mailfallback.security import decrypt_credentials
+
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        mock_restic.list_snapshots.return_value = []
+
+        resp = client.post(
+            f"/admin/backup/{repo.id}/attach",
+            data={
+                "prefix": "ghost-uuid",
+                "account_id": acc.id,
+                "restic_password": "attpass",  # pragma: allowlist secret
+            },
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        att = db_session.query(RepositoryAttachment).one()
+        assert decrypt_credentials(att.restic_password, settings.secret_key) == "attpass"
+        assert mock_restic.list_snapshots.call_args.kwargs["restic_password_enc"] is not None
+
+    @patch("mailfallback.routers.ui_backup.restic_service")
+    def test_attach_wrong_password_rejected(self, mock_restic, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        mock_restic.list_snapshots.side_effect = RuntimeError("wrong password")
+
+        resp = client.post(
+            f"/admin/backup/{repo.id}/attach",
+            data={
+                "prefix": "ghost-uuid",
+                "account_id": acc.id,
+                "restic_password": "bad",  # pragma: allowlist secret
+            },
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        assert db_session.query(RepositoryAttachment).count() == 0
+
+    @patch("mailfallback.routers.ui_backup.restic_service")
+    def test_attach_blank_password_uses_repo_password(
+        self, mock_restic, client, db_session, default_store
+    ):
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        mock_restic.list_snapshots.return_value = []
+
+        resp = client.post(
+            f"/admin/backup/{repo.id}/attach",
+            data={"prefix": "ghost-uuid", "account_id": acc.id},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        att = db_session.query(RepositoryAttachment).one()
+        assert att.restic_password is None
+        assert mock_restic.list_snapshots.call_args.kwargs.get("restic_password_enc") is None
+
+    @patch("mailfallback.routers.ui_backup.restic_service")
+    def test_update_password_validates(self, mock_restic, client, db_session, default_store):
+        from mailfallback.config import settings
+        from mailfallback.security import decrypt_credentials
+
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        mock_restic.list_snapshots.return_value = []
+        client.post(
+            f"/admin/backup/{repo.id}/attach",
+            data={"prefix": "ghost-uuid", "account_id": acc.id},
+            follow_redirects=False,
+        )
+        att = db_session.query(RepositoryAttachment).one()
+
+        resp = client.post(
+            f"/admin/backup/attachments/{att.id}/password",
+            data={"restic_password": "newpass"},  # pragma: allowlist secret
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        db_session.expire_all()
+        att = db_session.query(RepositoryAttachment).one()
+        assert decrypt_credentials(att.restic_password, settings.secret_key) == "newpass"
+
+    @patch("mailfallback.routers.ui_backup.restic_service")
+    def test_update_password_rejects_invalid(self, mock_restic, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        mock_restic.list_snapshots.return_value = []
+        client.post(
+            f"/admin/backup/{repo.id}/attach",
+            data={"prefix": "ghost-uuid", "account_id": acc.id},
+            follow_redirects=False,
+        )
+        att = db_session.query(RepositoryAttachment).one()
+        mock_restic.list_snapshots.side_effect = RuntimeError("still wrong")
+
+        resp = client.post(
+            f"/admin/backup/attachments/{att.id}/password",
+            data={"restic_password": "stillbad"},  # pragma: allowlist secret
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        db_session.expire_all()
+        assert db_session.query(RepositoryAttachment).one().restic_password is None

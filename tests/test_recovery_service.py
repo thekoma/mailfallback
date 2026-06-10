@@ -228,7 +228,7 @@ def test_attached_restore_resolves_foreign_maildir_root(mock_restic, db_session,
     not the first folder containing cur/new/tmp (e.g. INBOX)."""
     repo, acct = _mk_policyless_account(db_session, tmp_store)
 
-    def materialize(destination, prefix, snapshot_id, target_path):
+    def materialize(destination, prefix, snapshot_id, target_path, restic_password_enc=None):
         _materialize_foreign_tree(target_path, "old-ghost-prefix")
 
     mock_restic.restore_snapshot.side_effect = materialize
@@ -253,7 +253,7 @@ def test_attached_restore_fallback_uses_commonpath(mock_restic, db_session, tmp_
     common parent of all mail folders (the maildir root), not INBOX."""
     repo, acct = _mk_policyless_account(db_session, tmp_store)
 
-    def materialize(destination, prefix, snapshot_id, target_path):
+    def materialize(destination, prefix, snapshot_id, target_path, restic_password_enc=None):
         # Directory name does NOT match the restic prefix.
         _materialize_foreign_tree(target_path, "renamed-dir")
 
@@ -283,3 +283,23 @@ def test_create_recovery_rejects_partial_source_kwargs(db_session, tmp_store):
         recovery_service.create_recovery(
             db_session, acct.id, "ab12", source_prefix="old-ghost-prefix"
         )
+
+
+@patch("mailfallback.services.recovery_service.restic_service")
+def test_attached_restore_threads_password(mock_restic, db_session, tmp_store):
+    """An attachment with its own restic password threads it to restic calls."""
+    repo, acct = _mk_policyless_account(db_session, tmp_store)
+    mock_restic.restore_snapshot.return_value = {}
+    mock_restic.list_snapshots.return_value = []
+
+    recovery_service.create_recovery(
+        db_session,
+        acct.id,
+        "ab12",
+        source_repository=repo,
+        source_prefix="old-ghost-prefix",
+        source_password_enc="enc-att-pass",  # pragma: allowlist secret
+    )
+
+    assert mock_restic.restore_snapshot.call_args.kwargs["restic_password_enc"] == "enc-att-pass"
+    assert mock_restic.list_snapshots.call_args.kwargs["restic_password_enc"] == "enc-att-pass"

@@ -42,6 +42,9 @@
                         <option value="{{ acc.id }}">{{ acc.name }} ({{ acc.email_address }})</option>
                         {% endfor %}
                     </select>
+                    <input type="password" name="restic_password"
+                           placeholder="Prefix password (blank = repository password)"
+                           autocomplete="new-password">
                     <button type="submit" class="icon-btn" title="Attach as restore source">
                         <i data-lucide="link" class="icon-md"></i> Attach
                     </button>
@@ -50,6 +53,14 @@
                 <span class="text-muted text-small">No mailboxes available to attach</span>
                 {% endif %}
                 {% elif e.kind == "attached" %}
+                <form method="post" action="/admin/backup/attachments/{{ e.attachment.id }}/password"
+                      class="inline-form">
+                    <input type="password" name="restic_password" placeholder="New password"
+                           autocomplete="new-password" required>
+                    <button type="submit" class="icon-btn" title="Update prefix password">
+                        <i data-lucide="key-round" class="icon-md"></i>
+                    </button>
+                </form>
                 <form method="post" action="/admin/backup/attachments/{{ e.attachment.id }}/delete"
                       class="inline-form"
                       data-confirm="Detach {{ e.prefix }}? Bucket data is not touched."

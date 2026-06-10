@@ -131,7 +131,9 @@ class TestPrefixDetail:
         assert detail["ok"] is True
         assert detail["snapshot_count"] == 2
         assert detail["latest"] == "2026-06-09T03:00:00Z"
-        mock_restic.list_snapshots.assert_called_once_with(s3_repo, "stranger")
+        mock_restic.list_snapshots.assert_called_once_with(
+            s3_repo, "stranger", restic_password_enc=None
+        )
 
     @patch("mailfallback.services.repo_inventory.restic_service")
     def test_detail_reports_error(self, mock_restic, s3_repo):
@@ -141,3 +143,14 @@ class TestPrefixDetail:
 
         assert detail["ok"] is False
         assert "wrong password" in detail["error"]
+
+
+class TestPrefixDetailOverride:
+    @patch("mailfallback.services.repo_inventory.restic_service")
+    def test_detail_threads_password_override(self, mock_restic, s3_repo):
+        mock_restic.list_snapshots.return_value = []
+
+        repo_inventory.prefix_detail(s3_repo, "ghost", restic_password_enc="enc-override")
+
+        kwargs = mock_restic.list_snapshots.call_args.kwargs
+        assert kwargs["restic_password_enc"] == "enc-override"
