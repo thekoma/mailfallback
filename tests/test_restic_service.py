@@ -259,3 +259,92 @@ def test_list_files_parses_restic_ls_json(mock_run, db_session, default_store):
     assert "/INBOX/cur/1235.host:2," in files
     # Directory entries excluded
     assert "/INBOX" not in files
+
+
+class TestPasswordOverride:
+    def test_build_env_uses_override_when_given(self, s3_destination):
+        # mock_decrypt (autouse) strips the "enc-" prefix, mirroring decryption
+        env = restic_service.build_env(
+            s3_destination, "some-prefix", restic_password_enc="enc-other-password"
+        )
+        assert env["RESTIC_PASSWORD"] == "other-password"  # pragma: allowlist secret
+
+    def test_build_env_defaults_to_destination_password(self, s3_destination):
+        env = restic_service.build_env(s3_destination, "some-prefix")
+        assert env["RESTIC_PASSWORD"]  # non-empty, from destination
+
+    @patch("mailfallback.services.restic_service._run_restic")
+    def test_list_snapshots_threads_override(self, mock_run, s3_destination):
+        mock_run.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+
+        restic_service.list_snapshots(s3_destination, "ghost", restic_password_enc="enc-attpass")
+
+        env = mock_run.call_args.args[1]
+        assert env["RESTIC_PASSWORD"] == "attpass"  # pragma: allowlist secret
+
+    @patch("mailfallback.services.restic_service._run_restic")
+    def test_restore_snapshot_threads_override(self, mock_run, s3_destination):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        restic_service.restore_snapshot(
+            s3_destination, "ghost", "ab12", "/tmp/x", restic_password_enc="enc-attpass"
+        )
+
+        env = mock_run.call_args.args[1]
+        assert env["RESTIC_PASSWORD"] == "attpass"  # pragma: allowlist secret
+
+
+class TestBackupTags:
+    @patch("mailfallback.services.restic_service._run_restic")
+    def test_run_backup_passes_tag_flags(self, mock_run, s3_destination):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        restic_service.run_backup(
+            s3_destination,
+            "acc-id",
+            "/data/m/x",
+            tags=["mfb:email=a@b.c", "mfb:name=Work"],
+        )
+
+        args = mock_run.call_args.args[0]
+        assert "--tag=mfb:email=a@b.c" in args
+        assert "--tag=mfb:name=Work" in args
+
+    @patch("mailfallback.services.restic_service._run_restic")
+    def test_run_backup_without_tags_unchanged(self, mock_run, s3_destination):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        restic_service.run_backup(s3_destination, "acc-id", "/data/m/x")
+
+        args = mock_run.call_args.args[0]
+        assert not any(a.startswith("--tag") for a in args)
+
+
+class TestAddTags:
+    @patch("mailfallback.services.restic_service._run_restic")
+    def test_add_tags_builds_command(self, mock_run, s3_destination):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        ok = restic_service.add_tags(
+            s3_destination,
+            "acc-id",
+            ["ab12", "cd34"],
+            ["mfb:email=a@b.c", "mfb:name=Work"],
+        )
+
+        assert ok is True
+        args = mock_run.call_args.args[0]
+        assert args == ["tag", "--add", "mfb:email=a@b.c", "--add", "mfb:name=Work", "ab12", "cd34"]
+
+    @patch("mailfallback.services.restic_service._run_restic")
+    def test_add_tags_failure_returns_false(self, mock_run, s3_destination):
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="boom")
+
+        assert restic_service.add_tags(s3_destination, "acc-id", ["ab12"], ["t"]) is False
+
+    @patch("mailfallback.services.restic_service._run_restic")
+    def test_add_tags_empty_ids_is_noop(self, mock_run, s3_destination):
+        from mailfallback.services.restic_service import add_tags
+
+        assert add_tags(s3_destination, "acc-id", [], ["t"]) is True
+        mock_run.assert_not_called()

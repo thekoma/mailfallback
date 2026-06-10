@@ -266,6 +266,20 @@ class TestRunConfigBackup:
         assert ret_args.kwargs.get("keep_daily") == 30
 
     @patch("mailfallback.services.config_backup_service.restic_service")
+    def test_config_snapshot_is_tagged(self, mock_restic, db_session, populated):
+        repo = populated["repo"]
+        repo.config_backup_enabled = True
+        repo.config_backup_passphrase = _enc("a-strong-passphrase")
+        db_session.commit()
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.return_value = {}
+        mock_restic.apply_retention.return_value = {"pruned": True}
+
+        cbs.run_config_backup(db_session, repo)
+
+        assert mock_restic.run_backup.call_args.kwargs["tags"] == ["mfb:config"]
+
+    @patch("mailfallback.services.config_backup_service.restic_service")
     def test_failure_records_error(self, mock_restic, db_session, populated):
         repo = populated["repo"]
         repo.config_backup_enabled = True

@@ -1,5 +1,5 @@
 {% if detail.ok %}
-{{ detail.snapshot_count }}{% if detail.latest %} <span class="text-muted">· latest {{ detail.latest[:10] }}</span>{% endif %}
+{{ detail.snapshot_count }}{% if detail.latest %} <span class="text-muted">· latest {{ detail.latest[:10] }}</span>{% endif %}{% if detail.email %} <span class="text-muted">· {{ detail.email }}</span>{% endif %}
 {% else %}
 <span class="text-muted" title="{{ detail.error }}">unreadable</span>
 {% endif %}

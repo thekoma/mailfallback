@@ -17,7 +17,9 @@ from mailfallback.models import (
     RepositoryAttachment,
 )
 from mailfallback.routers.ui import _get_session_user, templates
+from mailfallback.routers.ui_admin import _transient_repository_from_form
 from mailfallback.security import encrypt_credentials
+from mailfallback.services import restic_service
 from mailfallback.services.account_service import get_account
 from mailfallback.services.audit_service import log_action
 
@@ -161,9 +163,9 @@ async def admin_create_backup_destination(request: Request, db: Session = Depend
             return RedirectResponse("/admin/backup", status_code=303)
     dest.config_backup_enabled = config_backup_enabled
 
-    from mailfallback.services.restic_service import test_destination
+    from starlette.concurrency import run_in_threadpool
 
-    test_result = test_destination(dest)
+    test_result = await run_in_threadpool(restic_service.test_destination, dest)
     if not test_result["ok"]:
         error_msg = test_result.get("error", "Unknown error")
         request.session["flash_error"] = f"Connection test failed: {error_msg}"
@@ -289,9 +291,9 @@ async def admin_edit_backup_destination(
             return RedirectResponse("/admin/backup", status_code=303)
     dest.config_backup_enabled = config_backup_enabled
 
-    from mailfallback.services.restic_service import test_destination
+    from starlette.concurrency import run_in_threadpool
 
-    test_result = test_destination(dest)
+    test_result = await run_in_threadpool(restic_service.test_destination, dest)
     if not test_result["ok"]:
         db.rollback()
         error_msg = test_result.get("error", "Unknown error")
@@ -317,10 +319,41 @@ async def admin_edit_backup_destination(
     return RedirectResponse("/admin/backup", status_code=303)
 
 
+def _test_result_context(dest) -> dict:
+    """Probe + best-effort prefix count for the enriched test partial."""
+    from mailfallback.services import repo_inventory
+
+    result = restic_service.test_destination(dest)
+    count = None
+    if result["ok"]:
+        try:
+            count = len(
+                [p for p in repo_inventory.list_prefixes(dest) if p != repo_inventory.CONFIG_PREFIX]
+            )
+        except Exception:
+            count = None
+    return {"ok": result["ok"], "error": result.get("error"), "count": count}
+
+
+@router.post("/admin/backup/test-connection", response_class=HTMLResponse)
+async def admin_test_connection_transient(request: Request, db: Session = Depends(get_db)):
+    """Test connection details from the wizard form before the Repository exists."""
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+
+    form = await request.form()
+    from starlette.concurrency import run_in_threadpool
+
+    dest = _transient_repository_from_form(form)
+    context = await run_in_threadpool(_test_result_context, dest)
+    return templates.TemplateResponse(
+        request=request, name="partials/repo_test_result.html", context=context
+    )
+
+
 @router.post("/admin/backup/{dest_id}/test")
-async def admin_test_backup_destination(
-    dest_id: str, request: Request, db: Session = Depends(get_db)
-):
+def admin_test_backup_destination(dest_id: str, request: Request, db: Session = Depends(get_db)):
     user = _get_session_user(request, db)
     if not user or user.role.value != "admin":
         return RedirectResponse("/", status_code=303)
@@ -336,19 +369,17 @@ async def admin_test_backup_destination(
         request.session["flash_error"] = "Destination not found"
         return RedirectResponse("/admin/backup", status_code=303)
 
-    from mailfallback.services.restic_service import test_destination
-
-    result = test_destination(dest)
+    context = _test_result_context(dest)
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(
             request=request,
             name="partials/repo_test_result.html",
-            context={"ok": result["ok"], "error": result.get("error")},
+            context=context,
         )
-    if result["ok"]:
+    if context["ok"]:
         request.session["flash_success"] = f"{dest.name}: connection OK"
     else:
-        error_msg = result.get("error", "Unknown error")
+        error_msg = context["error"] or "Unknown error"
         request.session["flash_error"] = f"{dest.name}: {error_msg}"
     return RedirectResponse("/admin/backup", status_code=303)
 
@@ -381,6 +412,39 @@ def admin_run_config_backup(dest_id: str, request: Request, db: Session = Depend
         resource_name=dest.name,
         ip_address=request.client.host if request.client else None,
     )
+    return RedirectResponse("/admin/backup", status_code=303)
+
+
+@router.post("/admin/backup/{dest_id}/backfill-tags")
+def admin_backfill_tags(dest_id: str, request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
+    if not dest:
+        request.session["flash_error"] = "Repository not found"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    from mailfallback.services import repo_inventory
+
+    report = repo_inventory.backfill_tags(db, dest)
+    total = sum(report.values())
+    log_action(
+        db,
+        user=user,
+        action="backup_destination.backfill_tags",
+        resource_type="backup_destination",
+        resource_id=dest.id,
+        resource_name=dest.name,
+        details={"tagged": report},
+        ip_address=request.client.host if request.client else None,
+    )
+    if total:
+        request.session["flash_success"] = (
+            f"Tagged {total} snapshot(s) across {len(report)} prefix(es)"
+        )
+    else:
+        request.session["flash_success"] = "All snapshots already tagged"
     return RedirectResponse("/admin/backup", status_code=303)
 
 
@@ -426,7 +490,17 @@ def admin_repo_prefix_detail(
 
     from mailfallback.services import repo_inventory
 
-    detail = repo_inventory.prefix_detail(dest, prefix)
+    att = (
+        db.query(RepositoryAttachment)
+        .filter(
+            RepositoryAttachment.repository_id == dest_id,
+            RepositoryAttachment.prefix == prefix,
+        )
+        .first()
+    )
+    detail = repo_inventory.prefix_detail(
+        dest, prefix, restic_password_enc=att.restic_password if att else None
+    )
     return templates.TemplateResponse(
         request=request,
         name="partials/repo_prefix_detail.html",
@@ -481,7 +555,24 @@ async def admin_repo_attach(dest_id: str, request: Request, db: Session = Depend
         request.session["flash_error"] = f"Prefix {prefix} is already attached"
         return RedirectResponse("/admin/backup", status_code=303)
 
-    att = RepositoryAttachment(repository_id=dest_id, account_id=account.id, prefix=prefix)
+    password = form.get("restic_password", "").strip()
+    password_enc = encrypt_credentials(password, settings.secret_key) if password else None
+
+    from starlette.concurrency import run_in_threadpool
+
+    try:
+        await run_in_threadpool(
+            restic_service.list_snapshots, dest, prefix, restic_password_enc=password_enc
+        )
+    except Exception as e:
+        request.session["flash_error"] = (
+            f"Cannot open {prefix} with the given password: {str(e)[:150]}"
+        )
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    att = RepositoryAttachment(
+        repository_id=dest_id, account_id=account.id, prefix=prefix, restic_password=password_enc
+    )
     db.add(att)
     db.commit()
     log_action(
@@ -523,6 +614,58 @@ async def admin_repo_detach(attachment_id: str, request: Request, db: Session = 
         request.session["flash_success"] = "Prefix detached"
     else:
         request.session["flash_error"] = "Attachment not found"
+    return RedirectResponse("/admin/backup", status_code=303)
+
+
+@router.post("/admin/backup/attachments/{attachment_id}/password")
+async def admin_attachment_password(
+    attachment_id: str, request: Request, db: Session = Depends(get_db)
+):
+    """Set or replace the restic password for an attached prefix.
+
+    The password is validated against the sub-repo before being stored;
+    a blank password falls back to the repository's own restic password.
+    """
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    att = db.query(RepositoryAttachment).filter(RepositoryAttachment.id == attachment_id).first()
+    if not att:
+        request.session["flash_error"] = "Attachment not found"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    form = await request.form()
+    password = form.get("restic_password", "").strip()
+    password_enc = encrypt_credentials(password, settings.secret_key) if password else None
+
+    from starlette.concurrency import run_in_threadpool
+
+    try:
+        await run_in_threadpool(
+            restic_service.list_snapshots,
+            att.repository,
+            att.prefix,
+            restic_password_enc=password_enc,
+        )
+    except Exception as e:
+        request.session["flash_error"] = (
+            f"Cannot open {att.prefix} with the given password: {str(e)[:150]}"
+        )
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    att.restic_password = password_enc
+    db.commit()
+    log_action(
+        db,
+        user=user,
+        action="backup_destination.attach_password",
+        resource_type="backup_destination",
+        resource_id=att.repository_id,
+        resource_name=att.repository.name if att.repository else None,
+        details={"prefix": att.prefix},
+        ip_address=request.client.host if request.client else None,
+    )
+    request.session["flash_success"] = f"Password updated for {att.prefix}"
     return RedirectResponse("/admin/backup", status_code=303)
 
 
@@ -625,8 +768,6 @@ def account_backup_snapshots(account_id: str, request: Request, db: Session = De
     if not account:
         return HTMLResponse("")
 
-    from mailfallback.services import restic_service
-
     backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
     attachments = (
         db.query(RepositoryAttachment).filter(RepositoryAttachment.account_id == account_id).all()
@@ -645,7 +786,9 @@ def account_backup_snapshots(account_id: str, request: Request, db: Session = De
     attached_sources = []
     for att in attachments:
         try:
-            snaps = restic_service.list_snapshots(att.repository, att.prefix)
+            snaps = restic_service.list_snapshots(
+                att.repository, att.prefix, restic_password_enc=att.restic_password
+            )
         except Exception as e:
             snaps = []
             logger.warning("Cannot list attached prefix %s: %s", att.prefix, e)
@@ -756,6 +899,7 @@ def account_attachment_restore(
             snapshot_id,
             source_repository=att.repository,
             source_prefix=att.prefix,
+            source_password_enc=att.restic_password,
         )
     except ValueError as e:
         request.session["flash_error"] = str(e)

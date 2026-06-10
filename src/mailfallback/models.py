@@ -374,6 +374,7 @@ class RepositoryAttachment(Base):
         String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True
     )
     prefix = Column(String, nullable=False)
+    restic_password = Column(String, nullable=True)  # Fernet; NULL = repository password
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     __table_args__ = (

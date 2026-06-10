@@ -31,11 +31,18 @@ def build_repo_url(destination: Repository, account_id: str) -> str:
     )
 
 
-def build_env(destination: Repository, account_id: str) -> dict[str, str]:
-    """Build environment variables dict for restic subprocess calls."""
+def build_env(
+    destination: Repository, account_id: str, restic_password_enc: str | None = None
+) -> dict[str, str]:
+    """Build environment variables dict for restic subprocess calls.
+
+    restic_password_enc: optional Fernet-encrypted password overriding the
+    destination's own (used for attached prefixes with their own password).
+    """
+    password_enc = restic_password_enc or destination.restic_password
     env: dict[str, str] = {
         "RESTIC_REPOSITORY": build_repo_url(destination, account_id),
-        "RESTIC_PASSWORD": decrypt_credentials(destination.restic_password, settings.secret_key),
+        "RESTIC_PASSWORD": decrypt_credentials(password_enc, settings.secret_key),
     }
     if destination.backend_type.value == "s3":
         env["AWS_ACCESS_KEY_ID"] = decrypt_credentials(
@@ -115,10 +122,26 @@ def init_repo(destination: Repository, account_id: str) -> bool:
     return False
 
 
-def run_backup(destination: Repository, account_id: str, maildir_path: str) -> dict:
+def account_tags(account) -> list[str]:
+    """Metadata tags for an account's snapshots (commas break restic tag values)."""
+    return [
+        f"mfb:email={(account.email_address or '').replace(',', ' ')}",
+        f"mfb:name={(account.name or '').replace(',', ' ')}",
+    ]
+
+
+def run_backup(
+    destination: Repository,
+    account_id: str,
+    maildir_path: str,
+    tags: list[str] | None = None,
+) -> dict:
     """Run a restic backup of the maildir path. Returns parsed JSON output."""
     env = build_env(destination, account_id)
-    result = _run_restic(["backup", "--json", maildir_path], env, _is_insecure(destination))
+    args = ["backup", "--json"]
+    args.extend(f"--tag={t}" for t in tags or [])
+    args.append(maildir_path)
+    result = _run_restic(args, env, _is_insecure(destination))
     if result.returncode != 0:
         raise RuntimeError(f"Restic backup failed: {result.stderr}")
 
@@ -134,9 +157,11 @@ def run_backup(destination: Repository, account_id: str, maildir_path: str) -> d
     return summary
 
 
-def list_snapshots(destination: Repository, account_id: str) -> list[dict]:
+def list_snapshots(
+    destination: Repository, account_id: str, restic_password_enc: str | None = None
+) -> list[dict]:
     """List snapshots in the restic repository, newest first."""
-    env = build_env(destination, account_id)
+    env = build_env(destination, account_id, restic_password_enc=restic_password_enc)
     result = _run_restic(["snapshots", "--json"], env, _is_insecure(destination))
     if result.returncode != 0:
         raise RuntimeError(f"Restic snapshots failed: {result.stderr}")
@@ -153,9 +178,10 @@ def restore_snapshot(
     account_id: str,
     snapshot_id: str,
     target_path: str,
+    restic_password_enc: str | None = None,
 ) -> dict:
     """Restore a specific snapshot to the target path."""
-    env = build_env(destination, account_id)
+    env = build_env(destination, account_id, restic_password_enc=restic_password_enc)
     result = _run_restic(
         ["restore", snapshot_id, "--target", target_path],
         env,
@@ -243,6 +269,27 @@ def list_files(destination, account_id: str, snapshot_id: str):
         path = entry.get("path")
         if path:
             yield path
+
+
+def add_tags(
+    destination: Repository,
+    account_id: str,
+    snapshot_ids: list[str],
+    tags: list[str],
+) -> bool:
+    """Add tags to existing snapshots (rewrites snapshot metadata only)."""
+    if not snapshot_ids or not tags:
+        return True
+    env = build_env(destination, account_id)
+    args = ["tag"]
+    for t in tags:
+        args.extend(["--add", t])
+    args.extend(snapshot_ids)
+    result = _run_restic(args, env, _is_insecure(destination))
+    if result.returncode != 0:
+        logger.error("Failed to tag snapshots for %s: %s", account_id, result.stderr)
+        return False
+    return True
 
 
 def forget_all(destination: Repository, account_id: str) -> bool:

@@ -10,6 +10,7 @@ from mailfallback.config import settings
 from mailfallback.models import Account, BackendType, Repository, RepositoryAttachment
 from mailfallback.security import decrypt_credentials
 from mailfallback.services import restic_service, s3_probe
+from mailfallback.services.restic_service import account_tags
 
 logger = logging.getLogger(__name__)
 
@@ -68,17 +69,61 @@ def classify(db: Session, destination: Repository, prefixes: list[str]) -> list[
     return entries
 
 
-def prefix_detail(destination: Repository, prefix: str) -> dict:
-    """Open the sub-repo with the repository's restic password and summarize.
+def backfill_tags(db: Session, destination: Repository) -> dict[str, int]:
+    """Add mfb:email/mfb:name tags to untagged snapshots of account prefixes.
 
-    This is where the restic password gets genuinely validated.
+    Returns {prefix: snapshots_tagged}. Orphan/config prefixes are skipped
+    (their owner is unknown); attached prefixes are skipped because add_tags
+    has no password override; unreadable prefixes are skipped with a warning.
+    """
+    prefixes = list_prefixes(destination)
+    entries = classify(db, destination, prefixes)
+    report: dict[str, int] = {}
+    for entry in entries:
+        if entry["kind"] != "account":
+            continue
+        account = entry["account"]
+        tags = account_tags(account)
+        try:
+            snapshots = restic_service.list_snapshots(destination, entry["prefix"])
+        except Exception:
+            logger.warning("Backfill: cannot read prefix %s", entry["prefix"])
+            continue
+        untagged = [
+            s["short_id"]
+            for s in snapshots
+            if not any(t.startswith("mfb:email=") for t in (s.get("tags") or []))
+        ]
+        if untagged and restic_service.add_tags(destination, entry["prefix"], untagged, tags):
+            report[entry["prefix"]] = len(untagged)
+    return report
+
+
+def prefix_detail(
+    destination: Repository, prefix: str, restic_password_enc: str | None = None
+) -> dict:
+    """Open the sub-repo and summarize. Validates the effective password.
+
+    restic_password_enc: optional per-attachment Fernet password; falls back
+    to the repository's own restic password when None.
     """
     try:
-        snapshots = restic_service.list_snapshots(destination, prefix)
+        snapshots = restic_service.list_snapshots(
+            destination, prefix, restic_password_enc=restic_password_enc
+        )
     except Exception as e:
         return {"ok": False, "error": str(e)[:200]}
+    email = name = None
+    if snapshots:
+        for tag in snapshots[0].get("tags") or []:
+            if tag.startswith("mfb:email="):
+                email = tag.removeprefix("mfb:email=")
+            elif tag.startswith("mfb:name="):
+                name = tag.removeprefix("mfb:name=")
     return {
         "ok": True,
         "snapshot_count": len(snapshots),
         "latest": snapshots[0]["time"] if snapshots else None,
+        "email": email,
+        "name": name,
     }

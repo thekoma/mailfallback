@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from mailfallback.db import SessionLocal
 from mailfallback.models import Account, BackupPolicy, BackupStatus
 from mailfallback.services import index_service, restic_service
+from mailfallback.services.restic_service import account_tags
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,10 @@ def execute_backup(db: Session, account_backup_id: str) -> None:
 
         # Phase 2: run backup
         _backup_progress[account_backup_id] = {"phase": "backup"}
-        summary = restic_service.run_backup(backup.destination, account.id, account.maildir_path)
+        tags = account_tags(account)
+        summary = restic_service.run_backup(
+            backup.destination, account.id, account.maildir_path, tags=tags
+        )
         _backup_progress[account_backup_id] = {"phase": "backup", "summary": summary}
 
         # Index hook: record_snapshot for the freshly-created snapshot.
