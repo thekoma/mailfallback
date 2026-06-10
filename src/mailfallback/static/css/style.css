@@ -1222,6 +1222,14 @@ button.primary:focus-visible { outline: 2px solid var(--pico-primary); outline-o
 .stats-dot-ok { background: var(--mfb-stats-dot-ok); }
 .stats-dot-syncing { background: var(--mfb-stats-dot-syncing); }
 .stats-dot-error { background: var(--mfb-stats-dot-error); }
+.stats-pill-truncate {
+    max-width: 28ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+    vertical-align: bottom;
+}
 
 /* === Hero panel === */
 .hero-panel {
