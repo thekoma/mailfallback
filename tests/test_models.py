@@ -567,3 +567,26 @@ def test_delete_repository_cascades_repo_attachments(db_session, default_store):
 
     assert db_session.query(RepositoryAttachment).count() == 0
     assert db_session.query(Account).count() == 1
+
+
+def test_repository_attachment_password_nullable(db_session):
+    from mailfallback.models import Repository, RepositoryAttachment
+
+    store = MailStore(name="s16", path="/data/m16")
+    db_session.add(store)
+    db_session.flush()
+    acc = Account(name="a16", imap_host="h", maildir_path="/data/m16/x", store_id=store.id)
+    repo = Repository(name="r16", backend_type="s3", restic_password="enc")
+    db_session.add_all([acc, repo])
+    db_session.flush()
+
+    att = RepositoryAttachment(repository_id=repo.id, account_id=acc.id, prefix="p16")
+    db_session.add(att)
+    db_session.commit()
+    db_session.refresh(att)
+    assert att.restic_password is None
+
+    att.restic_password = "enc-override"  # pragma: allowlist secret
+    db_session.commit()
+    db_session.refresh(att)
+    assert att.restic_password == "enc-override"  # pragma: allowlist secret

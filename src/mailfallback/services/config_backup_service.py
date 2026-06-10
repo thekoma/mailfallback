@@ -258,7 +258,7 @@ def run_config_backup(db: Session, repository: Repository) -> dict:
                 f.write(blob)
             if not restic_service.init_repo(repository, CONFIG_PREFIX):
                 raise RuntimeError("Could not initialize config repository")
-            restic_service.run_backup(repository, CONFIG_PREFIX, file_path)
+            restic_service.run_backup(repository, CONFIG_PREFIX, file_path, tags=["mfb:config"])
             restic_service.apply_retention(repository, CONFIG_PREFIX, "custom", keep_daily=30)
         repository.last_config_backup_at = _utcnow()
         repository.last_config_backup_status = "ok"

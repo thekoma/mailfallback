@@ -95,6 +95,23 @@ class TestExecuteBackup:
         assert account_backup.last_error is None
 
     @patch("mailfallback.services.backup_worker.restic_service")
+    def test_backup_tags_snapshots_with_account_metadata(
+        self, mock_restic, db_session, account_backup, account
+    ):
+        account.email_address = "w@x.y"
+        db_session.commit()
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.return_value = {"message_type": "summary"}
+        mock_restic.apply_retention.return_value = {"pruned": True}
+        mock_restic.list_snapshots.return_value = []
+
+        execute_backup(db_session, account_backup.id)
+
+        tags = mock_restic.run_backup.call_args.kwargs["tags"]
+        assert "mfb:email=w@x.y" in tags
+        assert any(t.startswith("mfb:name=") for t in tags)
+
+    @patch("mailfallback.services.backup_worker.restic_service")
     def test_failed_run_clears_success_timestamp(self, mock_restic, db_session, account_backup):
         """A failed run records last_run_at but leaves last_successful_run_at untouched."""
         # Pre-populate a previous success.
