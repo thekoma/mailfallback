@@ -48,6 +48,22 @@ def mock_decrypt():
         yield
 
 
+class TestTestDestination:
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_delegates_to_probe(self, mock_probe, s3_destination):
+        mock_probe.return_value = {"ok": True, "error": None}
+        result = restic_service.test_destination(s3_destination)
+        assert result == {"ok": True, "error": None}
+        mock_probe.assert_called_once_with(s3_destination)
+
+    @patch("mailfallback.services.s3_probe.probe")
+    def test_propagates_failure(self, mock_probe, s3_destination):
+        mock_probe.return_value = {"ok": False, "error": "AccessDenied"}
+        result = restic_service.test_destination(s3_destination)
+        assert result["ok"] is False
+        assert result["error"] == "AccessDenied"
+
+
 class TestBuildRepoUrl:
     def test_s3_url(self, s3_destination):
         url = restic_service.build_repo_url(s3_destination, "acc-123")
