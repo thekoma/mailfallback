@@ -124,6 +124,23 @@ user_allowed_stores = Table(
     Column("store_id", String, ForeignKey("mail_stores.id"), primary_key=True),
 )
 
+user_allowed_repositories = Table(
+    "user_allowed_repositories",
+    Base.metadata,
+    Column(
+        "user_id",
+        String,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "repository_id",
+        String,
+        ForeignKey("backup_destinations.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
+
 group_members = Table(
     "group_members",
     Base.metadata,
@@ -157,6 +174,9 @@ class User(Base):
     accounts = relationship("Account", secondary=account_owners, back_populates="owners")
     store = relationship("MailStore", back_populates="users")
     allowed_stores = relationship("MailStore", secondary=user_allowed_stores)
+    allowed_repositories = relationship(
+        "Repository", secondary=user_allowed_repositories, passive_deletes=True
+    )
 
 
 class MailStore(Base):
