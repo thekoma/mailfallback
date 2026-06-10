@@ -220,3 +220,27 @@ class TestAccountPageFilter:
 
         assert "r-legacy3" in resp.text
         assert "not in your allowed set" in resp.text
+
+    def test_non_admin_no_grants_sees_role_aware_empty_state(
+        self, client, db_session, default_store
+    ):
+        owner = create_user(db_session, "own7", "pass", UserRole.user, store_id=default_store.id)
+        client.post("/api/auth/login", json={"username": "own7", "password": "pass"})
+        acc = _mk_account_owned(db_session, default_store, owner, name="a9", path="/data/m/a9")
+        _mk_repo(db_session, "r-existing")
+
+        resp = client.get(f"/accounts/{acc.id}")
+
+        assert resp.status_code == 200
+        assert "ask an administrator" in resp.text
+        assert "No repositories configured" not in resp.text
+
+    def test_admin_no_repos_sees_admin_empty_state(self, client, db_session, default_store):
+        admin = _login_admin(client, db_session, default_store)
+        acc = _mk_account_owned(db_session, default_store, admin, name="a10", path="/data/m/a10")
+
+        resp = client.get(f"/accounts/{acc.id}")
+
+        assert resp.status_code == 200
+        assert "No repositories configured" in resp.text
+        assert "ask an administrator" not in resp.text

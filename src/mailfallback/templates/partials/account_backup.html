@@ -39,7 +39,11 @@
     </button>
 </form>
 {% else %}
+{% if user.role.value == "admin" %}
 <p class="text-muted text-small">No repositories configured. <a href="/admin/backup">Add one</a> first.</p>
+{% else %}
+<p class="text-muted text-small">No repositories available for your user — ask an administrator to grant you access.</p>
+{% endif %}
 {% endif %}
 
 {% else %}
