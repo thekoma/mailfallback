@@ -63,6 +63,11 @@
     <span class="stats-pill">{{ backup_config.retention_preset.value | capitalize }}</span>
 </div>
 
+<p class="text-small text-muted">
+    Destination: <strong>{{ backup_config.destination.name }}</strong> →
+    <code>{{ account.id }}</code>
+</p>
+
 {% if backup_config.last_error %}
 <p class="text-small sync-error">{{ backup_config.last_error }}</p>
 {% endif %}
