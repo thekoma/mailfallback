@@ -31,7 +31,7 @@ ACTION_LABELS = {
     "settings.update": "Updated system settings",
     "config.export": "Exported configuration",
     "config.import": "Imported configuration",
-    "config.restore": "Configuration restored",
+    "config.restore": "Restored configuration",
     "restore.start": "Started mail restore",
     "restore.complete": "Completed mail restore",
     "restore.failed": "Mail restore failed",

@@ -138,6 +138,28 @@ class TestInlineTest:
         assert "Repository not found" in resp.text
 
 
+class TestDelete:
+    def test_delete_sweeps_scheduler_jobs(self, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+
+        with patch("mailfallback.services.scheduler.config_backup_scheduler_jobs") as mock_sweep:
+            resp = client.post(f"/admin/backup/{repo.id}/delete", follow_redirects=False)
+
+        assert resp.status_code == 303
+        assert db_session.query(Repository).count() == 0
+        mock_sweep.assert_called_once()
+
+    def test_delete_missing_repo_skips_sweep(self, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+
+        with patch("mailfallback.services.scheduler.config_backup_scheduler_jobs") as mock_sweep:
+            resp = client.post("/admin/backup/bogus-id/delete", follow_redirects=False)
+
+        assert resp.status_code == 303
+        mock_sweep.assert_not_called()
+
+
 def _mk_account(db_session, default_store, name="acc1", path="/data/m/acc1"):
     acc = Account(name=name, imap_host="h", maildir_path=path, store_id=default_store.id)
     db_session.add(acc)
