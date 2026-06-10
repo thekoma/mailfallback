@@ -456,6 +456,13 @@ async def admin_repo_attach(dest_id: str, request: Request, db: Session = Depend
         request.session["flash_error"] = "Invalid prefix"
         return RedirectResponse("/admin/backup", status_code=303)
 
+    from mailfallback.services.repo_inventory import CONFIG_PREFIX
+    from mailfallback.services.s3_probe import LEGACY_TEST_PREFIX
+
+    if prefix in (CONFIG_PREFIX, LEGACY_TEST_PREFIX.rstrip("/")):
+        request.session["flash_error"] = "This prefix is reserved and cannot be attached"
+        return RedirectResponse("/admin/backup", status_code=303)
+
     if db.query(Account).filter(Account.id == prefix).first():
         request.session["flash_error"] = (
             "This prefix belongs to a live mailbox and cannot be attached"
