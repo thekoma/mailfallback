@@ -128,3 +128,11 @@ class TestInlineTest:
         resp = client.post(f"/admin/backup/{repo.id}/test", follow_redirects=False)
 
         assert resp.status_code == 303
+
+    def test_htmx_test_missing_repo_returns_partial(self, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+
+        resp = client.post("/admin/backup/bogus-id/test", headers={"HX-Request": "true"})
+
+        assert resp.status_code == 200
+        assert "Repository not found" in resp.text

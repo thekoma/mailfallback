@@ -67,10 +67,10 @@
             </td>
             <td>
                 <div class="actions flex-end">
+                    <span id="repo-test-result-{{ dest.id }}" class="text-small"></span>
                     <button class="icon-btn" title="Edit" onclick="toggleRow('edit-{{ dest.id }}')">
                         <i data-lucide="pencil" class="icon-md"></i>
                     </button>
-                    <span id="repo-test-result-{{ dest.id }}" class="text-small"></span>
                     <button class="icon-btn" title="Test connection"
                             hx-post="/admin/backup/{{ dest.id }}/test"
                             hx-target="#repo-test-result-{{ dest.id }}"

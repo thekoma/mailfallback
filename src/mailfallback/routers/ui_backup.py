@@ -253,6 +253,12 @@ async def admin_test_backup_destination(
 
     dest = db.query(Repository).filter(Repository.id == dest_id).first()
     if not dest:
+        if request.headers.get("HX-Request"):
+            return templates.TemplateResponse(
+                request=request,
+                name="partials/repo_test_result.html",
+                context={"ok": False, "error": "Repository not found"},
+            )
         request.session["flash_error"] = "Destination not found"
         return RedirectResponse("/admin/backup", status_code=303)
 
