@@ -1,5 +1,6 @@
 # src/mailfallback/routers/ui_backup.py
 import logging
+import re
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Request
@@ -23,6 +24,15 @@ from mailfallback.services.audit_service import log_action
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ui"])
+
+# Restic prefixes are single path segments (account UUIDs, the config prefix,
+# or operator-named directories). Anything else could escape the repo root in
+# build_repo_url's os.path.join for local backends.
+_VALID_PREFIX_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _is_valid_prefix(prefix: str) -> bool:
+    return bool(_VALID_PREFIX_RE.match(prefix)) and prefix not in (".", "..")
 
 
 # --- Backup Destination admin routes ---
@@ -328,6 +338,8 @@ def admin_repo_prefix_detail(
     dest = db.query(Repository).filter(Repository.id == dest_id).first()
     if not dest:
         return HTMLResponse("Repository not found", status_code=404)
+    if not _is_valid_prefix(prefix):
+        return HTMLResponse("Invalid prefix", status_code=400)
 
     from mailfallback.services import repo_inventory
 
@@ -355,6 +367,10 @@ async def admin_repo_attach(dest_id: str, request: Request, db: Session = Depend
     account = db.query(Account).filter(Account.id == account_id).first()
     if not prefix or not account:
         request.session["flash_error"] = "Prefix and account are required"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    if not _is_valid_prefix(prefix):
+        request.session["flash_error"] = "Invalid prefix"
         return RedirectResponse("/admin/backup", status_code=303)
 
     if db.query(Account).filter(Account.id == prefix).first():
@@ -400,6 +416,7 @@ async def admin_repo_detach(attachment_id: str, request: Request, db: Session = 
     att = db.query(RepositoryAttachment).filter(RepositoryAttachment.id == attachment_id).first()
     if att:
         repo_id = att.repository_id
+        repo_name = att.repository.name if att.repository else repo_id
         prefix = att.prefix
         db.delete(att)
         db.commit()
@@ -409,10 +426,13 @@ async def admin_repo_detach(attachment_id: str, request: Request, db: Session = 
             action="backup_destination.detach",
             resource_type="backup_destination",
             resource_id=repo_id,
+            resource_name=repo_name,
             ip_address=request.client.host if request.client else None,
             details={"prefix": prefix},
         )
-    request.session["flash_success"] = "Prefix detached"
+        request.session["flash_success"] = "Prefix detached"
+    else:
+        request.session["flash_error"] = "Attachment not found"
     return RedirectResponse("/admin/backup", status_code=303)
 
 
