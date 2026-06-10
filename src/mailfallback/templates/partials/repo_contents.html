@@ -26,8 +26,8 @@
                 {% endif %}
             </td>
             <td>
-                <span hx-get="/admin/backup/{{ dest.id }}/contents/{{ e.prefix }}/detail"
-                      hx-trigger="load" hx-swap="innerHTML">
+                <span hx-get="/admin/backup/{{ dest.id }}/contents/{{ e.prefix | urlencode }}/detail"
+                      hx-trigger="revealed" hx-swap="innerHTML">
                     <span class="text-muted">loading…</span>
                 </span>
             </td>

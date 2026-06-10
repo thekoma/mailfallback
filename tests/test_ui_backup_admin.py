@@ -259,3 +259,29 @@ class TestAttach:
 
         assert resp.status_code == 303
         assert db_session.query(RepositoryAttachment).count() == 0
+
+
+class TestPrefixValidation:
+    def test_detail_rejects_dotdot_prefix(self, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+
+        # ".." sent percent-encoded so the HTTP client does not normalize the
+        # path before the route's {prefix} param receives the raw value.
+        resp = client.get(f"/admin/backup/{repo.id}/contents/%2E%2E/detail")
+
+        assert resp.status_code == 400
+
+    def test_attach_rejects_dotdot_prefix(self, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+
+        resp = client.post(
+            f"/admin/backup/{repo.id}/attach",
+            data={"prefix": "..", "account_id": acc.id},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        assert db_session.query(RepositoryAttachment).count() == 0
