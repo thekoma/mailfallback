@@ -751,3 +751,32 @@ class TestAttachPassword:
         assert resp.status_code == 303
         db_session.expire_all()
         assert db_session.query(RepositoryAttachment).one().restic_password is None
+
+    @patch("mailfallback.services.repo_inventory.restic_service")
+    @patch("mailfallback.routers.ui_backup.restic_service")
+    def test_prefix_detail_threads_attachment_password(
+        self, mock_route_restic, mock_inv_restic, client, db_session, default_store
+    ):
+        """The detail route must open the sub-repo with the attachment's password."""
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        mock_route_restic.list_snapshots.return_value = []
+        client.post(
+            f"/admin/backup/{repo.id}/attach",
+            data={
+                "prefix": "ghost-uuid",
+                "account_id": acc.id,
+                "restic_password": "attpass",  # pragma: allowlist secret
+            },
+            follow_redirects=False,
+        )
+        att = db_session.query(RepositoryAttachment).one()
+        mock_inv_restic.list_snapshots.return_value = []
+
+        resp = client.get(f"/admin/backup/{repo.id}/contents/ghost-uuid/detail")
+
+        assert resp.status_code == 200
+        kwargs = mock_inv_restic.list_snapshots.call_args.kwargs
+        assert kwargs["restic_password_enc"] is not None
+        assert kwargs["restic_password_enc"] == att.restic_password

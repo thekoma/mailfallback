@@ -163,7 +163,9 @@ async def admin_create_backup_destination(request: Request, db: Session = Depend
             return RedirectResponse("/admin/backup", status_code=303)
     dest.config_backup_enabled = config_backup_enabled
 
-    test_result = restic_service.test_destination(dest)
+    from starlette.concurrency import run_in_threadpool
+
+    test_result = await run_in_threadpool(restic_service.test_destination, dest)
     if not test_result["ok"]:
         error_msg = test_result.get("error", "Unknown error")
         request.session["flash_error"] = f"Connection test failed: {error_msg}"
@@ -289,7 +291,9 @@ async def admin_edit_backup_destination(
             return RedirectResponse("/admin/backup", status_code=303)
     dest.config_backup_enabled = config_backup_enabled
 
-    test_result = restic_service.test_destination(dest)
+    from starlette.concurrency import run_in_threadpool
+
+    test_result = await run_in_threadpool(restic_service.test_destination, dest)
     if not test_result["ok"]:
         db.rollback()
         error_msg = test_result.get("error", "Unknown error")
@@ -521,8 +525,12 @@ async def admin_repo_attach(dest_id: str, request: Request, db: Session = Depend
     password = form.get("restic_password", "").strip()
     password_enc = encrypt_credentials(password, settings.secret_key) if password else None
 
+    from starlette.concurrency import run_in_threadpool
+
     try:
-        restic_service.list_snapshots(dest, prefix, restic_password_enc=password_enc)
+        await run_in_threadpool(
+            restic_service.list_snapshots, dest, prefix, restic_password_enc=password_enc
+        )
     except Exception as e:
         request.session["flash_error"] = (
             f"Cannot open {prefix} with the given password: {str(e)[:150]}"
@@ -597,8 +605,15 @@ async def admin_attachment_password(
     password = form.get("restic_password", "").strip()
     password_enc = encrypt_credentials(password, settings.secret_key) if password else None
 
+    from starlette.concurrency import run_in_threadpool
+
     try:
-        restic_service.list_snapshots(att.repository, att.prefix, restic_password_enc=password_enc)
+        await run_in_threadpool(
+            restic_service.list_snapshots,
+            att.repository,
+            att.prefix,
+            restic_password_enc=password_enc,
+        )
     except Exception as e:
         request.session["flash_error"] = (
             f"Cannot open {att.prefix} with the given password: {str(e)[:150]}"
