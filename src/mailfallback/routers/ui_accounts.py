@@ -445,7 +445,18 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
         .filter(BackupPolicy.account_id == account_id)
         .first()
     )
-    backup_destinations = db.query(Repository).all()
+    if user.role.value == "admin":
+        backup_destinations = db.query(Repository).all()
+        allowed_repo_ids = {r.id for r in backup_destinations}
+    else:
+        backup_destinations = list(user.allowed_repositories)
+        allowed_repo_ids = {r.id for r in backup_destinations}
+        if (
+            backup_config
+            and backup_config.destination
+            and backup_config.destination not in backup_destinations
+        ):
+            backup_destinations.append(backup_config.destination)
     has_attachments = (
         db.query(RepositoryAttachment).filter(RepositoryAttachment.account_id == account_id).count()
         > 0
@@ -476,6 +487,7 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
             "migration": migration,
             "backup_config": backup_config,
             "backup_destinations": backup_destinations,
+            "allowed_repo_ids": allowed_repo_ids,
             "has_attachments": has_attachments,
             "recoveries": recoveries,
             "timeline_global": timeline_global,

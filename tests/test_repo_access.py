@@ -179,3 +179,44 @@ class TestConfigureEnforcement:
         assert resp.status_code == 303
         db_session.expire_all()
         assert db_session.query(BackupPolicy).one().destination_id == legacy.id
+
+
+class TestAccountPageFilter:
+    def test_non_admin_sees_only_allowed(self, client, db_session, default_store):
+        owner = create_user(db_session, "own5", "pass", UserRole.user, store_id=default_store.id)
+        client.post("/api/auth/login", json={"username": "own5", "password": "pass"})
+        acc = _mk_account_owned(db_session, default_store, owner, name="a6", path="/data/m/a6")
+        allowed = _mk_repo(db_session, "r-visible")
+        _mk_repo(db_session, "r-hidden")
+        set_allowed_repositories(db_session, owner.id, [allowed.id])
+
+        resp = client.get(f"/accounts/{acc.id}")
+
+        assert resp.status_code == 200
+        assert "r-visible" in resp.text
+        assert "r-hidden" not in resp.text
+
+    def test_admin_sees_all(self, client, db_session, default_store):
+        admin = _login_admin(client, db_session, default_store)
+        acc = _mk_account_owned(db_session, default_store, admin, name="a7", path="/data/m/a7")
+        _mk_repo(db_session, "r-one")
+        _mk_repo(db_session, "r-two")
+
+        resp = client.get(f"/accounts/{acc.id}")
+
+        assert "r-one" in resp.text and "r-two" in resp.text
+
+    def test_grandfathered_current_marked(self, client, db_session, default_store):
+        owner = create_user(db_session, "own6", "pass", UserRole.user, store_id=default_store.id)
+        client.post("/api/auth/login", json={"username": "own6", "password": "pass"})
+        acc = _mk_account_owned(db_session, default_store, owner, name="a8", path="/data/m/a8")
+        legacy = _mk_repo(db_session, "r-legacy3")
+        db_session.add(
+            BackupPolicy(account_id=acc.id, destination_id=legacy.id, schedule="0 2 * * *")
+        )
+        db_session.commit()
+
+        resp = client.get(f"/accounts/{acc.id}")
+
+        assert "r-legacy3" in resp.text
+        assert "not in your allowed set" in resp.text

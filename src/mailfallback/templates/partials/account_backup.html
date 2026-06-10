@@ -19,7 +19,7 @@
             <label for="backup_dest">Destination</label>
             <select id="backup_dest" name="destination_id" required>
                 {% for dest in backup_destinations %}
-                <option value="{{ dest.id }}">{{ dest.name }} ({{ dest.backend_type.value }})</option>
+                <option value="{{ dest.id }}">{{ dest.name }} ({{ dest.backend_type.value }}){% if dest.id not in allowed_repo_ids %} (current — not in your allowed set){% endif %}</option>
                 {% endfor %}
             </select>
         </div>
@@ -88,7 +88,7 @@
                 <label for="backup_dest">Destination</label>
                 <select id="backup_dest" name="destination_id" required>
                     {% for dest in backup_destinations %}
-                    <option value="{{ dest.id }}" {% if dest.id == backup_config.destination_id %}selected{% endif %}>{{ dest.name }} ({{ dest.backend_type.value }})</option>
+                    <option value="{{ dest.id }}" {% if dest.id == backup_config.destination_id %}selected{% endif %}>{{ dest.name }} ({{ dest.backend_type.value }}){% if dest.id not in allowed_repo_ids %} (current — not in your allowed set){% endif %}</option>
                     {% endfor %}
                 </select>
             </div>
