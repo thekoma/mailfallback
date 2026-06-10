@@ -70,11 +70,13 @@
                     <button class="icon-btn" title="Edit" onclick="toggleRow('edit-{{ dest.id }}')">
                         <i data-lucide="pencil" class="icon-md"></i>
                     </button>
-                    <form method="post" action="/admin/backup/{{ dest.id }}/test" class="inline-form">
-                        <button type="submit" class="icon-btn" title="Test connection">
-                            <i data-lucide="plug-zap" class="icon-md"></i>
-                        </button>
-                    </form>
+                    <span id="repo-test-result-{{ dest.id }}" class="text-small"></span>
+                    <button class="icon-btn" title="Test connection"
+                            hx-post="/admin/backup/{{ dest.id }}/test"
+                            hx-target="#repo-test-result-{{ dest.id }}"
+                            hx-swap="innerHTML">
+                        <i data-lucide="plug-zap" class="icon-md"></i>
+                    </button>
                     <form method="post" action="/admin/backup/{{ dest.id }}/delete" class="inline-form"
                         data-confirm="Delete Repository {{ dest.name }}?"
                         onsubmit="return confirm(this.dataset.confirm)">

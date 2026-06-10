@@ -259,6 +259,12 @@ async def admin_test_backup_destination(
     from mailfallback.services.restic_service import test_destination
 
     result = test_destination(dest)
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(
+            request=request,
+            name="partials/repo_test_result.html",
+            context={"ok": result["ok"], "error": result.get("error")},
+        )
     if result["ok"]:
         request.session["flash_success"] = f"{dest.name}: connection OK"
     else:
