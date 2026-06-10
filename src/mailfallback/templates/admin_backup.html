@@ -84,6 +84,13 @@
                             onclick="document.getElementById('contents-{{ dest.id }}').classList.remove('hidden')">
                         <i data-lucide="folder-search" class="icon-md"></i>
                     </button>
+                    {% if dest.config_backup_enabled %}
+                    <form method="post" action="/admin/backup/{{ dest.id }}/config-backup" class="inline-form">
+                        <button type="submit" class="icon-btn" title="Store configuration snapshot now{% if dest.last_config_backup_at %} — last: {{ dest.last_config_backup_at | time_ago }} ({{ dest.last_config_backup_status }}){% endif %}">
+                            <i data-lucide="file-lock" class="icon-md"></i>
+                        </button>
+                    </form>
+                    {% endif %}
                     <form method="post" action="/admin/backup/{{ dest.id }}/delete" class="inline-form"
                         data-confirm="Delete Repository {{ dest.name }}?"
                         onsubmit="return confirm(this.dataset.confirm)">
@@ -143,6 +150,21 @@
                              {% if not dest.insecure_tls %}hidden{% endif %}>
                             <i data-lucide="shield-alert" class="icon-md icon-inline"></i>
                             <strong>Warning:</strong> certificate verification is disabled. The connection is encrypted but the server's identity is NOT verified.
+                        </div>
+                    </div>
+                    <div class="mt-05">
+                        <label>
+                            <input type="checkbox" name="config_backup_enabled" value="1"
+                                   {% if dest.config_backup_enabled %}checked{% endif %}
+                                   onchange="this.closest('form').querySelector('.config-passphrase-block').hidden = !this.checked">
+                            <strong>Store configuration snapshots in this repository</strong>
+                            <small class="text-muted">— nightly encrypted export of users, mailboxes, and settings for disaster recovery.</small>
+                        </label>
+                        <div class="config-passphrase-block mt-05" {% if not dest.config_backup_enabled %}hidden{% endif %}>
+                            <label>Passphrase</label>
+                            <input type="password" name="config_backup_passphrase"
+                                   placeholder="Leave blank to keep current" autocomplete="new-password">
+                            <small class="text-muted">Separate from the Restic password. Needed to restore the configuration on a new installation — store it safely.</small>
                         </div>
                     </div>
                     <button type="submit" class="icon-btn primary mt-05">
@@ -272,6 +294,21 @@
                 <div class="alert-error tls-warning mt-025" role="alert" hidden>
                     <i data-lucide="shield-alert" class="icon-md icon-inline"></i>
                     <strong>Warning:</strong> certificate verification is disabled. The connection is encrypted but the server's identity is NOT verified.
+                </div>
+            </div>
+
+            <div class="mt-1">
+                <label>
+                    <input type="checkbox" name="config_backup_enabled" value="1"
+                           onchange="this.closest('form').querySelector('.config-passphrase-block').hidden = !this.checked">
+                    <strong>Store configuration snapshots in this repository</strong>
+                    <small class="text-muted">— nightly encrypted export of users, mailboxes, and settings for disaster recovery.</small>
+                </label>
+                <div class="config-passphrase-block mt-05" hidden>
+                    <label for="config_backup_passphrase">Passphrase</label>
+                    <input type="password" id="config_backup_passphrase" name="config_backup_passphrase"
+                           minlength="12" placeholder="at least 12 characters" autocomplete="new-password">
+                    <small class="text-muted">Separate from the Restic password. Needed to restore the configuration on a new installation — store it safely.</small>
                 </div>
             </div>
 
