@@ -141,6 +141,15 @@ class TestProbeS3:
         assert result["ok"] is False
         assert "missing S3 settings" in result["error"]
 
+    def test_malformed_endpoint_returns_clean_error(self, s3_destination):
+        # No boto3 mocking: the real boto3.client raises ValueError before any network I/O.
+        s3_destination.s3_endpoint = _enc("https://exa mple.com")
+
+        result = s3_probe.probe(s3_destination)
+
+        assert result["ok"] is False
+        assert "invalid S3 endpoint" in result["error"]
+
     def test_undecryptable_settings_return_clean_error(self, s3_destination):
         s3_destination.s3_endpoint = encrypt_credentials(
             "https://s3.example.com", "some-other-secret-key"

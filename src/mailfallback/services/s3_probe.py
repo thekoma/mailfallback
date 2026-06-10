@@ -67,6 +67,8 @@ def _probe_s3(destination: Repository) -> dict:
         bucket = bucket_name(destination)
     except InvalidToken:
         return {"ok": False, "error": "cannot decrypt repository settings (secret key changed?)"}
+    except ValueError as e:
+        return {"ok": False, "error": f"invalid S3 endpoint: {str(e)[:200]}"}
     key = f".mfb-probe-{uuid.uuid4()}"
     put_succeeded = False
     try:
