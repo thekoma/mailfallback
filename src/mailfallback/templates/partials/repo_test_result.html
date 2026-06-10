@@ -1,5 +1,7 @@
 {% if ok %}
-<span class="stats-pill"><span class="stats-dot stats-dot-ok"></span> Connection OK</span>
+<span class="stats-pill"><span class="stats-dot stats-dot-ok"></span>
+    Connection OK{% if count is defined and count is not none %} — {% if count == 0 %}empty repository{% elif count == 1 %}1 existing snapshot prefix{% else %}{{ count }} existing snapshot prefixes{% endif %}{% endif %}
+</span>
 {% else %}
 <span class="stats-pill" title="{{ error }}"><span class="stats-dot stats-dot-error"></span> <span class="stats-pill-truncate">{{ error }}</span></span>
 {% endif %}
