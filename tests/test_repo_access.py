@@ -1,6 +1,6 @@
 """Repository access control: grants service, admin UI, enforcement."""
 
-from mailfallback.models import Repository, UserRole
+from mailfallback.models import Account, BackupPolicy, Repository, UserRole
 from mailfallback.services.user_service import create_user, set_allowed_repositories
 
 
@@ -80,3 +80,102 @@ class TestAllowedRepositoriesRoute:
         assert resp.status_code == 200
         assert "Allowed repositories" in resp.text
         assert "repo-visible" in resp.text
+
+
+def _mk_account_owned(db_session, default_store, owner, name="acc-e", path="/data/m/acc-e"):
+    acc = Account(name=name, imap_host="h", maildir_path=path, store_id=default_store.id)
+    db_session.add(acc)
+    db_session.flush()
+    acc.owners.append(owner)
+    db_session.commit()
+    return acc
+
+
+class TestConfigureEnforcement:
+    def test_non_admin_rejected_on_non_allowed_repo(self, client, db_session, default_store):
+        owner = create_user(db_session, "own1", "pass", UserRole.user, store_id=default_store.id)
+        client.post("/api/auth/login", json={"username": "own1", "password": "pass"})
+        acc = _mk_account_owned(db_session, default_store, owner, name="a1", path="/data/m/a1")
+        repo = _mk_repo(db_session, "r-deny")
+
+        resp = client.post(
+            f"/accounts/{acc.id}/backup/configure",
+            data={"destination_id": repo.id, "schedule": "0 2 * * *"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        assert db_session.query(BackupPolicy).count() == 0
+
+    def test_non_admin_allowed_repo_accepted(self, client, db_session, default_store):
+        owner = create_user(db_session, "own2", "pass", UserRole.user, store_id=default_store.id)
+        client.post("/api/auth/login", json={"username": "own2", "password": "pass"})
+        acc = _mk_account_owned(db_session, default_store, owner, name="a2", path="/data/m/a2")
+        repo = _mk_repo(db_session, "r-allow")
+        set_allowed_repositories(db_session, owner.id, [repo.id])
+
+        resp = client.post(
+            f"/accounts/{acc.id}/backup/configure",
+            data={"destination_id": repo.id, "schedule": "0 2 * * *"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        assert db_session.query(BackupPolicy).count() == 1
+
+    def test_admin_bypasses(self, client, db_session, default_store):
+        admin = _login_admin(client, db_session, default_store)
+        acc = _mk_account_owned(db_session, default_store, admin, name="a3", path="/data/m/a3")
+        repo = _mk_repo(db_session, "r-admin")
+
+        resp = client.post(
+            f"/accounts/{acc.id}/backup/configure",
+            data={"destination_id": repo.id, "schedule": "0 2 * * *"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        assert db_session.query(BackupPolicy).count() == 1
+
+    def test_grandfathered_current_repo_resubmit_passes(self, client, db_session, default_store):
+        owner = create_user(db_session, "own3", "pass", UserRole.user, store_id=default_store.id)
+        client.post("/api/auth/login", json={"username": "own3", "password": "pass"})
+        acc = _mk_account_owned(db_session, default_store, owner, name="a4", path="/data/m/a4")
+        legacy = _mk_repo(db_session, "r-legacy")
+        db_session.add(
+            BackupPolicy(account_id=acc.id, destination_id=legacy.id, schedule="0 2 * * *")
+        )
+        db_session.commit()
+
+        resp = client.post(
+            f"/accounts/{acc.id}/backup/configure",
+            data={"destination_id": legacy.id, "schedule": "0 3 * * *"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        db_session.expire_all()
+        assert db_session.query(BackupPolicy).one().schedule == "0 3 * * *"
+
+    def test_grandfathered_switch_to_other_non_allowed_rejected(
+        self, client, db_session, default_store
+    ):
+        owner = create_user(db_session, "own4", "pass", UserRole.user, store_id=default_store.id)
+        client.post("/api/auth/login", json={"username": "own4", "password": "pass"})
+        acc = _mk_account_owned(db_session, default_store, owner, name="a5", path="/data/m/a5")
+        legacy = _mk_repo(db_session, "r-legacy2")
+        other = _mk_repo(db_session, "r-other")
+        db_session.add(
+            BackupPolicy(account_id=acc.id, destination_id=legacy.id, schedule="0 2 * * *")
+        )
+        db_session.commit()
+
+        resp = client.post(
+            f"/accounts/{acc.id}/backup/configure",
+            data={"destination_id": other.id, "schedule": "0 2 * * *"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        db_session.expire_all()
+        assert db_session.query(BackupPolicy).one().destination_id == legacy.id
