@@ -699,6 +699,16 @@ async def account_backup_configure(
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
     backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
+
+    if user.role.value != "admin":
+        allowed_ids = {r.id for r in user.allowed_repositories}
+        current_id = backup.destination_id if backup else None
+        if destination_id not in allowed_ids and destination_id != current_id:
+            request.session["flash_error"] = (
+                "You are not allowed to use this repository — ask an administrator"
+            )
+            return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+
     if backup:
         backup.destination_id = destination_id
         backup.schedule = schedule
