@@ -77,6 +77,13 @@
                             hx-swap="innerHTML">
                         <i data-lucide="plug-zap" class="icon-md"></i>
                     </button>
+                    <button class="icon-btn" title="Contents"
+                            hx-get="/admin/backup/{{ dest.id }}/contents"
+                            hx-target="#repo-contents-{{ dest.id }}"
+                            hx-swap="innerHTML"
+                            onclick="document.getElementById('contents-{{ dest.id }}').classList.remove('hidden')">
+                        <i data-lucide="folder-search" class="icon-md"></i>
+                    </button>
                     <form method="post" action="/admin/backup/{{ dest.id }}/delete" class="inline-form"
                         data-confirm="Delete Repository {{ dest.name }}?"
                         onsubmit="return confirm(this.dataset.confirm)">
@@ -143,6 +150,9 @@
                     </button>
                 </form>
             </td>
+        </tr>
+        <tr id="contents-{{ dest.id }}" class="hidden">
+            <td colspan="8"><div id="repo-contents-{{ dest.id }}"></div></td>
         </tr>
         {% endfor %}
         {% if not destinations %}

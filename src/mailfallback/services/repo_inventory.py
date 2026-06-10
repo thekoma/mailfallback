@@ -28,7 +28,10 @@ def list_prefixes(destination: Repository) -> list[str]:
             prefixes.extend(p["Prefix"].rstrip("/") for p in resp.get("CommonPrefixes", []))
             if not resp.get("IsTruncated"):
                 break
-            kwargs["ContinuationToken"] = resp["NextContinuationToken"]
+            token = resp.get("NextContinuationToken")
+            if not token:
+                break
+            kwargs["ContinuationToken"] = token
         return sorted(prefixes)
     path = decrypt_credentials(destination.local_path, settings.secret_key)
     if not os.path.isdir(path):
