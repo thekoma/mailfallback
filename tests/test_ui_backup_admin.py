@@ -507,3 +507,19 @@ class TestConfigBackupRoutes:
         assert resp.status_code == 303
         db_session.expire_all()
         assert db_session.query(Repository).one().last_config_backup_at is None
+
+
+class TestReservedPrefix:
+    def test_attach_rejects_config_prefix(self, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+
+        resp = client.post(
+            f"/admin/backup/{repo.id}/attach",
+            data={"prefix": "__mfb_config__", "account_id": acc.id},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        assert db_session.query(RepositoryAttachment).count() == 0
