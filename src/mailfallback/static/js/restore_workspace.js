@@ -14,6 +14,7 @@ function restoreWorkspace() {
     rangeStart: null,           // Date object — managed by flatpickr
     rangeEnd: null,             // Date object — managed by flatpickr
     snapshotDates: [],          // Array of YYYY-MM-DD strings
+    _datesSeq: 0,               // monotonic seq — stale snapshot-dates responses are dropped
     _fp: null,                  // flatpickr instance
 
     includeLive: true,
@@ -127,12 +128,16 @@ function restoreWorkspace() {
     },
 
     async fetchSnapshotDates() {
+      // Seq guard: a slow snapshot-dates fetch for mailbox A must not repaint
+      // A's dots after the scope already moved on (e.g. to "All mailboxes").
+      const seq = ++this._datesSeq;
       // Calendar dots follow the search scope: a single mailbox shows its
       // snapshot days; "All mailboxes" shows none (a merged dot-strip across
       // accounts would be misleading).
       if (!this.scopeAccountId) {
         this.snapshotDates = [];
       } else {
+        let dates = [];
         try {
           const resp = await fetch('/api/restore/workspace/snapshot-dates', {
             method: 'POST',
@@ -140,13 +145,17 @@ function restoreWorkspace() {
             body: JSON.stringify({account_id: this.scopeAccountId}),
           });
           const body = resp.ok ? await resp.json() : {};
-          this.snapshotDates = body.dates || [];
+          dates = body.dates || [];
         } catch (e) {
-          this.snapshotDates = [];
+          dates = [];
         }
+        if (seq !== this._datesSeq) return;
+        this.snapshotDates = dates;
       }
       // Re-render flatpickr to re-run onDayCreate with the fresh data set
-      // (also clears stale dots when the scope changes or the fetch fails).
+      // (also clears stale dots when the scope changes or the fetch fails) —
+      // winning call only.
+      if (seq !== this._datesSeq) return;
       if (this._fp) this._fp.redraw();
     },
 
@@ -313,6 +322,8 @@ function restoreWorkspace() {
         const jobs = [];
         let skippedTotal = 0;
         let failure = '';
+        const startedAccounts = new Set();  // accounts whose restore job started
+        const missingKeys = new Set();      // keys not in live mail — unrestorable here
         for (const [accountId, messageIds] of Object.entries(byAccount)) {
           const res = await fetch('/api/restore/resolve-uids', {
             method: 'POST',
@@ -325,6 +336,7 @@ function restoreWorkspace() {
           }
           const {resolved, missing} = await res.json();
           skippedTotal += missing.length;
+          for (const mid of missing) missingKeys.add(accountId + ':' + mid);
           if (Object.keys(resolved).length === 0) continue;
           // SEAM CONTRACT: `resolved` keys are namespace-prefixed IMAP paths
           // produced by /api/restore/resolve-uids — pass the mapping to
@@ -339,8 +351,10 @@ function restoreWorkspace() {
               selected_uids: resolved,
             }),
           });
-          if (r.ok) jobs.push((await r.json()).job_id);
-          else {
+          if (r.ok) {
+            jobs.push((await r.json()).job_id);
+            startedAccounts.add(accountId);
+          } else {
             failure = `failed for ${this.accountName(accountId)}: ${r.status}`;
             break;
           }
@@ -351,7 +365,19 @@ function restoreWorkspace() {
         if (skippedTotal) bits.push(`${skippedTotal} message${skippedTotal === 1 ? '' : 's'} not in live mail — skipped (snapshot-only restore arrives with the staging area)`);
         if (failure) bits.push(failure);
         this.statusText = bits.join(' · ') || 'Nothing to restore.';
-        if (!failure) this.selected = [];
+        if (!failure) {
+          this.selected = [];
+        } else {
+          // Safe retry: keep only keys a retry could still restore — drop
+          // accounts whose job already started (retrying would duplicate the
+          // restore) and messages not in live mail (this path can't restore
+          // them; they're reported in the status above).
+          this.selected = this.selected.filter(key => {
+            if (missingKeys.has(key)) return false;
+            const row = byKey[key];
+            return !(row && startedAccounts.has(row.account_id));
+          });
+        }
       } catch (e) {
         this.statusText = `Restore error: ${e.message}`;
       } finally {

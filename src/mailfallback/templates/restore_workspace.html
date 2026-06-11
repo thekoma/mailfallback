@@ -129,7 +129,8 @@
                            x-model="selected">
                     <div class="ws-result-body" @click="openPreview(r)"
                          tabindex="0" role="button"
-                         @keydown.enter.prevent="openPreview(r)">
+                         @keydown.enter.prevent="openPreview(r)"
+                         @keydown.space.prevent="openPreview(r)">
                       <div class="ws-result-subject">
                         <span class="ws-result-subject-text" x-text="r.subject || '(no subject)'"></span>
                         <span class="ws-badge ws-badge-acct" x-text="accountName(r.account_id)"></span>
