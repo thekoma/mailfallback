@@ -418,10 +418,15 @@ def backfill_attachments(db: Session, account_id: str) -> int:
     """Parse attachments for alive rows that pre-date the attachment index.
 
     Resumable: only rows with attachments_indexed_at IS NULL are processed.
-    The marker is set even when parsing fails, so one bad file cannot wedge
-    the backfill — it just stays without attachment rows.
+    Two failure modes are deliberately distinct:
+    - Maildir file NOT FOUND (deleted, or flag-suffix renamed since the last
+      walk): the row is skipped WITHOUT setting the marker — the next
+      upsert_message_set refreshes maildir_filename or sets deleted_at, so
+      the pending set converges instead of baking has_attachments=False.
+    - File present but unparsable/unreadable: the marker IS set, so one bad
+      file cannot wedge the backfill — it just stays without attachment rows.
     Idempotent per message: delete-and-reinsert its attachment rows.
-    Returns the number of messages processed.
+    Returns the number of rows marked processed (skipped rows not counted).
     """
     account = db.query(Account).filter(Account.id == account_id).first()
     if not account:
@@ -455,7 +460,12 @@ def backfill_attachments(db: Session, account_id: str) -> int:
                     break
             if path:
                 break
-        atts = _parse_attachments(path) if path else None
+        if path is None:
+            # File gone (or flag-suffix renamed): leave the row pending so the
+            # next upsert_message_set reconciles it. Re-checking later costs
+            # only the os.path.exists probes above.
+            continue
+        atts = _parse_attachments(path)
         db.query(MailIndexAttachment).filter(
             MailIndexAttachment.account_id == account_id,
             MailIndexAttachment.message_id_hash == row.message_id_hash,
