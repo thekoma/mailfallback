@@ -7,6 +7,7 @@ under the USER's store, so its path must exist).
 
 import os
 from email.message import EmailMessage
+from unittest.mock import patch
 
 import pytest
 
@@ -16,7 +17,10 @@ from mailfallback.models import (
     AuditLog,
     MailIndexMessage,
     MailStore,
+    RestoreJob,
+    RestoreMode,
     StagingArea,
+    StagingMessage,
     User,
     UserRole,
 )
@@ -260,8 +264,111 @@ def test_unauthenticated_get_returns_401(client):
     assert resp.status_code == 401
 
 
+# ---------------------------------------------------------------------------
+# POST /api/restore/staging/push
+# ---------------------------------------------------------------------------
+
+
+def test_push_origin_creates_job_and_audits(client, db_session, real_store, tmp_path):
+    user = _mk_user(db_session, real_store)
+    acc, row = _mk_indexed_account(db_session, real_store, tmp_path, owner=user)
+    acc.credentials = "enc"  # create_restore_job requires target credentials
+    db_session.commit()
+    _login(client, "mario")
+    add = client.post("/api/restore/staging/items", json={"items": _items(acc, row)})
+    assert add.status_code == 200, add.text
+    staged_filename = db_session.query(StagingMessage).one().staged_filename
+
+    with patch("mailfallback.services.restore_worker.submit_restore_job") as mock_submit:
+        resp = client.post(
+            "/api/restore/staging/push",
+            json={"destination": "origin", "folder_mode": "original"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    job_ids = resp.json()["job_ids"]
+    assert len(job_ids) == 1
+    mock_submit.assert_called_once_with(job_ids[0])
+    job = db_session.query(RestoreJob).one()
+    assert job.id == job_ids[0]
+    assert job.restore_mode == RestoreMode.staging_push
+    assert job.source_account_id == acc.id
+    assert job.target_account_id == acc.id
+    assert job.requested_by == user.id
+    assert job.selected_uids == {"INBOX": [staged_filename]}
+    entry = db_session.query(AuditLog).filter_by(action="staging.push").one()
+    assert entry.username == "mario"
+    assert entry.resource_type == "staging"
+    assert entry.details == {
+        "jobs": job_ids,
+        "destination": "origin",
+        "folder_mode": "original",
+    }
+
+
+def test_push_override_foreign_account_404_for_non_admin(client, db_session, real_store, tmp_path):
+    _mk_user(db_session, real_store, username="luigi")
+    acc, _row = _mk_indexed_account(db_session, real_store, tmp_path, owner=None)
+    _login(client, "luigi")
+
+    resp = client.post(
+        "/api/restore/staging/push",
+        json={"destination": acc.id, "folder_mode": "original"},
+    )
+
+    assert resp.status_code == 404, resp.text
+    # The endpoint's own check, not a missing-route 404.
+    assert resp.json()["detail"] == "Destination account not found"
+    assert db_session.query(RestoreJob).count() == 0
+    assert db_session.query(AuditLog).filter_by(action="staging.push").count() == 0
+
+
+def test_push_invalid_folder_mode_400(client, db_session, real_store):
+    _mk_user(db_session, real_store)
+    _login(client, "mario")
+
+    resp = client.post(
+        "/api/restore/staging/push",
+        json={"destination": "origin", "folder_mode": "yolo"},
+    )
+
+    assert resp.status_code == 400, resp.text
+    assert "folder_mode" in resp.json()["detail"]
+    assert db_session.query(AuditLog).filter_by(action="staging.push").count() == 0
+
+
+def test_push_unauthenticated_401(client):
+    resp = client.post(
+        "/api/restore/staging/push",
+        json={"destination": "origin", "folder_mode": "original"},
+    )
+
+    assert resp.status_code == 401
+
+
+def test_create_restore_rejects_staging_push_mode(client, db_session, real_store):
+    """staging_push manifests must be server-built (staging_service.push):
+    a client-supplied one could name arbitrary files. The generic create
+    endpoint refuses the mode outright."""
+    _mk_user(db_session, real_store)
+    _login(client, "mario")
+
+    resp = client.post(
+        "/api/restore",
+        json={
+            "source_account_id": "x",
+            "target_account_id": "x",
+            "restore_mode": "staging_push",
+        },
+    )
+
+    assert resp.status_code == 400, resp.text
+    assert db_session.query(RestoreJob).count() == 0
+
+
 def test_action_labels_cover_staging_actions():
     from mailfallback.services.audit_service import get_action_label
 
     assert get_action_label("staging.add") != "staging.add"
     assert get_action_label("staging.empty") != "staging.empty"
+    assert get_action_label("staging.push") != "staging.push"

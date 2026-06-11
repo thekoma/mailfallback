@@ -314,6 +314,55 @@ def reconcile(db: Session, user: User, area: StagingArea) -> int:
     return dropped
 
 
+def push(db: Session, user: User, destination: str, folder_mode: str) -> list[str]:
+    """Create one staging_push RestoreJob per target account.
+
+    destination: "origin" (each message back to its source account) or an
+    account id override (the API layer validates access). folder_mode:
+    "original" (per-row origin folder) or "restored" (everything into
+    Restored/<today>). reconcile() runs FIRST so webmail deletions win; the
+    per-target manifest {destination_folder: [staged_filename, ...]} rides
+    in the job's selected_uids JSON column. Rows and files stay staged —
+    the worker removes them only after confirmed delivery. Returns job ids.
+    """
+    from mailfallback.services.restore_service import create_restore_job
+    from mailfallback.services.restore_worker import submit_restore_job
+
+    area = db.query(StagingArea).filter(StagingArea.user_id == user.id).first()
+    if not area or _is_expired(area):
+        return []
+    reconcile(db, user, area)
+    rows = db.query(StagingMessage).filter(StagingMessage.staging_id == area.id).all()
+    if not rows:
+        return []
+
+    stamp = datetime.now(UTC).strftime("%Y-%m-%d")
+    by_target: dict[str, dict[str, list[str]]] = {}
+    for m in rows:
+        target_id = m.source_account_id if destination == "origin" else destination
+        folder = m.original_folder if folder_mode == "original" else f"Restored/{stamp}"
+        by_target.setdefault(target_id, {}).setdefault(folder, []).append(m.staged_filename)
+
+    job_ids: list[str] = []
+    for target_id, manifest in by_target.items():
+        job = create_restore_job(
+            db,
+            source_account_id=target_id,
+            target_account_id=target_id,
+            restore_mode="staging_push",
+            requested_by=user.id,
+            selected_uids=manifest,
+        )
+        if job is None:
+            # Target busy (pending/running job) or unpushable (no credentials,
+            # suspended, migrating): its messages simply stay staged.
+            logger.warning("Staging push: no job created for target %s", target_id)
+            continue
+        submit_restore_job(job.id)
+        job_ids.append(job.id)
+    return job_ids
+
+
 def empty(db: Session, user: User) -> None:
     """Remove the staging Maildir and the area row (cascade removes rows)."""
     area = db.query(StagingArea).filter(StagingArea.user_id == user.id).first()

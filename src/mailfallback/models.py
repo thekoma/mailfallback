@@ -72,6 +72,9 @@ class RestoreMode(enum.StrEnum):
     full = "full"
     folder = "folder"
     selection = "selection"
+    # Push from the requester's staging area to the target upstream;
+    # selected_uids doubles as the {folder: [staged_filename]} manifest.
+    staging_push = "staging_push"
 
 
 class TaskStatus(enum.StrEnum):

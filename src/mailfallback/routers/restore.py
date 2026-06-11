@@ -16,6 +16,7 @@ from mailfallback.models import (
     BackupPolicy,
     MailIndexMessage,
     RecoveryStatus,
+    RestoreMode,
     User,
     UserRole,
 )
@@ -149,6 +150,35 @@ def api_staging_empty(
     return {"ok": True}
 
 
+class StagingPushRequest(BaseModel):
+    destination: str = "origin"  # "origin" | account id
+    folder_mode: str = "original"  # "original" | "restored"
+
+
+@router.post("/staging/push")
+def api_staging_push(
+    req: StagingPushRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Push the surviving staged messages upstream — one job per target."""
+    if req.folder_mode not in ("original", "restored"):
+        raise HTTPException(status_code=400, detail="Invalid folder_mode")
+    if req.destination != "origin" and not account_service.get_account(db, req.destination, user):
+        raise HTTPException(status_code=404, detail="Destination account not found")
+    job_ids = staging_service.push(db, user, req.destination, req.folder_mode)
+    log_action(
+        db,
+        user=user,
+        action="staging.push",
+        resource_type="staging",
+        details={"jobs": job_ids, "destination": req.destination, "folder_mode": req.folder_mode},
+        ip_address=request.client.host if request.client else None,
+    )
+    return {"job_ids": job_ids}
+
+
 # ---------------------------------------------------------------------------
 # Restore job endpoints
 # ---------------------------------------------------------------------------
@@ -161,6 +191,10 @@ def create_restore(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if body.restore_mode == RestoreMode.staging_push.value:
+        # Push manifests must be server-built (staging_service.push reconciles
+        # first and scopes filenames); a client-supplied one is refused.
+        raise HTTPException(status_code=400, detail="Use /api/restore/staging/push")
     source = account_service.get_account(db, body.source_account_id, user)
     if not source:
         raise HTTPException(status_code=404, detail="Source account not found")

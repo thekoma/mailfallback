@@ -4,10 +4,12 @@ Live messages are read straight from disk via the index locator; snapshot-only
 messages go through restic (mocked here exactly like tests/test_preview_service.py).
 """
 
+import hashlib
 import os
 import re
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -19,6 +21,8 @@ from mailfallback.models import (
     MailIndexMessage,
     MailStore,
     Repository,
+    RestoreJob,
+    RestoreMode,
     SnapshotMessage,
     StagingArea,
     StagingMessage,
@@ -470,6 +474,164 @@ class TestLifecycle:
         assert purged == 0
         assert db_session.query(StagingArea).count() == 1
         assert len(_staged_files(staging_user)) == 1
+
+
+def _mk_push_account(db_session, store, tmp_path, name):
+    """Pushable target: create_restore_job requires credentials + not busy."""
+    acc = Account(
+        name=name,
+        imap_host="h",
+        maildir_path=str(tmp_path / f"mail-{name}"),
+        store_id=store.id,
+        credentials="enc",
+    )
+    db_session.add(acc)
+    db_session.commit()
+    return acc
+
+
+def _stage_raw(db_session, user, account, msgid, fname, folder="INBOX"):
+    """Staged file + row built directly (no indexer) — full folder control."""
+    sdir = staging_service.staging_dir(user)
+    os.makedirs(os.path.join(sdir, "cur"), exist_ok=True)
+    raw = f"Message-ID: {msgid}\r\nSubject: s\r\n\r\nbody".encode()
+    with open(os.path.join(sdir, "cur", fname), "wb") as f:
+        f.write(raw)
+    area = db_session.query(StagingArea).filter_by(user_id=user.id).first()
+    if area is None:
+        area = StagingArea(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(hours=1))
+        db_session.add(area)
+        db_session.flush()
+    db_session.add(
+        StagingMessage(
+            staging_id=area.id,
+            source_account_id=account.id,
+            message_id_hash=hashlib.sha1(msgid.encode(), usedforsecurity=False).digest(),
+            original_folder=folder,
+            staged_filename=fname,
+            size_bytes=len(raw),
+        )
+    )
+    area.bytes_used += len(raw)
+    db_session.commit()
+
+
+_SUBMIT = "mailfallback.services.restore_worker.submit_restore_job"
+
+
+class TestPush:
+    def test_push_origin_groups_by_source_and_folder(
+        self, db_session, real_store, staging_user, tmp_path
+    ):
+        """destination="origin": one job per SOURCE account, manifest keyed by
+        each row's original folder. Push only creates jobs — rows and files
+        stay staged until the worker confirms delivery."""
+        acc1 = _mk_push_account(db_session, real_store, tmp_path, "a1")
+        acc2 = _mk_push_account(db_session, real_store, tmp_path, "a2")
+        _stage_raw(db_session, staging_user, acc1, "<g1@x>", "100.aa.h:2,", folder="INBOX")
+        _stage_raw(db_session, staging_user, acc1, "<g2@x>", "101.bb.h:2,", folder="Sent")
+        _stage_raw(db_session, staging_user, acc2, "<g3@x>", "102.cc.h:2,", folder="Archive/2025")
+
+        with patch(_SUBMIT) as mock_submit:
+            job_ids = staging_service.push(db_session, staging_user, "origin", "original")
+
+        assert len(job_ids) == 2
+        jobs = {j.source_account_id: j for j in db_session.query(RestoreJob).all()}
+        assert set(jobs) == {acc1.id, acc2.id}
+        for j in jobs.values():
+            assert j.restore_mode == RestoreMode.staging_push
+            assert j.target_account_id == j.source_account_id
+            assert j.skip_duplicates is True
+            assert j.requested_by == staging_user.id
+            assert j.id in job_ids
+        assert jobs[acc1.id].selected_uids == {
+            "INBOX": ["100.aa.h:2,"],
+            "Sent": ["101.bb.h:2,"],
+        }
+        assert jobs[acc2.id].selected_uids == {"Archive/2025": ["102.cc.h:2,"]}
+        assert {c.args[0] for c in mock_submit.call_args_list} == set(job_ids)
+        # Nothing cleaned yet: the worker owns the post-delivery cleanup.
+        assert db_session.query(StagingMessage).count() == 3
+        assert len(_staged_files(staging_user)) == 3
+
+    def test_push_override_groups_to_single_target(
+        self, db_session, real_store, staging_user, tmp_path
+    ):
+        acc1 = _mk_push_account(db_session, real_store, tmp_path, "a1")
+        acc2 = _mk_push_account(db_session, real_store, tmp_path, "a2")
+        override = _mk_push_account(db_session, real_store, tmp_path, "dest")
+        _stage_raw(db_session, staging_user, acc1, "<o1@x>", "100.aa.h:2,", folder="INBOX")
+        _stage_raw(db_session, staging_user, acc2, "<o2@x>", "101.bb.h:2,", folder="Sent")
+
+        with patch(_SUBMIT) as mock_submit:
+            job_ids = staging_service.push(db_session, staging_user, override.id, "original")
+
+        assert len(job_ids) == 1
+        job = db_session.query(RestoreJob).one()
+        assert job.id == job_ids[0]
+        assert job.source_account_id == override.id
+        assert job.target_account_id == override.id
+        assert job.selected_uids == {"INBOX": ["100.aa.h:2,"], "Sent": ["101.bb.h:2,"]}
+        mock_submit.assert_called_once_with(job.id)
+
+    def test_push_restored_folder_mode_uses_dated_folder(
+        self, db_session, real_store, staging_user, tmp_path
+    ):
+        acc = _mk_push_account(db_session, real_store, tmp_path, "a1")
+        _stage_raw(db_session, staging_user, acc, "<d1@x>", "100.aa.h:2,", folder="INBOX")
+        _stage_raw(db_session, staging_user, acc, "<d2@x>", "101.bb.h:2,", folder="Sent")
+
+        with patch(_SUBMIT):
+            job_ids = staging_service.push(db_session, staging_user, "origin", "restored")
+
+        assert len(job_ids) == 1
+        stamp = datetime.now(UTC).strftime("%Y-%m-%d")
+        job = db_session.query(RestoreJob).one()
+        assert job.selected_uids == {f"Restored/{stamp}": ["100.aa.h:2,", "101.bb.h:2,"]}
+
+    def test_push_without_area_returns_no_jobs(self, db_session, real_store, staging_user):
+        with patch(_SUBMIT) as mock_submit:
+            job_ids = staging_service.push(db_session, staging_user, "origin", "original")
+
+        assert job_ids == []
+        assert db_session.query(RestoreJob).count() == 0
+        mock_submit.assert_not_called()
+
+    def test_push_expired_area_is_noop(self, db_session, real_store, staging_user, tmp_path):
+        """An expired-but-unswept area is a corpse: pushing from it would
+        resurrect content the TTL already condemned."""
+        acc = _mk_push_account(db_session, real_store, tmp_path, "a1")
+        _stage_raw(db_session, staging_user, acc, "<e1@x>", "100.aa.h:2,")
+        area = db_session.query(StagingArea).one()
+        area.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+        db_session.commit()
+
+        with patch(_SUBMIT) as mock_submit:
+            job_ids = staging_service.push(db_session, staging_user, "origin", "original")
+
+        assert job_ids == []
+        assert db_session.query(RestoreJob).count() == 0
+        mock_submit.assert_not_called()
+
+    def test_push_reconciles_first_deletions_win(
+        self, db_session, real_store, staging_user, tmp_path
+    ):
+        """A file deleted in webmail between staging and push must NOT appear
+        in any manifest: reconcile runs before grouping."""
+        acc = _mk_push_account(db_session, real_store, tmp_path, "a1")
+        _stage_raw(db_session, staging_user, acc, "<w1@x>", "100.aa.h:2,")
+        _stage_raw(db_session, staging_user, acc, "<w2@x>", "101.bb.h:2,")
+        cur = os.path.join(staging_service.staging_dir(staging_user), "cur")
+        os.remove(os.path.join(cur, "100.aa.h:2,"))
+
+        with patch(_SUBMIT):
+            job_ids = staging_service.push(db_session, staging_user, "origin", "original")
+
+        assert len(job_ids) == 1
+        job = db_session.query(RestoreJob).one()
+        assert job.selected_uids == {"INBOX": ["101.bb.h:2,"]}
+        # The deleted file's row died in the reconcile, not in some manifest.
+        assert db_session.query(StagingMessage).one().staged_filename == "101.bb.h:2,"
 
 
 class TestUserdbPathContract:
