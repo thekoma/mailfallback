@@ -301,6 +301,10 @@ $config['db_prefix'] = 'rc_';
 $config['use_subscriptions'] = false;
 $config['check_all_folders'] = true;
 $config['disabled_actions'] = ['mail.compose'];
+// Delete permanently instead of moving to Trash: account namespaces are
+// read-only (no Trash reachable) and the writable Staging/ namespace is a
+// curation surface — flag+expunge there is exactly the intended gesture.
+$config['delete_always'] = true;
 $config['search_mods'] = [
     '*' => ['subject' => 1, 'from' => 1, 'text' => 1],
 ];
