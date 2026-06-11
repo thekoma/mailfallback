@@ -115,3 +115,77 @@ class TestAttachmentParse:
         # Second walk: row exists, attachments must NOT be re-created
         index_service.upsert_message_set(db_session, acc.id)
         assert db_session.query(MailIndexAttachment).count() == 0
+
+
+class TestBackfillAttachments:
+    def test_backfill_fills_old_rows_and_resumes(self, db_session, default_store, tmp_path):
+        acc = _mk_account(db_session, default_store, tmp_path)
+        _write_maildir_message(
+            acc.maildir_path,
+            "103.m1.host:2,S",
+            _msg("<b1@x>", attachments=[("a.pdf", b"xx")]),
+        )
+        index_service.upsert_message_set(db_session, acc.id)
+        # Simulate a pre-attachment-era row
+        row = db_session.query(MailIndexMessage).filter_by(account_id=acc.id).one()
+        row.attachments_indexed_at = None
+        row.has_attachments = False
+        db_session.query(MailIndexAttachment).delete()
+        db_session.commit()
+
+        n = index_service.backfill_attachments(db_session, acc.id)
+        assert n == 1
+        row = db_session.query(MailIndexMessage).filter_by(account_id=acc.id).one()
+        assert row.has_attachments is True
+        assert db_session.query(MailIndexAttachment).count() == 1
+
+        # Resume: nothing left to do
+        assert index_service.backfill_attachments(db_session, acc.id) == 0
+
+    def test_backfill_handles_inbox_subdirectory_layout(self, db_session, default_store, tmp_path):
+        # Production layout (mbsync `Inbox {path}/INBOX`): INBOX is a real
+        # subdirectory; _walk_maildir stores folder_path="INBOX" for it too.
+        acc = _mk_account(db_session, default_store, tmp_path)
+        _write_maildir_message(
+            os.path.join(acc.maildir_path, "INBOX"),
+            "106.m1.host:2,S",
+            _msg("<b3@x>", attachments=[("a.pdf", b"xx")]),
+        )
+        index_service.upsert_message_set(db_session, acc.id)
+        row = db_session.query(MailIndexMessage).filter_by(account_id=acc.id).one()
+        assert row.folder_path == "INBOX"  # same folder_path as the top-level layout
+        row.attachments_indexed_at = None
+        row.has_attachments = False
+        db_session.query(MailIndexAttachment).delete()
+        db_session.commit()
+
+        n = index_service.backfill_attachments(db_session, acc.id)
+
+        assert n == 1
+        row = db_session.query(MailIndexMessage).filter_by(account_id=acc.id).one()
+        assert row.has_attachments is True
+        assert db_session.query(MailIndexAttachment).count() == 1
+
+    def test_backfill_marks_unparsable_rows_processed(self, db_session, default_store, tmp_path):
+        acc = _mk_account(db_session, default_store, tmp_path)
+        _write_maildir_message(
+            acc.maildir_path,
+            "105.m1.host:2,S",
+            _msg("<b2@x>", attachments=[("a.pdf", b"xx")]),
+        )
+        index_service.upsert_message_set(db_session, acc.id)
+        row = db_session.query(MailIndexMessage).filter_by(account_id=acc.id).one()
+        row.attachments_indexed_at = None
+        row.has_attachments = False
+        db_session.query(MailIndexAttachment).delete()
+        db_session.commit()
+        # File disappears (e.g. flag-rename race / deleted between index and backfill)
+        os.remove(os.path.join(acc.maildir_path, "cur", "105.m1.host:2,S"))
+
+        n = index_service.backfill_attachments(db_session, acc.id)
+
+        assert n == 1
+        row = db_session.query(MailIndexMessage).filter_by(account_id=acc.id).one()
+        assert row.attachments_indexed_at is not None  # marked, won't retry forever
+        assert row.has_attachments is False
+        assert index_service.backfill_attachments(db_session, acc.id) == 0
