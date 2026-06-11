@@ -21,9 +21,9 @@ Four additions, one cycle:
 1. **Cross-account search by default** — scope select "All mailboxes (N)", per-result mailbox badge.
 2. **In-app preview pane** — headers + body snippet for any hit (live or snapshot), without leaving the page.
 3. **Staging area** — a per-user writable Dovecot namespace (`Staging/`). Selected results are copied there; the user curates in webmail (reads everything, deletes the irrelevant); MFB then pushes the survivors to the upstream IMAP server. Optional step — direct folder/full restores are untouched.
-4. **Attachment index** — per-attachment rows (name/ext/size + MIME part locator) captured at index time, a fourth workspace preset "An attachment" to search them, and click-to-download.
+4. **Attachment index** — per-attachment rows (name/ext/size + MIME part locator) captured at index time, a fourth workspace preset "An attachment" to search them, click-to-download, and **content search**: when Tika is enabled (`tika_enabled`, already in the stack for Dovecot FTS), attachment text is extracted at index time and searchable cross live+snapshot, with per-attachment snippets. Without Tika, the view degrades to name/type/size and the content toggle does not render (copy-must-match-behavior either way).
 
-**Out of scope (explicitly):** attachment *content* extraction/search (tier 3 — future opt-in cycle; the "Cerca anche nel contenuto" toggle does NOT appear in the UI until that cycle ships, per copy-must-match-behavior), multiple named staging areas, per-tier quota UI, deep search over snapshot bodies.
+**Out of scope (explicitly):** multiple named staging areas, per-tier quota UI, deep search over snapshot bodies, attachment *preview/rendering* in-app (download only).
 
 ## Decisions log (from brainstorm)
 
@@ -34,7 +34,7 @@ Four additions, one cycle:
 | Curation surface | **Webmail (RW staging) + in-app preview** in the results pane. |
 | Staging lifecycle | **One per user**, TTL + scheduled cleanup. |
 | SaaS readiness | TTL and quota are first-class model fields with enforcement active from day one; **permissive defaults** (TTL 7 days, quota unlimited) so local/self-hosted deployments never notice. Env config now; moves to settings-in-DB with that refactor. |
-| Attachment scope this cycle | Metadata + locator + dedicated view + download. Content search deferred. |
+| Attachment scope this cycle | Metadata + locator + dedicated view + download + **content extraction/search gated by `tika_enabled`** (user: "se facciamo la sezione per la ricerca degli allegati questa parte è implicitamente da fare"). One backfill pass covers both metadata and content — backfilling content later would mean re-reading every mailbox twice. |
 
 ## Architecture
 
@@ -51,6 +51,9 @@ Four additions, one cycle:
 | `ext` | Text | lowercase, derived at insert ("pdf", "docx", "" if none) |
 | `size_bytes` | Integer | decoded payload length |
 | `content_type` | Text | as declared, informational only |
+| `content_text` | Text nullable | Tika-extracted text, capped at 200 KB; NULL when Tika is off, extraction failed, or type not extractable |
+
+GIN index on `to_tsvector('simple', coalesce(filename,'') || ' ' || coalesce(content_text,''))` for combined name+content search; snippets via `ts_headline`. (SQLite tests: plain LIKE fallback, same pattern as the messages tsv.)
 
 The file locator lives on the existing `mail_index.messages` row (`folder_path`, `maildir_filename`) — attachments join to it; no duplication.
 
@@ -96,7 +99,7 @@ The staging **Maildir is the source of truth for contents** (webmail deletions j
 
 ### Services
 
-**`index_service`** — during the existing per-file header parse, MIME-walk the message: set `has_attachments`, insert `mail_index.attachments` rows. New CLI `mfb index backfill-attachments [account_id]`, resumable + idempotent (delete-and-reinsert per message). No change to snapshot bookkeeping (attachment rows describe the message; `snapshot_messages` already says where it exists).
+**`index_service`** — during the existing per-file header parse, MIME-walk the message: set `has_attachments`, insert `mail_index.attachments` rows. When `tika_enabled`: POST each attachment's decoded bytes to Tika (`{tika_url}/tika`, `Accept: text/plain`) with hard caps — parts > 20 MB skipped, 10 s timeout per part, result truncated to 200 KB — and store `content_text`. Extraction failures are logged and leave `content_text` NULL; **they never fail indexing or sync** (same contract as every other index path). New CLI `mfb index backfill-attachments [account_id]`, resumable + idempotent (delete-and-reinsert per message), covering metadata and content in a single pass. No change to snapshot bookkeeping (attachment rows describe the message; `snapshot_messages` already says where it exists).
 
 **`staging_service`** (new):
 - `get_status(db, user)` — count/bytes/expiry/quota (creates nothing).
@@ -108,7 +111,7 @@ The staging **Maildir is the source of truth for contents** (webmail deletions j
 
 **`restore_worker`** — new mode `staging_push`: source = staged files read **directly from disk** (no source IMAP connection), target = upstream IMAP APPEND, reusing the existing retry/append/skip-duplicates plumbing. Folder per message: `original_folder` or `Restored/<YYYY-MM-DD>` per `folder_mode`; create-if-missing reuses existing logic.
 
-**`search_service`** — `search_messages` response gains `has_attachments` + `attachments: [{filename, ext, size_bytes}]` per hit (single aggregate join). New `search_attachments(db, user, query, account_ids, exts, min_size, max_size, page, page_size)` → rows from `mail_index.attachments` (filename ILIKE terms) joined to messages for subject/from/date/folder + live/snap presence, ordered by date.
+**`search_service`** — `search_messages` response gains `has_attachments` + `attachments: [{filename, ext, size_bytes}]` per hit (single aggregate join). New `search_attachments(db, user, query, account_ids, exts, min_size, max_size, include_content, page, page_size)` → rows from `mail_index.attachments` joined to messages for subject/from/date/folder + live/snap presence, ordered by date. Matching: filename always; plus `content_text` tsv match when `include_content` (only honored if `tika_enabled`); content hits return a `ts_headline` snippet per attachment.
 
 **Preview** — `GET /api/restore/preview/{account_id}/{message_id_hash}` (hash hex-encoded in URLs, here and below): visibility check; live → read the Maildir file directly; snapshot-only → bounded restic dump; parse headers + first ~2 KB of the text/plain part (text/html stripped as fallback); return JSON. No IMAP session needed.
 
@@ -134,13 +137,13 @@ Audit log actions: `staging.add`, `staging.empty`, `staging.push`, `attachment.d
 - `MAILFALLBACK_STAGING_TTL_MINUTES` (default `10080` = 7 days)
 - `MAILFALLBACK_STAGING_MAX_BYTES` (default `0` = unlimited)
 
-Interim env-var debt, to fold into the settings-in-DB refactor like the rest of tier-2 config.
+Interim env-var debt, to fold into the settings-in-DB refactor like the rest of tier-2 config. Attachment content extraction adds **no new config**: it keys off the existing `tika_enabled` / `tika_url` (one knob governs FTS and attachment indexing alike — per-tier gating later becomes a settings-in-DB question).
 
 ### UI (match the two reference screenshots)
 
 **Workspace (single-mail preset):** scope select "All mailboxes (N)" first in the search row (defaults to all; individual account selectable); result rows add mailbox badge, 📎 marker and attachment chips (`name.ext · size`, ext accented); right-hand **Preview panel** fills on row click (headers, body snippet with fade, attachments box, "Add to staging" + "Open full in webmail" — the webmail button renders only when the message has a live source, since snapshot-only mail is not in any webmail namespace); **staging bar** docked bottom (count · bytes · TTL · quota; "Apri in webmail" → Roundcube `?_task=mail&_mbox=Staging`; "Svuota" with confirm; "Push upstream →" opens the panel with the two radio groups and confirm). Push progress reuses the existing restore status strip.
 
-**"An attachment" preset (new chip, second position):** search row + type filter chips (PDF / Doc / Foglio / Immagine / Archivio / Altro → ext groups) + size chip; results table: type icon, `name.ext` (clickable = download), containing message (subject + mailbox/live/snap badges, sender, folder), size, date, actions "Anteprima msg" (opens the same preview) and "📥 Staging". No content-search toggle this cycle.
+**"An attachment" preset (new chip, second position):** search row + type filter chips (PDF / Doc / Foglio / Immagine / Archivio / Altro → ext groups) + size chip; results table: type icon, `name.ext` (clickable = download), content snippet with highlighted hits (when content search ran), containing message (subject + mailbox/live/snap badges, sender, folder), size, date, actions "Anteprima msg" (opens the same preview) and "📥 Staging". The "Cerca anche nel contenuto" toggle renders **only when `tika_enabled`** (default ON when visible); with Tika off it is absent, not disabled.
 
 **Responsive:** below 768px the two panels stack (preview becomes an inline expand under the selected row); the staging bar spans full width.
 
@@ -156,7 +159,7 @@ Interim env-var debt, to fold into the settings-in-DB refactor like the rest of 
 
 ## Testing
 
-- **index_service**: MIME fixtures — single/multiple attachments, RFC 2047/2231 filenames, inline image without filename (not counted), nested multipart; backfill idempotence.
+- **index_service**: MIME fixtures — single/multiple attachments, RFC 2047/2231 filenames, inline image without filename (not counted), nested multipart; backfill idempotence. Tika extraction (HTTP mocked): success, timeout, oversized part skipped, failure leaves NULL and indexing proceeds; everything skipped when `tika_enabled` is false.
 - **staging_service**: quota deny, TTL cleanup, reconcile after out-of-band file deletion, push grouping (origin vs override), folder modes, empty-after-success / keep-after-failure.
 - **restore_worker staging_push**: APPEND grouping, folder creation, skip-duplicates (mocked IMAP, as today).
 - **routers**: visibility 403/404 on all new endpoints; download headers (Content-Disposition, octet-stream); preview live vs snapshot (restic mocked).
@@ -169,7 +172,8 @@ Interim env-var debt, to fold into the settings-in-DB refactor like the rest of 
 2. **Cross-account search + preview** — UI scope select + badges + chips, preview endpoint + panel.
 3. **Staging backend** — models (same migration as 1), staging_service, Dovecot namespace + ACL, status/add/empty endpoints, scheduler cleanup.
 4. **Push** — restore_worker mode, push endpoint + panel, staging bar UI, webmail link.
-5. **Attachment preset + download** — attachments search endpoint + view + download.
-6. **Polish + live verification** — compare against both reference screenshots at 1440/768/420, dark+light, gemini critic pass.
+5. **Attachment preset + download** — attachments search endpoint + view (name/type/size) + download.
+6. **Content extraction** — Tika client in index_service (caps + failure tolerance), content matching + snippets in search and view, toggle gated by `tika_enabled`, backfill covers content.
+7. **Polish + live verification** — compare against both reference screenshots at 1440/768/420, dark+light, gemini critic pass.
 
-Each phase lands green (tests + lint) and independently shippable; 1–2 are valuable even if 3–5 slipped a cycle.
+Each phase lands green (tests + lint) and independently shippable; 1–2 are valuable even if later phases slipped a cycle.
