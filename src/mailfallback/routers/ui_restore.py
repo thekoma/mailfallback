@@ -370,6 +370,8 @@ def restore_separator_warning_partial(
     error = None
     try:
         creds = decrypt_credentials(account.credentials, settings.secret_key)
+        # OAuth2 destinations (Gmail/Microsoft) reject access tokens sent via
+        # plain LOGIN — connect with AUTHENTICATE XOAUTH2, like restore_worker.
         if account.auth_type.value == "oauth2":
             import asyncio
             import json
@@ -389,8 +391,10 @@ def restore_separator_warning_partial(
                 password = asyncio.run(refresh_fn(refresh_token))
             else:
                 password = token_data.get("access_token", "")
+            auth_method = "xoauth2"
         else:
             password = creds
+            auth_method = "login"
 
         conn = connect_imap(
             account.imap_host,
@@ -399,6 +403,7 @@ def restore_separator_warning_partial(
             account.imap_user or account.email_address,
             password,
             timeout=10,
+            auth_method=auth_method,
         )
         try:
             import re
