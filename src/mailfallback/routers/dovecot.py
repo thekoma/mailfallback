@@ -3,6 +3,7 @@
 
 import hmac
 import re
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from mailfallback.models import (
     Account,
     Recovery,
     RecoveryStatus,
+    StagingArea,
     User,
     account_groups,
     account_owners,
@@ -110,6 +112,28 @@ def userdb_lookup(username: str, db: Session = Depends(get_db)):
                     "inbox": False,
                 }
             )
+
+    # Staging: the user's writable curation namespace for restores. Published
+    # only while an unexpired StagingArea exists; the global ACL grants
+    # lrwstie on "Staging" / "Staging/*" while everything else stays lrs.
+    # Not gated on accounts: the Lua userdb unconditionally adds the mfb_root
+    # inbox namespace, so a staging-only response cannot break login.
+    staging = (
+        db.query(StagingArea)
+        .filter(StagingArea.user_id == user.id)
+        .filter(StagingArea.expires_at > datetime.now(UTC))
+        .first()
+    )
+    if staging:
+        namespaces.append(
+            {
+                "name": f"stg_{user.id}",
+                "prefix": "Staging/",
+                "mail_driver": "maildir",
+                "mail_path": f"{home}/staging",
+                "inbox": False,
+            }
+        )
 
     return {
         "uid": 1000,
