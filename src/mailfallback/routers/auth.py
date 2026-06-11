@@ -1,9 +1,11 @@
 # src/mailfallback/routers/auth.py
 import json
+import logging
 import re
 import secrets
 import urllib.parse
 
+from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -26,6 +28,8 @@ from mailfallback.services.store_service import ensure_default_store
 from mailfallback.services.sync_service import create_sync_job
 from mailfallback.services.sync_worker import TOKEN_REFRESH_FAILED, submit_sync_job
 from mailfallback.services.user_service import authenticate_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["auth"])
 
@@ -239,7 +243,10 @@ if settings.oidc_enabled:
         client_id=settings.oidc_client_id,
         client_secret=settings.oidc_client_secret,
         server_metadata_url=settings.oidc_discovery_url,
-        client_kwargs={"scope": "openid email profile groups"},
+        # timeout covers authlib's lazy server-metadata fetch on the first
+        # login after startup — the httpx default (5s) is too tight for a
+        # cold identity provider and used to surface as a raw 500.
+        client_kwargs={"scope": "openid email profile groups", "timeout": 15},
     )
 
 
@@ -248,7 +255,11 @@ async def oidc_login(request: Request):
     if not settings.oidc_enabled:
         raise HTTPException(status_code=404, detail="OIDC not enabled")
     redirect_uri = str(request.url_for("oidc_callback"))
-    return await oauth.oidc.authorize_redirect(request, redirect_uri)
+    try:
+        return await oauth.oidc.authorize_redirect(request, redirect_uri)
+    except Exception:
+        logger.exception("OIDC login failed: could not reach the identity provider")
+        return RedirectResponse("/login?error=sso_unreachable", status_code=303)
 
 
 @router.get("/auth/oidc/callback")
@@ -256,7 +267,14 @@ async def oidc_callback(request: Request, db: Session = Depends(get_db)):
     if not settings.oidc_enabled:
         raise HTTPException(status_code=404, detail="OIDC not enabled")
 
-    token = await oauth.oidc.authorize_access_token(request)
+    try:
+        token = await oauth.oidc.authorize_access_token(request)
+    except OAuthError:
+        logger.exception("OIDC callback rejected: state mismatch or provider error")
+        return RedirectResponse("/login?error=sso_failed", status_code=303)
+    except Exception:
+        logger.exception("OIDC callback failed: could not reach the identity provider")
+        return RedirectResponse("/login?error=sso_unreachable", status_code=303)
     userinfo = token.get("userinfo", {})
 
     sub = userinfo.get("sub")
