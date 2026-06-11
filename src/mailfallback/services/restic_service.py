@@ -11,6 +11,10 @@ from mailfallback.security import decrypt_credentials
 
 logger = logging.getLogger(__name__)
 
+# Cap for single-message raw reads (25 MiB) — shared by dump_file and by
+# preview_service's live-file read so both sources truncate identically.
+DUMP_MAX_BYTES = 26_214_400
+
 # Retention presets: (keep_daily, keep_weekly, keep_monthly)
 _RETENTION_PRESETS: dict[str, tuple[int, int, int]] = {
     "light": (7, 4, 0),
@@ -276,7 +280,7 @@ def dump_file(
     account_id: str,
     snapshot_id: str,
     path: str,
-    max_bytes: int = 26_214_400,
+    max_bytes: int = DUMP_MAX_BYTES,
 ) -> bytes | None:
     """Extract one file's raw bytes from a snapshot via `restic dump`.
 

@@ -303,9 +303,13 @@ def prune_snapshot(db: Session, snapshot_id: str) -> int:
     return deleted
 
 
-def _filename_prefix(filename: str) -> str:
+def maildir_filename_prefix(filename: str) -> str:
     """Return the stable prefix of a Maildir filename (everything before the
     flag suffix). E.g. '1234.M5.host:2,RS' -> '1234.M5.host:2,'.
+
+    Flags change on read/seen renames while the prefix stays put — every
+    filename comparison across time (index row vs live dir, index row vs
+    snapshot listing) must apply this helper to BOTH sides.
     """
     if ":2," in filename:
         return filename.split(":2,")[0] + ":2,"
@@ -338,7 +342,7 @@ def backfill_snapshots(db: Session, account_id: str):
         )
         .all()
     )
-    prefix_to_hash = {_filename_prefix(fn): h for h, fn in alive}
+    prefix_to_hash = {maildir_filename_prefix(fn): h for h, fn in alive}
 
     snaps = restic_service.list_snapshots(backup.destination, account_id)
 
@@ -386,7 +390,7 @@ def backfill_snapshots(db: Session, account_id: str):
                 if "/cur/" not in path and "/new/" not in path:
                     continue
                 fn = path.rsplit("/", 1)[-1]
-                h = prefix_to_hash.get(_filename_prefix(fn))
+                h = prefix_to_hash.get(maildir_filename_prefix(fn))
                 if h:
                     seen_hashes.add(h)
             inserted = 0

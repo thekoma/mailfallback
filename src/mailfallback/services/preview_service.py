@@ -22,11 +22,14 @@ from mailfallback.models import (
     SnapshotMessage,
 )
 from mailfallback.services import restic_service
-from mailfallback.services.index_service import maildir_folder_bases
+from mailfallback.services.index_service import maildir_filename_prefix, maildir_folder_bases
 
 logger = logging.getLogger(__name__)
 
 SNIPPET_CHARS = 2048
+# Newest matching snapshots probed with the exact current filename before
+# falling back to one prefix-based locate (see _snapshot_bytes).
+MAX_SNAPSHOT_ATTEMPTS = 3
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
@@ -40,14 +43,14 @@ def _locate_live_file(account: Account, row: MailIndexMessage) -> str | None:
                 return candidate
     # Flags may have changed the suffix since the last index walk — match on
     # the stable prefix instead.
-    prefix = row.maildir_filename.split(":2,")[0]
+    prefix = maildir_filename_prefix(row.maildir_filename)
     for base in bases:
         for sub in ("cur", "new"):
             d = os.path.join(base, sub)
             if not os.path.isdir(d):
                 continue
             for fn in os.listdir(d):
-                if fn.split(":2,")[0] == prefix:
+                if maildir_filename_prefix(fn) == prefix:
                     return os.path.join(d, fn)
     return None
 
@@ -57,8 +60,14 @@ def _snapshot_bytes(
 ) -> tuple[bytes, str] | None:
     """Raw message bytes from the newest snapshot that contains the message.
 
-    Returns (raw, snapshot_short_id) or None. Best-effort: restic failures
-    (list_snapshots raises, dump_file returns None) degrade to None.
+    Filenames drift: snapshot bits are prefix-matched at backfill time, and
+    webmail reads rename the live file (the write-seen ACL adds flags) while
+    snapshots are immutable — so a snapshot may hold the message under an
+    OLD name that exact dumps of the CURRENT row.maildir_filename never hit.
+    Strategy: exact-name dumps against the MAX_SNAPSHOT_ATTEMPTS newest
+    matching snapshots, then ONE prefix-based locate (restic ls) on the
+    newest matching snapshot. Returns (raw, snapshot_short_id) or None;
+    best-effort — any restic failure degrades to None, never raises.
     """
     policy_row = db.query(BackupPolicy).filter(BackupPolicy.account_id == account.id).first()
     if not policy_row:
@@ -73,24 +82,39 @@ def _snapshot_bytes(
     if not snap_ids:
         return None
     try:
+        # list_snapshots returns newest-first (documented contract)
         snaps = restic_service.list_snapshots(policy_row.destination, account.id)
-    except Exception:
-        logger.warning("Preview: list_snapshots failed for %s", account.id, exc_info=True)
-        return None
-    for s in sorted(snaps, key=lambda s: s.get("time", ""), reverse=True):
-        sid = s.get("short_id") or s.get("id", "")[:8]
-        if sid not in snap_ids:
-            continue
-        for base in maildir_folder_bases(account.maildir_path, row.folder_path):
-            for sub in ("cur", "new"):
-                raw = restic_service.dump_file(
-                    policy_row.destination,
-                    account.id,
-                    sid,
-                    os.path.join(base, sub, row.maildir_filename),
-                )
+        matching = [
+            sid
+            for snap in snaps
+            if (sid := snap.get("short_id") or snap.get("id", "")[:8]) in snap_ids
+        ]
+        for sid in matching[:MAX_SNAPSHOT_ATTEMPTS]:
+            for base in maildir_folder_bases(account.maildir_path, row.folder_path):
+                for sub in ("cur", "new"):
+                    raw = restic_service.dump_file(
+                        policy_row.destination,
+                        account.id,
+                        sid,
+                        os.path.join(base, sub, row.maildir_filename),
+                    )
+                    if raw:
+                        return raw, sid
+        if matching:
+            # Exact name missed everywhere — assume rename drift and locate
+            # the message by its stable prefix in the newest matching snapshot.
+            sid = matching[0]
+            prefix = maildir_filename_prefix(row.maildir_filename)
+            for path in restic_service.list_files(policy_row.destination, account.id, sid):
+                if "/cur/" not in path and "/new/" not in path:
+                    continue
+                if maildir_filename_prefix(path.rsplit("/", 1)[-1]) != prefix:
+                    continue
+                raw = restic_service.dump_file(policy_row.destination, account.id, sid, path)
                 if raw:
                     return raw, sid
+    except Exception:
+        logger.warning("Preview: snapshot lookup failed for %s", account.id, exc_info=True)
     return None
 
 
@@ -133,7 +157,9 @@ def get_preview(db: Session, account: Account, message_id_hash: bytes) -> dict |
         if path:
             try:
                 with open(path, "rb") as f:
-                    raw = f.read()
+                    # Same cap as snapshot dumps — preview parses a peek,
+                    # truncated MIME is acceptable.
+                    raw = f.read(restic_service.DUMP_MAX_BYTES)
             except OSError:
                 raw = None
     if raw is None:
