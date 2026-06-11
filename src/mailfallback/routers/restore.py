@@ -1060,6 +1060,7 @@ def workspace_snapshot_count(
 
 class WorkspaceSnapshotDatesRequest(BaseModel):
     account_id: str
+    include_all: bool = False
 
 
 @router.post("/workspace/snapshot-dates")
@@ -1072,8 +1073,12 @@ def workspace_snapshot_dates(
     """Return distinct YYYY-MM-DD strings of days that have at least one snapshot.
 
     Used by the workspace calendar to highlight days that contain restorable data.
+
+    Privacy-default account lookup like its workspace siblings: an admin needs
+    ``include_all=true`` for a foreign account. Metadata-only (snapshot days,
+    no message content), so the escalation is not audited.
     """
-    account = account_service.get_account(db, req.account_id, user)
+    account, _escalated = _workspace_account_for_user(db, user, req.account_id, req.include_all)
     if not account:
         raise HTTPException(404, "account not found")
 

@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from email.message import EmailMessage
 from unittest.mock import MagicMock, patch
 
-from mailfallback.models import Account, MailIndexMessage, User, UserRole
+from mailfallback.models import Account, AuditLog, MailIndexMessage, User, UserRole
 from mailfallback.routers.dovecot import account_namespace_prefix
 from mailfallback.security import hash_password
 from mailfallback.services import index_service
@@ -152,6 +152,9 @@ def test_admin_include_all_resolves_foreign_account(
     assert resp.status_code == 200, resp.text
     ns = account_namespace_prefix(acc)
     assert resp.json() == {"resolved": {f"{ns}INBOX": ["7"]}, "missing": []}
+    # Deliberately NOT audited: resolve-uids is a lookup step — the restore
+    # that consumes the mapping logs restore.start. Pin that decision.
+    assert db_session.query(AuditLog).filter(AuditLog.action.like("restore.%")).count() == 0
 
 
 @patch(DELETE_PATCH)

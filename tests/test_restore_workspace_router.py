@@ -808,6 +808,31 @@ def test_api_restore_search_include_all_ignored_for_non_admin(client, db_session
     assert db_session.query(AuditLog).filter_by(action="restore.search_all").count() == 0
 
 
+def test_workspace_snapshot_dates_foreign_account_requires_include_all(
+    client, db_session, default_store, login_user
+):
+    """snapshot-dates follows the workspace privacy default: an admin gets 404
+    on a foreign account without include_all, 200 with it. Metadata-only, so
+    no audit row either way."""
+    from mailfallback.models import AuditLog
+
+    acct = _mk_foreign_indexed_account(db_session, default_store)
+
+    login = client.post("/api/auth/login", json={"username": "koma", "password": "x"})
+    assert login.status_code in (200, 303)
+
+    resp = client.post("/api/restore/workspace/snapshot-dates", json={"account_id": acct.id})
+    assert resp.status_code == 404
+
+    resp = client.post(
+        "/api/restore/workspace/snapshot-dates",
+        json={"account_id": acct.id, "include_all": True},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"dates": []}  # no backup policy — gate is what matters
+    assert db_session.query(AuditLog).filter(AuditLog.action.like("restore.%")).count() == 0
+
+
 def test_workspace_search_wrapper_uses_new_search_when_flag_on(
     client, db_session, default_store, login_user, monkeypatch
 ):
