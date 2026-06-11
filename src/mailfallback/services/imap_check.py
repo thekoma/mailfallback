@@ -16,6 +16,21 @@ def validate_host_not_internal(host: str) -> None:
             raise ValueError(f"Connections to private/internal addresses are not allowed: {host}")
 
 
+def _xoauth2_authobject(username: str, access_token: str):
+    """Build an imaplib authobject for SASL XOAUTH2 (Gmail / Microsoft 365).
+
+    Returns the raw SASL string for every challenge (imaplib base64-encodes
+    it); answering a re-challenge — e.g. Gmail's base64 error blob — with the
+    same string lets the exchange terminate with a proper NO response.
+    """
+    sasl = f"user={username}\x01auth=Bearer {access_token}\x01\x01".encode()
+
+    def _respond(_challenge: bytes | None) -> bytes:
+        return sasl
+
+    return _respond
+
+
 def connect_imap(
     host: str,
     port: int = 993,
@@ -23,7 +38,14 @@ def connect_imap(
     username: str | None = None,
     password: str | None = None,
     timeout: int = 30,
+    auth_method: str = "login",
 ) -> imaplib.IMAP4:
+    """Open an IMAP connection and authenticate.
+
+    auth_method "login" sends plain LOGIN; "xoauth2" sends AUTHENTICATE
+    XOAUTH2 with `password` as the OAuth2 access token — Gmail/Microsoft
+    reject access tokens via LOGIN ([AUTHENTICATIONFAILED]).
+    """
     if tls_type == "IMAPS":
         conn = imaplib.IMAP4_SSL(host, port, timeout=timeout)
     elif tls_type == "STARTTLS":
@@ -32,7 +54,10 @@ def connect_imap(
     else:
         conn = imaplib.IMAP4(host, port, timeout=timeout)
     if username and password:
-        conn.login(username, password)
+        if auth_method == "xoauth2":
+            conn.authenticate("XOAUTH2", _xoauth2_authobject(username, password))
+        else:
+            conn.login(username, password)
     return conn
 
 

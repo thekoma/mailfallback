@@ -109,13 +109,17 @@ def execute_restore_job(db: Session, job_id: str) -> None:
         )
         logger.info("Restore %s: Dovecot connected OK", job_id)
 
+        # OAuth2 upstreams (Gmail/Microsoft) reject access tokens sent via
+        # plain LOGIN — they require AUTHENTICATE XOAUTH2.
         if target.auth_type.value == "oauth2":
             tgt_password = _refresh_target_token(target_creds, db, target)
             if not tgt_password:
                 _fail_job(db, job, "Failed to refresh OAuth2 token for target")
                 return
+            tgt_auth_method = "xoauth2"
         else:
             tgt_password = target_creds
+            tgt_auth_method = "login"
 
         logger.info(
             "Restore %s: connecting to target %s:%s as %s",
@@ -130,6 +134,7 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             target.tls_type or "IMAPS",
             target.imap_user or target.email_address,
             tgt_password,
+            auth_method=tgt_auth_method,
         )
         logger.info("Restore %s: target connected OK", job_id)
 
@@ -165,6 +170,7 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             "tls_type": target.tls_type or "IMAPS",
             "username": target.imap_user or target.email_address,
             "password": tgt_password,
+            "auth_method": tgt_auth_method,
         }
         _execute_restore(
             db,
@@ -278,12 +284,14 @@ def _get_namespace_prefix(account):
 
 def _reconnect_target(tgt_conn_params):
     logger.info("Reconnecting to target %s:%s", tgt_conn_params["host"], tgt_conn_params["port"])
+    # src_conn_params (Dovecot) carries no auth_method — default to plain login.
     return connect_imap(
         tgt_conn_params["host"],
         tgt_conn_params["port"],
         tgt_conn_params["tls_type"],
         tgt_conn_params["username"],
         tgt_conn_params["password"],
+        auth_method=tgt_conn_params.get("auth_method", "login"),
     )
 
 
