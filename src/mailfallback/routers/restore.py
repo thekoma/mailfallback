@@ -26,6 +26,7 @@ from mailfallback.services import (
     preview_service,
     restic_service,
     search_service,
+    staging_service,
 )
 from mailfallback.services.audit_service import log_action
 from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
@@ -56,6 +57,87 @@ class RestoreCreate(BaseModel):
 
 def _sanitize_imap_string(value: str) -> str:
     return re.sub(r'["\\\x00-\x1f]', "", value)
+
+
+# ---------------------------------------------------------------------------
+# Staging area endpoints — MUST register before GET /{job_id}, or FastAPI
+# resolves "/staging" as a job id (routes match in registration order).
+# ---------------------------------------------------------------------------
+
+
+STAGING_ADD_MAX_ITEMS = 200
+
+
+class StagingItemsRequest(BaseModel):
+    items: list[dict]  # [{"account_id": ..., "message_id_hash": hex}]
+    include_all: bool = False
+
+
+@router.get("/staging")
+def api_staging_status(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Current staging state for the logged-in user (reconciled with disk)."""
+    return staging_service.get_status(db, user)
+
+
+@router.post("/staging/items")
+def api_staging_add(
+    req: StagingItemsRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Copy indexed messages into the user's staging Maildir.
+
+    Entries beyond the first STAGING_ADD_MAX_ITEMS are ignored (mirrors
+    resolve-uids). include_all is the audited admin escalation: the service
+    enforces the role, this layer makes the audit row self-describing.
+    """
+    try:
+        items = [
+            (i["account_id"], bytes.fromhex(i["message_id_hash"]))
+            for i in req.items[:STAGING_ADD_MAX_ITEMS]
+        ]
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid items") from None
+    try:
+        result = staging_service.add_messages(db, user, items, include_all=req.include_all)
+    except staging_service.StagingQuotaExceededError as e:
+        raise HTTPException(status_code=413, detail=str(e)) from None
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from None
+    details = dict(result)
+    if req.include_all and user.role == UserRole.admin:
+        details["include_all"] = True
+    log_action(
+        db,
+        user=user,
+        action="staging.add",
+        resource_type="staging",
+        details=details,
+        ip_address=request.client.host if request.client else None,
+    )
+    return result
+
+
+@router.delete("/staging")
+def api_staging_empty(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove the user's staging area entirely (files + rows). Idempotent."""
+    staging_service.empty(db, user)
+    log_action(
+        db,
+        user=user,
+        action="staging.empty",
+        resource_type="staging",
+        ip_address=request.client.host if request.client else None,
+    )
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
