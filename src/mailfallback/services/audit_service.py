@@ -41,6 +41,7 @@ ACTION_LABELS = {
     "restore.preview": "Previewed message in another user's mailbox",
     "staging.add": "Staged messages for restore",
     "staging.empty": "Emptied staging area",
+    "staging.push": "Pushed staged messages upstream",
     "dovecot.health_check": "Dovecot health check",
     "dovecot.fts_reindex": "FTS reindex all users",
     "dovecot.force_resync": "Force resync all users",
