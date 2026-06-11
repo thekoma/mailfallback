@@ -314,7 +314,7 @@ def reconcile(db: Session, user: User, area: StagingArea) -> int:
     return dropped
 
 
-def push(db: Session, user: User, destination: str, folder_mode: str) -> list[str]:
+def push(db: Session, user: User, destination: str, folder_mode: str) -> dict:
     """Create one staging_push RestoreJob per target account.
 
     destination: "origin" (each message back to its source account) or an
@@ -323,18 +323,24 @@ def push(db: Session, user: User, destination: str, folder_mode: str) -> list[st
     Restored/<today>). reconcile() runs FIRST so webmail deletions win; the
     per-target manifest {destination_folder: [staged_filename, ...]} rides
     in the job's selected_uids JSON column. Rows and files stay staged —
-    the worker removes them only after confirmed delivery. Returns job ids.
+    the worker removes them only after confirmed delivery.
+
+    Returns {"job_ids": [...], "skipped_targets": [...]}: skipped_targets
+    lists accounts that could not take a job (busy with a pending/running
+    one, no credentials, suspended, migrating). Their messages stay staged,
+    and the caller can surface the partial submission instead of silently
+    shipping a short job list.
     """
     from mailfallback.services.restore_service import create_restore_job
     from mailfallback.services.restore_worker import submit_restore_job
 
     area = db.query(StagingArea).filter(StagingArea.user_id == user.id).first()
     if not area or _is_expired(area):
-        return []
+        return {"job_ids": [], "skipped_targets": []}
     reconcile(db, user, area)
     rows = db.query(StagingMessage).filter(StagingMessage.staging_id == area.id).all()
     if not rows:
-        return []
+        return {"job_ids": [], "skipped_targets": []}
 
     stamp = datetime.now(UTC).strftime("%Y-%m-%d")
     by_target: dict[str, dict[str, list[str]]] = {}
@@ -344,6 +350,7 @@ def push(db: Session, user: User, destination: str, folder_mode: str) -> list[st
         by_target.setdefault(target_id, {}).setdefault(folder, []).append(m.staged_filename)
 
     job_ids: list[str] = []
+    skipped_targets: list[str] = []
     for target_id, manifest in by_target.items():
         job = create_restore_job(
             db,
@@ -354,13 +361,12 @@ def push(db: Session, user: User, destination: str, folder_mode: str) -> list[st
             selected_uids=manifest,
         )
         if job is None:
-            # Target busy (pending/running job) or unpushable (no credentials,
-            # suspended, migrating): its messages simply stay staged.
             logger.warning("Staging push: no job created for target %s", target_id)
+            skipped_targets.append(target_id)
             continue
         submit_restore_job(job.id)
         job_ids.append(job.id)
-    return job_ids
+    return {"job_ids": job_ids, "skipped_targets": skipped_targets}
 
 
 def empty(db: Session, user: User) -> None:

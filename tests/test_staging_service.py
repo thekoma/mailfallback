@@ -533,9 +533,11 @@ class TestPush:
         _stage_raw(db_session, staging_user, acc2, "<g3@x>", "102.cc.h:2,", folder="Archive/2025")
 
         with patch(_SUBMIT) as mock_submit:
-            job_ids = staging_service.push(db_session, staging_user, "origin", "original")
+            result = staging_service.push(db_session, staging_user, "origin", "original")
 
+        job_ids = result["job_ids"]
         assert len(job_ids) == 2
+        assert result["skipped_targets"] == []
         jobs = {j.source_account_id: j for j in db_session.query(RestoreJob).all()}
         assert set(jobs) == {acc1.id, acc2.id}
         for j in jobs.values():
@@ -564,9 +566,11 @@ class TestPush:
         _stage_raw(db_session, staging_user, acc2, "<o2@x>", "101.bb.h:2,", folder="Sent")
 
         with patch(_SUBMIT) as mock_submit:
-            job_ids = staging_service.push(db_session, staging_user, override.id, "original")
+            result = staging_service.push(db_session, staging_user, override.id, "original")
 
+        job_ids = result["job_ids"]
         assert len(job_ids) == 1
+        assert result["skipped_targets"] == []
         job = db_session.query(RestoreJob).one()
         assert job.id == job_ids[0]
         assert job.source_account_id == override.id
@@ -582,18 +586,18 @@ class TestPush:
         _stage_raw(db_session, staging_user, acc, "<d2@x>", "101.bb.h:2,", folder="Sent")
 
         with patch(_SUBMIT):
-            job_ids = staging_service.push(db_session, staging_user, "origin", "restored")
+            result = staging_service.push(db_session, staging_user, "origin", "restored")
 
-        assert len(job_ids) == 1
+        assert len(result["job_ids"]) == 1
         stamp = datetime.now(UTC).strftime("%Y-%m-%d")
         job = db_session.query(RestoreJob).one()
         assert job.selected_uids == {f"Restored/{stamp}": ["100.aa.h:2,", "101.bb.h:2,"]}
 
     def test_push_without_area_returns_no_jobs(self, db_session, real_store, staging_user):
         with patch(_SUBMIT) as mock_submit:
-            job_ids = staging_service.push(db_session, staging_user, "origin", "original")
+            result = staging_service.push(db_session, staging_user, "origin", "original")
 
-        assert job_ids == []
+        assert result == {"job_ids": [], "skipped_targets": []}
         assert db_session.query(RestoreJob).count() == 0
         mock_submit.assert_not_called()
 
@@ -607,9 +611,9 @@ class TestPush:
         db_session.commit()
 
         with patch(_SUBMIT) as mock_submit:
-            job_ids = staging_service.push(db_session, staging_user, "origin", "original")
+            result = staging_service.push(db_session, staging_user, "origin", "original")
 
-        assert job_ids == []
+        assert result == {"job_ids": [], "skipped_targets": []}
         assert db_session.query(RestoreJob).count() == 0
         mock_submit.assert_not_called()
 
@@ -625,13 +629,51 @@ class TestPush:
         os.remove(os.path.join(cur, "100.aa.h:2,"))
 
         with patch(_SUBMIT):
-            job_ids = staging_service.push(db_session, staging_user, "origin", "original")
+            result = staging_service.push(db_session, staging_user, "origin", "original")
 
-        assert len(job_ids) == 1
+        assert len(result["job_ids"]) == 1
         job = db_session.query(RestoreJob).one()
         assert job.selected_uids == {"INBOX": ["101.bb.h:2,"]}
         # The deleted file's row died in the reconcile, not in some manifest.
         assert db_session.query(StagingMessage).one().staged_filename == "101.bb.h:2,"
+
+    def test_push_skips_busy_targets_and_reports(
+        self, db_session, real_store, staging_user, tmp_path
+    ):
+        """A target with a pending/running job cannot take another one
+        (create_restore_job busy check): its messages stay staged and the
+        caller learns WHICH targets were skipped instead of a silent short
+        job_ids list."""
+        busy = _mk_push_account(db_session, real_store, tmp_path, "busy")
+        free = _mk_push_account(db_session, real_store, tmp_path, "free")
+        db_session.add(
+            RestoreJob(
+                source_account_id=busy.id,
+                target_account_id=busy.id,
+                restore_mode=RestoreMode.selection,
+                requested_by=staging_user.id,
+            )
+        )
+        db_session.commit()
+        _stage_raw(db_session, staging_user, busy, "<b1@x>", "100.aa.h:2,")
+        _stage_raw(db_session, staging_user, free, "<b2@x>", "101.bb.h:2,")
+
+        with patch(_SUBMIT) as mock_submit:
+            result = staging_service.push(db_session, staging_user, "origin", "original")
+
+        assert result["skipped_targets"] == [busy.id]
+        assert len(result["job_ids"]) == 1
+        new_job = (
+            db_session.query(RestoreJob)
+            .filter(RestoreJob.restore_mode == RestoreMode.staging_push)
+            .one()
+        )
+        assert new_job.id == result["job_ids"][0]
+        assert new_job.source_account_id == free.id
+        mock_submit.assert_called_once_with(new_job.id)
+        # The busy target's message is untouched — staged for a later push.
+        assert db_session.query(StagingMessage).count() == 2
+        assert len(_staged_files(staging_user)) == 2
 
 
 class TestUserdbPathContract:

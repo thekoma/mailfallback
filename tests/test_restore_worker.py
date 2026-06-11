@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from mailfallback.models import (
     Account,
@@ -18,7 +19,12 @@ from mailfallback.models import (
     User,
 )
 from mailfallback.services import staging_service
-from mailfallback.services.restore_worker import execute_restore_job
+from mailfallback.services.restore_worker import (
+    _fail_job,
+    _locate_staged_file,
+    execute_restore_job,
+    request_cancel,
+)
 
 
 @pytest.fixture
@@ -695,3 +701,137 @@ def test_staging_push_finds_flag_renamed_file(
     assert db_session.query(StagingMessage).count() == 0
     assert db_session.query(StagingArea).count() == 0
     assert not os.path.isdir(staging_service.staging_dir(f["user"]))
+
+
+@patch("mailfallback.services.restore_worker.delete_temp_imap_user")
+@patch("mailfallback.services.restore_worker.create_temp_imap_user")
+@patch("mailfallback.services.restore_worker.connect_imap")
+@patch("mailfallback.services.restore_worker.decrypt_credentials")
+def test_staging_push_cancel_mid_job(
+    mock_decrypt,
+    mock_connect,
+    mock_create_temp,
+    mock_delete_temp,
+    db_session,
+    staging_push_fixtures,
+):
+    """Cancellation is honored between files: what was already APPENDed is
+    delivered and gets cleaned up (delivered-or-duplicate rule), the rest
+    stays staged, and the job ends cancelled — not running, not completed."""
+    f = staging_push_fixtures
+    mock_decrypt.return_value = "plaintext-pass"
+    _stage_file(db_session, f["user"], f["account"], "<c1@x>", "100.aaaa.h:2,")
+    raw2 = _stage_file(db_session, f["user"], f["account"], "<c2@x>", "101.bbbb.h:2,")
+    manifest = {"INBOX": ["100.aaaa.h:2,", "101.bbbb.h:2,"]}
+    job = _mk_push_job(db_session, f["user"], f["account"], manifest)
+
+    tgt_conn = _push_conn()
+
+    def cancel_during_first_append(*args, **kwargs):
+        request_cancel(job.id)
+        return ("OK", [b"APPEND completed"])
+
+    tgt_conn.append.side_effect = cancel_during_first_append
+    mock_connect.side_effect = [tgt_conn]
+
+    execute_restore_job(db_session, job.id)
+
+    db_session.refresh(job)
+    assert job.status == JobStatus.cancelled
+    assert job.error == "Cancelled by user"
+    assert job.restored_messages == 1
+    assert tgt_conn.append.call_count == 1  # no append after the cancel
+    # First file delivered -> cleaned; second untouched and still staged.
+    remaining = db_session.query(StagingMessage).one()
+    assert remaining.staged_filename == "101.bbbb.h:2,"
+    area = db_session.query(StagingArea).one()
+    assert area.bytes_used == len(raw2)
+    cur = os.path.join(staging_service.staging_dir(f["user"]), "cur")
+    assert sorted(os.listdir(cur)) == ["101.bbbb.h:2,"]
+
+
+@patch("mailfallback.services.restore_worker.delete_temp_imap_user")
+@patch("mailfallback.services.restore_worker.create_temp_imap_user")
+@patch("mailfallback.services.restore_worker.connect_imap")
+@patch("mailfallback.services.restore_worker.decrypt_credentials")
+def test_staging_push_no_response_append_keeps_file_staged(
+    mock_decrypt,
+    mock_connect,
+    mock_create_temp,
+    mock_delete_temp,
+    db_session,
+    staging_push_fixtures,
+):
+    """An APPEND answered with NO (no exception) counts failed and leaves the
+    file + row staged for a retry; delivered siblings are still cleaned up."""
+    f = staging_push_fixtures
+    mock_decrypt.return_value = "plaintext-pass"
+    _stage_file(db_session, f["user"], f["account"], "<n1@x>", "100.aaaa.h:2,")
+    raw2 = _stage_file(db_session, f["user"], f["account"], "<n2@x>", "101.bbbb.h:2,")
+    manifest = {"INBOX": ["100.aaaa.h:2,", "101.bbbb.h:2,"]}
+    job = _mk_push_job(db_session, f["user"], f["account"], manifest)
+
+    tgt_conn = _push_conn()
+    tgt_conn.append.side_effect = [
+        ("OK", [b"APPEND completed"]),
+        ("NO", [b"Over quota"]),
+    ]
+    mock_connect.side_effect = [tgt_conn]
+
+    execute_restore_job(db_session, job.id)
+
+    db_session.refresh(job)
+    assert job.status == JobStatus.completed
+    assert job.restored_messages == 1
+    assert job.failed_messages == 1
+    assert "1 messages failed" in job.error
+    remaining = db_session.query(StagingMessage).one()
+    assert remaining.staged_filename == "101.bbbb.h:2,"
+    area = db_session.query(StagingArea).one()
+    assert area.bytes_used == len(raw2)
+    cur = os.path.join(staging_service.staging_dir(f["user"]), "cur")
+    assert sorted(os.listdir(cur)) == ["101.bbbb.h:2,"]
+
+
+def test_locate_staged_file_blocks_traversal(tmp_path):
+    """The manifest is user-influencable JSON: a crafted filename must never
+    resolve outside the staging Maildir (basename guard pin)."""
+    sdir = tmp_path / "staging"
+    (sdir / "cur").mkdir(parents=True)
+    (sdir / "cur" / "100.aa.h:2,").write_bytes(b"legit")
+    # Plant a real file at the traversal destination: without the guard,
+    # sdir/cur/../../secret.txt exists and would be returned (and pushed).
+    (tmp_path / "secret.txt").write_bytes(b"top secret")
+
+    assert _locate_staged_file(str(sdir), "../secret.txt") is None
+    assert _locate_staged_file(str(sdir), "../../etc/passwd") is None
+    # Sanity: legitimate lookups still resolve.
+    assert _locate_staged_file(str(sdir), "100.aa.h:2,") == str(sdir / "cur" / "100.aa.h:2,")
+
+
+def test_fail_job_recovers_broken_session(db_session, staging_push_fixtures):
+    """Zombie-job guard: _fail_job may be reached with the session already
+    poisoned (e.g. a flush that died mid-cleanup). It must roll back FIRST —
+    otherwise its commit raises PendingRollbackError, the executor swallows
+    it, and the job sticks in `running` forever, blocking every future push
+    to the same target via the create_restore_job busy check."""
+    f = staging_push_fixtures
+    job = _mk_push_job(db_session, f["user"], f["account"], {"INBOX": ["100.aa.h:2,"]})
+    db_session.add(
+        StagingArea(user_id=f["user"].id, expires_at=datetime.now(UTC) + timedelta(hours=1))
+    )
+    db_session.commit()
+    # Poison the session with a unique(user_id) violation, like a cleanup
+    # flush racing a concurrent reconcile would.
+    db_session.add(
+        StagingArea(user_id=f["user"].id, expires_at=datetime.now(UTC) + timedelta(hours=1))
+    )
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+
+    _fail_job(db_session, job, "cleanup blew up")
+
+    db_session.refresh(job)
+    assert job.status == JobStatus.failed
+    assert job.error == "cleanup blew up"
+    assert job.completed_at is not None
