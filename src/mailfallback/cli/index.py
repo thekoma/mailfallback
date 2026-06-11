@@ -10,6 +10,8 @@ def handle_index(args) -> int:
         return _rebuild_account(args.account_id)
     if args.index_cmd == "backfill-snapshots":
         return _backfill_snapshots(args.account_id)
+    if args.index_cmd == "backfill-attachments":
+        return _backfill_attachments(args.account_id)
     return 1
 
 
@@ -63,6 +65,18 @@ def _backfill_snapshots(account_id: str) -> int:
         if skipped:
             print(f"Skipped {skipped} already-processed snapshot(s).")
         print("Done.")
+        return 0
+    finally:
+        db.close()
+
+
+def _backfill_attachments(account_id: str) -> int:
+    from mailfallback.services import index_service
+
+    db = SessionLocal()
+    try:
+        n = index_service.backfill_attachments(db, account_id)
+        print(f"Backfilled attachments for {n} message(s).")
         return 0
     finally:
         db.close()

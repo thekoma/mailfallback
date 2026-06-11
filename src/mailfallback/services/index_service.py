@@ -2,8 +2,8 @@
 
 Public functions:
 - upsert_message_set(db, account_id) -> int
-
-Future tasks add: record_snapshot, prune_snapshot, backfill_snapshots.
+- record_snapshot / prune_snapshot / backfill_snapshots — snapshot bitmap upkeep
+- backfill_attachments(db, account_id) -> int — attachment rows for pre-era index rows
 
 The service owns reads from the live Maildir filesystem. Header upserts use
 email.parser.BytesHeaderParser (headers only); on first insert of a message
@@ -412,3 +412,66 @@ def backfill_snapshots(db: Session, account_id: str):
             rs.last_error = str(e)
             db.commit()
         raise
+
+
+def backfill_attachments(db: Session, account_id: str) -> int:
+    """Parse attachments for alive rows that pre-date the attachment index.
+
+    Resumable: only rows with attachments_indexed_at IS NULL are processed.
+    The marker is set even when parsing fails, so one bad file cannot wedge
+    the backfill — it just stays without attachment rows.
+    Idempotent per message: delete-and-reinsert its attachment rows.
+    Returns the number of messages processed.
+    """
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not account:
+        raise ValueError(f"Account {account_id} not found")
+
+    pending = (
+        db.query(MailIndexMessage)
+        .filter(
+            MailIndexMessage.account_id == account_id,
+            MailIndexMessage.deleted_at.is_(None),
+            MailIndexMessage.attachments_indexed_at.is_(None),
+        )
+        .all()
+    )
+    processed = 0
+    now = datetime.now(UTC)
+    for row in pending:
+        if row.folder_path == "INBOX":
+            # "INBOX" is ambiguous: mbsync writes a real INBOX/ subdirectory
+            # (`Inbox {path}/INBOX`), but _walk_maildir also maps bare
+            # top-level cur/new to folder_path="INBOX". Try both bases.
+            bases = (os.path.join(account.maildir_path, "INBOX"), account.maildir_path)
+        else:
+            bases = (os.path.join(account.maildir_path, row.folder_path),)
+        path = None
+        for base in bases:
+            for sub in ("cur", "new"):
+                candidate = os.path.join(base, sub, row.maildir_filename)
+                if os.path.exists(candidate):
+                    path = candidate
+                    break
+            if path:
+                break
+        atts = _parse_attachments(path) if path else None
+        db.query(MailIndexAttachment).filter(
+            MailIndexAttachment.account_id == account_id,
+            MailIndexAttachment.message_id_hash == row.message_id_hash,
+        ).delete(synchronize_session=False)
+        for a in atts or []:
+            db.add(
+                MailIndexAttachment(
+                    account_id=account_id,
+                    message_id_hash=row.message_id_hash,
+                    **a,
+                )
+            )
+        row.has_attachments = bool(atts)
+        row.attachments_indexed_at = now
+        processed += 1
+        if processed % BATCH_SIZE == 0:
+            db.commit()
+    db.commit()
+    return processed
