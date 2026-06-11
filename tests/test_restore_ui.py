@@ -117,6 +117,67 @@ def test_restore_page_non_admin_has_no_toggle_and_no_all_island(client, db_sessi
     assert foreign.id not in resp.text
 
 
+def test_restore_page_renders_staging_ui(client, db_session, default_store):
+    """The workspace ships the staging bar, push panel and both add-to-staging
+    entry points (all Alpine-gated client-side — hidden until staging exists,
+    but the markup must be on the page)."""
+    create_user(db_session, "stguser", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "stguser", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    assert "ws-staging-bar" in resp.text
+    assert "ws-push-panel" in resp.text
+    # Push options: destination radios (origin/override) + folder-mode radios.
+    assert 'x-model="pushDestination"' in resp.text
+    assert 'value="origin"' in resp.text
+    assert 'value="override"' in resp.text
+    assert 'x-model="pushFolderMode"' in resp.text
+    assert 'value="original"' in resp.text
+    assert 'value="restored"' in resp.text
+    # Add-to-staging entry points: preview pane + selection action bar.
+    assert resp.text.count("Add to staging") == 2
+    assert "addToStaging([previewRef])" in resp.text
+    assert "addSelectedToStaging()" in resp.text
+    # Bar actions.
+    assert "emptyStaging()" in resp.text
+    assert "pushStaging()" in resp.text
+
+
+def test_restore_staging_bar_no_webmail_link_by_default(client, db_session, default_store):
+    """Webmail is disabled in the test settings — the bar must not link to
+    the Staging mailbox in Roundcube."""
+    create_user(db_session, "stgnoweb", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "stgnoweb", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    assert "_mbox=Staging" not in resp.text
+    assert "Open in webmail" not in resp.text
+
+
+def test_restore_staging_bar_webmail_link_when_enabled(
+    client, db_session, default_store, monkeypatch
+):
+    """Webmail on → the bar links straight to the Staging mailbox. The flags
+    are Jinja env globals captured at import, so patch those (setitem
+    restores them after the test — they are shared module state)."""
+    from mailfallback.routers import ui
+
+    monkeypatch.setitem(ui.templates.env.globals, "webmail_enabled", True)
+    monkeypatch.setitem(ui.templates.env.globals, "webmail_url", "http://localhost:8001")
+    create_user(db_session, "stgweb", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "stgweb", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    assert "http://localhost:8001?_task=mail&amp;_mbox=Staging" in resp.text
+    assert "Open in webmail" in resp.text
+
+
 def _setup_separator_test(db_session, default_store, client):
     """Create a user and target account, login, and return the account."""
     user = User(
