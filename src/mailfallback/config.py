@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     deep_search_timeout_seconds: int = 10
     use_index_search: bool = True
 
+    staging_ttl_minutes: int = 10080  # 7 days; staging areas expire and get purged
+    staging_max_bytes: int = 0  # 0 = unlimited; per-user staging quota
+
     db_host: str = "db"
     db_port: int = 5432
     db_name: str = "mailfallback"
