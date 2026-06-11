@@ -1676,17 +1676,6 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   box-shadow: 0 0 4px rgba(255,255,255,0.6);
 }
 
-.ws-cost {
-  margin: 0;
-  font-size: .75rem;
-  color: var(--ws-text-muted);
-  font-style: normal;
-}
-.ws-cost.is-loading {
-  color: var(--ws-warn);
-  font-style: italic;
-}
-
 /* === Main panel === */
 
 .ws-panel {
@@ -1957,21 +1946,41 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   flex: 1;
   min-width: 0;
 }
+.ws-result-body:focus-visible {
+  outline: 2px solid var(--ws-cyan);
+  outline-offset: 2px;
+  border-radius: .25rem;
+}
+/* Subject/meta are flex rows: the text span ellipsizes, badges keep their
+   size — a long subject can't push the account badge out of view. */
 .ws-result-subject {
   font-weight: 500;
   font-size: .95rem;
   color: var(--ws-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: .4rem;
 }
 .ws-result-meta {
   margin-top: .15rem;
   color: var(--ws-text-muted);
   font-size: .75rem;
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+}
+.ws-result-subject-text,
+.ws-result-meta-text {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.ws-result-subject .ws-badge,
+.ws-result-meta .ws-badge,
+.ws-result-subject .ws-att-mark {
+  flex: 0 0 auto;
 }
 
 /* Provenance badges */
@@ -2004,6 +2013,7 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 /* === Workspace: cross-account results + preview pane === */
 .ws-results-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 1rem; align-items: start; }
 .ws-badge-acct { background: var(--mfb-badge-syncing-bg); color: var(--mfb-badge-syncing-color); border: 1px solid var(--mfb-badge-syncing-border); }
+.ws-badge-gone { background: transparent; color: var(--ws-text-dim); border: 1px solid var(--ws-border); }
 .ws-att-mark { color: var(--ws-text-muted); }
 .ws-atts { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-top: 0.25rem; }
 .ws-att-chip { background: var(--ws-input-bg); border: 1px solid var(--ws-border); border-radius: 6px; padding: 0 0.5rem; font-size: 0.72rem; color: var(--ws-text-muted); white-space: nowrap; }
