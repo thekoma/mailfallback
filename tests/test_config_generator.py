@@ -124,7 +124,10 @@ def test_dovecot_acl_content(tmp_path):
     generate_dovecot_config(settings)
 
     acl = (tmp_path / "dovecot" / "dovecot-acl").read_text()
-    assert "* owner lrs" in acl
+    # Exact content, in order: default read-only first, then the writable
+    # per-user Staging/ namespace (restore curation surface). Dovecot global
+    # ACL lines are not merged -- the most specific mailbox pattern wins.
+    assert acl == "* owner lrs\nStaging owner lrwstie\nStaging/* owner lrwstie\n"
 
 
 def test_dovecot_acl_path_in_config(tmp_path):
