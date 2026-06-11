@@ -167,7 +167,15 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             "password": tgt_password,
         }
         _execute_restore(
-            db, job, src_conn, tgt_conn, folders, tgt_separator, src_conn_params, tgt_conn_params
+            db,
+            job,
+            src_conn,
+            tgt_conn,
+            folders,
+            tgt_separator,
+            src_conn_params,
+            tgt_conn_params,
+            src_namespace_prefix=_get_namespace_prefix(source),
         )
 
     except (imaplib.IMAP4.error, OSError) as e:
@@ -282,7 +290,14 @@ def _execute_restore(
     tgt_separator="/",
     src_conn_params=None,
     tgt_conn_params=None,
+    src_namespace_prefix="",
 ):
+    # Selection mode (selected_uids set) works with REAL IMAP UIDs: the
+    # resolve-uids endpoint and the workspace search resolve messages via
+    # UID SEARCH, so the filter below must compare against UID SEARCH/FETCH
+    # results. Sequence numbers diverge from UIDs as soon as a folder has
+    # expunge history — a seq-based filter would restore the wrong messages.
+    by_uid = bool(job.selected_uids)
     total = 0
     for full_folder, _ in folders:
         status, data = src_conn.select(f'"{full_folder}"', readonly=True)
@@ -318,7 +333,10 @@ def _execute_restore(
                 list(job.selected_uids.keys()),
             )
 
-        status, data = src_conn.search(None, "ALL")
+        if by_uid:
+            status, data = src_conn.uid("SEARCH", "ALL")
+        else:
+            status, data = src_conn.search(None, "ALL")
         if status != "OK" or not data[0]:
             continue
         uids = data[0].split()
@@ -327,7 +345,9 @@ def _execute_restore(
         )
 
         existing_ids = set()
-        target_folder = _map_folder(short_folder, job.folder_mapping, tgt_separator)
+        target_folder = _map_folder(
+            short_folder, job.folder_mapping, tgt_separator, src_prefix=src_namespace_prefix
+        )
         if job.skip_duplicates:
             existing_ids = _get_existing_message_ids(tgt_conn, target_folder)
 
@@ -342,7 +362,7 @@ def _execute_restore(
 
             try:
                 _restore_single_message(
-                    src_conn, tgt_conn, uid, target_folder, job, existing_ids, db
+                    src_conn, tgt_conn, uid, target_folder, job, existing_ids, db, by_uid=by_uid
                 )
             except (
                 BrokenPipeError,
@@ -358,7 +378,7 @@ def _execute_restore(
                     if tgt_conn_params:
                         tgt_conn = _reconnect_target(tgt_conn_params)
                     _restore_single_message(
-                        src_conn, tgt_conn, uid, target_folder, job, existing_ids, db
+                        src_conn, tgt_conn, uid, target_folder, job, existing_ids, db, by_uid=by_uid
                     )
                 except Exception:
                     job.failed_messages += 1
@@ -378,8 +398,12 @@ def _restore_single_message(
     job,
     existing_ids,
     db,
+    by_uid=False,
 ):
-    status, data = src_conn.fetch(uid, "(RFC822 FLAGS INTERNALDATE)")
+    if by_uid:
+        status, data = src_conn.uid("FETCH", uid, "(RFC822 FLAGS INTERNALDATE)")
+    else:
+        status, data = src_conn.fetch(uid, "(RFC822 FLAGS INTERNALDATE)")
     if status != "OK" or not data or not data[0]:
         job.failed_messages += 1
         return
@@ -464,7 +488,13 @@ def _get_hierarchy_separator(conn):
     return "/"
 
 
-def _map_folder(folder_name, folder_mapping, separator="/", escape_char="_"):
+def _map_folder(folder_name, folder_mapping, separator="/", escape_char="_", src_prefix=""):
+    # Strip the source account's live namespace prefix. Restore-to-origin
+    # selection keys are full IMAP paths as the temp Dovecot user sees them
+    # (e.g. "Name (email) [abcd]/INBOX", see api_resolve_uids); the
+    # destination expects the bare folder name.
+    if src_prefix and folder_name.startswith(src_prefix):
+        folder_name = folder_name[len(src_prefix) :]
     # Strip the Dovecot Recovery namespace prefix when restoring from a
     # snapshot mount. The destination user expects the message in their
     # native folder (e.g., INBOX), not in a synthetic Recovery-prefixed
