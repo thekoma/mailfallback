@@ -266,8 +266,14 @@ def _resolve_folders(src_conn, source, job):
 
 
 def _get_namespace_prefix(account):
-    short_id = account.id[-4:]
-    return f"{account.name} ({account.email_address}) [{short_id}]/"
+    # Delegate to the dovecot router's helper so the publisher and consumers
+    # never drift (B5): the worker both LISTs with this prefix and strips it
+    # from restore-to-origin selection keys produced by api_resolve_uids — a
+    # second literal implementation would let the formats diverge silently.
+    # Deferred import: services must not import routers at module load.
+    from mailfallback.routers.dovecot import account_namespace_prefix
+
+    return account_namespace_prefix(account)
 
 
 def _reconnect_target(tgt_conn_params):

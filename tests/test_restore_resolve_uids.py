@@ -216,7 +216,7 @@ def test_multi_folder_grouping_and_partial_missing(
 @patch(DELETE_PATCH)
 @patch(CONNECT_PATCH)
 def test_select_failure_puts_messages_in_missing_and_cleans_up(
-    mock_connect, mock_delete, client, db_session, default_store, tmp_path
+    mock_connect, mock_delete, client, db_session, default_store, tmp_path, caplog
 ):
     owner = _mk_user(db_session, default_store, "mario")
     acc = _mk_account(db_session, default_store, tmp_path, owner=owner)
@@ -228,13 +228,16 @@ def test_select_failure_puts_messages_in_missing_and_cleans_up(
     conn.select.return_value = ("NO", [b"Mailbox doesn't exist"])
     mock_connect.return_value = (conn, "_restore_tmp3")
 
-    resp = client.post(
-        "/api/restore/resolve-uids",
-        json={"account_id": acc.id, "message_ids": ["<p1@x>"]},
-    )
+    with caplog.at_level("WARNING", logger="mailfallback.routers.restore"):
+        resp = client.post(
+            "/api/restore/resolve-uids",
+            json={"account_id": acc.id, "message_ids": ["<p1@x>"]},
+        )
 
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"resolved": {}, "missing": ["<p1@x>"]}
     conn.uid.assert_not_called()
     conn.logout.assert_called_once()
     mock_delete.assert_called_once()
+    # A failed SELECT must be diagnosable in production (B5 drift class).
+    assert any("SELECT" in r.getMessage() and acc.id in r.getMessage() for r in caplog.records)
