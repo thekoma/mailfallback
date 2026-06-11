@@ -39,6 +39,8 @@ ACTION_LABELS = {
     "restore.failed": "Mail restore failed",
     "restore.search_all": "Searched all users' mailboxes",
     "restore.preview": "Previewed message in another user's mailbox",
+    "staging.add": "Staged messages for restore",
+    "staging.empty": "Emptied staging area",
     "dovecot.health_check": "Dovecot health check",
     "dovecot.fts_reindex": "FTS reindex all users",
     "dovecot.force_resync": "Force resync all users",
