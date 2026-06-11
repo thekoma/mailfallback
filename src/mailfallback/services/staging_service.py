@@ -3,7 +3,9 @@
 The staging Maildir ({dovecot_home}/staging) is the source of truth for
 contents: webmail deletions remove files and reconcile() drops their rows.
 Rows carry origin (account + folder) for push-to-origin and the byte
-accounting that backs the quota. One area per user; TTL from creation.
+accounting that backs the quota. One area per user; the TTL runs from
+creation BY DESIGN (no extend-on-activity — the workspace shows the expiry
+up front and an add to an expired area starts a fresh one).
 
 Orphan files (a file on disk with no StagingMessage row — e.g. the source
 account was deleted and its rows CASCADEd away) are tolerated: reconcile()
@@ -11,12 +13,15 @@ only iterates rows, so it never crashes on them; they are swept together
 with everything else by empty() and cleanup_expired() only.
 """
 
+import contextlib
 import logging
 import os
 import re
 import shutil
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
@@ -32,6 +37,12 @@ from mailfallback.services.index_service import maildir_filename_prefix
 from mailfallback.services.search_service import _accessible_account_ids
 
 logger = logging.getLogger(__name__)
+
+# restic dump truncates SILENTLY at its max_bytes — fine for previews, fatal
+# for staging (a truncated message would later be pushed upstream as "good").
+# 100 MiB sits above any provider's message-size cap; a dump that FILLS this
+# cap is presumed truncated and refused (counted failed), belt and braces.
+STAGING_DUMP_MAX_BYTES = 104_857_600
 
 
 class StagingQuotaExceededError(Exception):
@@ -60,10 +71,29 @@ def _ensure_maildir(path: str) -> None:
         os.makedirs(os.path.join(path, sub), exist_ok=True)
 
 
+def _is_expired(area: StagingArea) -> bool:
+    exp = area.expires_at
+    if exp.tzinfo is None:  # SQLite round-trips naive datetimes; values are UTC
+        exp = exp.replace(tzinfo=UTC)
+    return exp <= datetime.now(UTC)
+
+
+def _remove_staging_dir(user: User) -> None:
+    sdir = staging_dir(user)
+    if os.path.isdir(sdir):
+        shutil.rmtree(sdir, ignore_errors=True)
+        if os.path.isdir(sdir):
+            logger.warning("Staging dir %s not fully removed; leftovers remain on disk", sdir)
+
+
 def get_status(db: Session, user: User) -> dict:
-    """Current staging state for the user; reconciles with disk first."""
+    """Current staging state for the user; reconciles with disk first.
+
+    An expired-but-unswept area reports exists=False and is left untouched
+    (no reconcile on corpses) — the cleanup job or the next add replaces it.
+    """
     area = db.query(StagingArea).filter(StagingArea.user_id == user.id).first()
-    if not area:
+    if not area or _is_expired(area):
         return {
             "exists": False,
             "count": 0,
@@ -83,22 +113,41 @@ def get_status(db: Session, user: User) -> dict:
 
 
 def _get_or_create_area(db: Session, user: User) -> StagingArea:
+    """Return the user's live area, replacing an expired one (fresh TTL).
+
+    Callers must keep the transaction free of unrelated pending changes:
+    the unique(user_id) race recovery below rolls the session back.
+    """
     area = db.query(StagingArea).filter(StagingArea.user_id == user.id).first()
-    if area:
-        return area
+    if area is not None:
+        if not _is_expired(area):
+            return area
+        # Expired but not yet swept by the scheduler: files and rows belong
+        # to the dead area — clear both and start over with a fresh TTL.
+        _remove_staging_dir(user)
+        db.delete(area)
+        db.flush()
     area = StagingArea(
         user_id=user.id,
         expires_at=datetime.now(UTC) + timedelta(minutes=settings.staging_ttl_minutes),
         max_bytes=settings.staging_max_bytes,
     )
     db.add(area)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # Two concurrent first-adds raced on unique(user_id) — the other
+        # request won; adopt its area.
+        db.rollback()
+        area = db.query(StagingArea).filter(StagingArea.user_id == user.id).first()
     return area
 
 
 def _message_bytes(db: Session, account: Account, row: MailIndexMessage) -> bytes | None:
     """Live file first (index locator, both INBOX bases, prefix fallback),
-    else newest snapshot via restic dump — same strategy as preview_service."""
+    else newest snapshot via restic dump — same strategy as preview_service,
+    but uncapped on live reads and with the staging cap on dumps: a cap-sized
+    dump is presumed truncated and rejected rather than staged corrupt."""
     from mailfallback.services.preview_service import _locate_live_file, _snapshot_bytes
 
     if row.deleted_at is None:
@@ -108,9 +157,23 @@ def _message_bytes(db: Session, account: Account, row: MailIndexMessage) -> byte
                 with open(path, "rb") as f:
                     return f.read()
             except OSError:
-                pass
-    found = _snapshot_bytes(db, account, row)
-    return found[0] if found else None
+                logger.debug(
+                    "Live read failed for %s; falling back to snapshot",
+                    row.message_id_hash.hex(),
+                    exc_info=True,
+                )
+    found = _snapshot_bytes(db, account, row, max_bytes=STAGING_DUMP_MAX_BYTES)
+    if found is None:
+        return None
+    raw = found[0]
+    if len(raw) >= STAGING_DUMP_MAX_BYTES:
+        logger.warning(
+            "Refusing to stage %s: snapshot dump filled the %d-byte cap (presumed truncated)",
+            row.message_id_hash.hex(),
+            STAGING_DUMP_MAX_BYTES,
+        )
+        return None
+    return raw
 
 
 def add_messages(
@@ -121,22 +184,29 @@ def add_messages(
 ) -> dict:
     """Copy messages into the user's staging Maildir. items = [(account_id, hash)].
 
-    Quota is checked BEFORE any copy. Returns {staged, skipped, failed}.
-    Idempotent per (account, hash): already-staged messages are skipped.
-    include_all lets an ADMIN stage from accounts outside their own scope
-    (the API layer audits those calls); non-admins always stay scoped.
+    Validation and the quota check run BEFORE anything is created or copied:
+    a rejected call leaves no area, no Maildir and no burned TTL behind.
+    Returns {staged, skipped, failed}. Idempotent per (account, hash) —
+    across calls and within one batch. include_all lets an ADMIN stage from
+    accounts outside their own scope (the API layer audits those calls);
+    non-admins always stay scoped.
     """
     visible = set(_accessible_account_ids(db, user))
-    area = _get_or_create_area(db, user)
-    sdir = staging_dir(user)
-    _ensure_maildir(sdir)
-    reconcile(db, user, area)
+    area = db.query(StagingArea).filter(StagingArea.user_id == user.id).first()
+    if area is not None and _is_expired(area):
+        area = None  # corpse: swept and replaced by _get_or_create_area below
 
-    existing = {
-        (m.source_account_id, m.message_id_hash)
-        for m in db.query(StagingMessage).filter(StagingMessage.staging_id == area.id)
-    }
+    existing: set[tuple[str, bytes]] = set()
+    if area is not None:
+        reconcile(db, user, area)
+        existing = {
+            (m.source_account_id, m.message_id_hash)
+            for m in db.query(StagingMessage).filter(StagingMessage.staging_id == area.id)
+        }
 
+    # TODO: to_stage holds every resolved raw message in RAM until the quota
+    # check; bounded in practice by the API layer's batch cap — revisit if
+    # that cap grows.
     to_stage: list[tuple[Account, MailIndexMessage, bytes]] = []
     failed = 0
     for account_id, h in items:
@@ -161,23 +231,41 @@ def add_messages(
             failed += 1
             continue
         to_stage.append((account, row, raw))
+        existing.add((account_id, h))  # in-batch duplicates stage once
 
     incoming = sum(len(raw) for _, _, raw in to_stage)
-    if area.max_bytes and area.bytes_used + incoming > area.max_bytes:
+    used = area.bytes_used if area is not None else 0
+    limit = area.max_bytes if area is not None else settings.staging_max_bytes
+    if limit and used + incoming > limit:
         raise StagingQuotaExceededError(
-            f"Staging quota exceeded: {area.bytes_used + incoming} > {area.max_bytes} bytes"
+            f"Staging quota exceeded: {used + incoming} > {limit} bytes"
         )
+
+    if not to_stage:
+        return {"staged": 0, "skipped": len(items) - failed, "failed": failed}
+
+    area = _get_or_create_area(db, user)
+    sdir = staging_dir(user)
+    _ensure_maildir(sdir)
 
     staged = 0
     now = datetime.now(UTC)
     for account, row, raw in to_stage:
-        fname = f"{int(now.timestamp())}.s{staged}.{row.message_id_hash.hex()[:12]}:2,"
+        # Random token (not a positional counter): unique even when two
+        # requests stage in the same second.
+        fname = f"{int(now.timestamp())}.{uuid4().hex[:8]}.{row.message_id_hash.hex()[:12]}:2,"
+        tmp_file = os.path.join(sdir, "tmp", fname)
         try:
-            with open(os.path.join(sdir, "cur", fname), "wb") as f:
+            with open(tmp_file, "wb") as f:
                 f.write(raw)
+            # tmp/ -> cur/ rename is atomic (Maildir convention): a concurrent
+            # webmail FETCH must never see a half-written file.
+            os.rename(tmp_file, os.path.join(sdir, "cur", fname))
         except OSError:
             logger.warning("Staging copy failed for %s", row.message_id_hash.hex(), exc_info=True)
             failed += 1
+            with contextlib.suppress(OSError):
+                os.remove(tmp_file)
             continue
         db.add(
             StagingMessage(
@@ -197,7 +285,8 @@ def add_messages(
 
 def reconcile(db: Session, user: User, area: StagingArea) -> int:
     """Drop rows whose file vanished (webmail deletion); recompute bytes_used.
-    Filenames are matched by stable prefix — Dovecot renames on flag changes."""
+    Filenames are matched by stable prefix — Dovecot renames on flag changes.
+    Commits only when something actually changed."""
     sdir = staging_dir(user)
     on_disk: dict[str, str] = {}
     for sub in ("cur", "new"):
@@ -208,6 +297,7 @@ def reconcile(db: Session, user: User, area: StagingArea) -> int:
             on_disk[maildir_filename_prefix(fn)] = fn
     dropped = 0
     total = 0
+    renamed = False
     for m in db.query(StagingMessage).filter(StagingMessage.staging_id == area.id).all():
         actual = on_disk.get(maildir_filename_prefix(m.staged_filename))
         if actual is None:
@@ -216,18 +306,18 @@ def reconcile(db: Session, user: User, area: StagingArea) -> int:
         else:
             if actual != m.staged_filename:
                 m.staged_filename = actual
+                renamed = True
             total += m.size_bytes
-    area.bytes_used = total
-    db.commit()
+    if dropped or renamed or area.bytes_used != total:
+        area.bytes_used = total
+        db.commit()
     return dropped
 
 
 def empty(db: Session, user: User) -> None:
     """Remove the staging Maildir and the area row (cascade removes rows)."""
     area = db.query(StagingArea).filter(StagingArea.user_id == user.id).first()
-    sdir = staging_dir(user)
-    if os.path.isdir(sdir):
-        shutil.rmtree(sdir, ignore_errors=True)
+    _remove_staging_dir(user)
     if area:
         db.delete(area)  # cascade removes rows
         db.commit()
@@ -239,9 +329,7 @@ def cleanup_expired(db: Session) -> int:
     for area in expired:
         user = db.query(User).filter(User.id == area.user_id).first()
         if user:
-            sdir = staging_dir(user)
-            if os.path.isdir(sdir):
-                shutil.rmtree(sdir, ignore_errors=True)
+            _remove_staging_dir(user)
         db.delete(area)
     db.commit()
     return len(expired)

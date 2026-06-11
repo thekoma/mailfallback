@@ -5,10 +5,12 @@ messages go through restic (mocked here exactly like tests/test_preview_service.
 """
 
 import os
+import re
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from mailfallback.config import settings
 from mailfallback.models import (
@@ -101,6 +103,26 @@ def _mk_indexed_account(
     return acc, row
 
 
+def _make_snapshot_only(db_session, acc, row, filename="100.m1.host:2,S"):
+    """Capture the live file's raw bytes, then turn the message snapshot-only:
+    live file removed, row marked deleted, repo + policy + snapshot bit wired."""
+    live_path = os.path.join(acc.maildir_path, "cur", filename)
+    with open(live_path, "rb") as f:
+        raw = f.read()
+    os.remove(live_path)
+    row.deleted_at = datetime.now(UTC)
+    db_session.commit()
+    repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
+    db_session.add(repo)
+    db_session.flush()
+    db_session.add(BackupPolicy(account_id=acc.id, destination_id=repo.id))
+    db_session.add(
+        SnapshotMessage(snapshot_id="ab12", account_id=acc.id, message_id_hash=row.message_id_hash)
+    )
+    db_session.commit()
+    return raw, live_path
+
+
 def _staged_files(user):
     cur = os.path.join(staging_service.staging_dir(user), "cur")
     return sorted(os.listdir(cur)) if os.path.isdir(cur) else []
@@ -118,11 +140,14 @@ class TestAddMessages:
         )
 
         assert out == {"staged": 1, "skipped": 0, "failed": 0}
+        sdir = staging_service.staging_dir(staging_user)
         files = _staged_files(staging_user)
         assert len(files) == 1
-        size = os.path.getsize(
-            os.path.join(staging_service.staging_dir(staging_user), "cur", files[0])
-        )
+        # Unique random token + stable hash (no positional counter — race-safe),
+        # written via tmp/ then renamed into cur/: tmp/ must end up clean.
+        assert re.fullmatch(r"\d+\.[0-9a-f]{8}\.[0-9a-f]{12}:2,", files[0])
+        assert os.listdir(os.path.join(sdir, "tmp")) == []
+        size = os.path.getsize(os.path.join(sdir, "cur", files[0]))
         m = db_session.query(StagingMessage).one()
         assert m.source_account_id == acc.id
         assert m.message_id_hash == row.message_id_hash
@@ -142,22 +167,7 @@ class TestAddMessages:
         self, db_session, real_store, staging_user, tmp_path, monkeypatch
     ):
         acc, row = _mk_indexed_account(db_session, real_store, tmp_path, owner=staging_user)
-        live_path = os.path.join(acc.maildir_path, "cur", "100.m1.host:2,S")
-        with open(live_path, "rb") as f:
-            raw = f.read()
-        os.remove(live_path)
-        row.deleted_at = datetime.now(UTC)
-        db_session.commit()
-        repo = Repository(name="r", backend_type="local", local_path="/tmp/r", restic_password="x")
-        db_session.add(repo)
-        db_session.flush()
-        db_session.add(BackupPolicy(account_id=acc.id, destination_id=repo.id))
-        db_session.add(
-            SnapshotMessage(
-                snapshot_id="ab12", account_id=acc.id, message_id_hash=row.message_id_hash
-            )
-        )
-        db_session.commit()
+        raw, live_path = _make_snapshot_only(db_session, acc, row)
 
         def fake_dump(destination, account_id, snapshot_id, path, **kwargs):
             return raw if path == live_path else None
@@ -182,6 +192,37 @@ class TestAddMessages:
         with open(staged_path, "rb") as f:
             assert f.read() == raw
 
+    def test_snapshot_dump_at_cap_counts_failed(
+        self, db_session, real_store, staging_user, tmp_path, monkeypatch
+    ):
+        """restic dump truncates silently at max_bytes — a cap-sized result is
+        presumed truncated and must be counted failed, never staged (C1)."""
+        acc, row = _mk_indexed_account(db_session, real_store, tmp_path, owner=staging_user)
+        _make_snapshot_only(db_session, acc, row)
+        monkeypatch.setattr(staging_service, "STAGING_DUMP_MAX_BYTES", 1024)
+        seen_caps = []
+
+        def fake_dump(destination, account_id, snapshot_id, path, **kwargs):
+            seen_caps.append(kwargs.get("max_bytes"))
+            return b"x" * 1024  # exactly cap-sized, like a truncated dump
+
+        monkeypatch.setattr(preview_service.restic_service, "dump_file", fake_dump)
+        monkeypatch.setattr(
+            preview_service.restic_service,
+            "list_snapshots",
+            lambda *a, **k: [{"short_id": "ab12", "time": "2026-06-01T00:00:00Z"}],
+        )
+
+        out = staging_service.add_messages(
+            db_session, staging_user, [(acc.id, row.message_id_hash)]
+        )
+
+        assert out == {"staged": 0, "skipped": 0, "failed": 1}
+        assert _staged_files(staging_user) == []
+        assert db_session.query(StagingMessage).count() == 0
+        # The staging cap (not the smaller preview default) reaches restic dump.
+        assert seen_caps[0] == 1024
+
     def test_quota_exceeded_rejects_before_copy(
         self, db_session, real_store, staging_user, tmp_path, monkeypatch
     ):
@@ -191,12 +232,11 @@ class TestAddMessages:
         with pytest.raises(staging_service.StagingQuotaExceededError):
             staging_service.add_messages(db_session, staging_user, [(acc.id, row.message_id_hash)])
 
-        # Nothing written: no staged file, no row, byte accounting untouched.
-        assert _staged_files(staging_user) == []
+        # Nothing written AT ALL: no staged file, no row, and crucially no
+        # StagingArea / staging Maildir — a rejected add must not burn the TTL.
+        assert not os.path.isdir(staging_service.staging_dir(staging_user))
         assert db_session.query(StagingMessage).count() == 0
-        area = db_session.query(StagingArea).one_or_none()
-        if area is not None:
-            assert area.bytes_used == 0
+        assert db_session.query(StagingArea).count() == 0
 
     def test_add_is_idempotent_per_message(self, db_session, real_store, staging_user, tmp_path):
         acc, row = _mk_indexed_account(db_session, real_store, tmp_path, owner=staging_user)
@@ -216,6 +256,59 @@ class TestAddMessages:
         area = db_session.query(StagingArea).one()
         assert area.bytes_used == db_session.query(StagingMessage).one().size_bytes
 
+    def test_add_is_idempotent_within_batch(self, db_session, real_store, staging_user, tmp_path):
+        """The same (account, hash) twice in ONE call stages once (I2)."""
+        acc, row = _mk_indexed_account(db_session, real_store, tmp_path, owner=staging_user)
+        items = [(acc.id, row.message_id_hash), (acc.id, row.message_id_hash)]
+
+        out = staging_service.add_messages(db_session, staging_user, items)
+
+        assert out == {"staged": 1, "skipped": 1, "failed": 0}
+        assert len(_staged_files(staging_user)) == 1
+        assert db_session.query(StagingMessage).count() == 1
+
+    def test_area_creation_race_recovers(
+        self, db_session, real_store, staging_user, tmp_path, monkeypatch
+    ):
+        """Two concurrent first-adds race on unique(user_id): the loser must
+        adopt the winner's area instead of erroring out (I3a)."""
+        acc, row = _mk_indexed_account(db_session, real_store, tmp_path, owner=staging_user)
+        real_flush = db_session.flush
+        state = {}
+
+        def racing_flush(*a, **k):
+            # Only hijack the flush that would INSERT the loser's area —
+            # autoflushes from ordinary queries must pass through untouched.
+            pending_area = any(isinstance(o, StagingArea) for o in db_session.new)
+            if state.get("raced") or not pending_area:
+                return real_flush(*a, **k)
+            state["raced"] = True  # nested commit() below flushes through
+            # Simulate the other request: its area lands (and commits) first,
+            # so OUR pending insert violates unique(user_id).
+            db_session.rollback()
+            winner = StagingArea(
+                user_id=staging_user.id,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+            db_session.add(winner)
+            db_session.commit()
+            state["winner_id"] = winner.id
+            raise IntegrityError(
+                "INSERT INTO staging_areas", {}, Exception("UNIQUE constraint failed")
+            )
+
+        monkeypatch.setattr(db_session, "flush", racing_flush)
+
+        out = staging_service.add_messages(
+            db_session, staging_user, [(acc.id, row.message_id_hash)]
+        )
+
+        assert out == {"staged": 1, "skipped": 0, "failed": 0}
+        area = db_session.query(StagingArea).one()
+        assert area.id == state["winner_id"]
+        assert db_session.query(StagingMessage).one().staging_id == state["winner_id"]
+        assert len(_staged_files(staging_user)) == 1
+
     def test_visibility_enforced(self, db_session, real_store, staging_user, tmp_path):
         # Account owned by NOBODY — not accessible to the (non-admin) user.
         acc, row = _mk_indexed_account(db_session, real_store, tmp_path, owner=None)
@@ -229,6 +322,8 @@ class TestAddMessages:
             )
         assert db_session.query(StagingMessage).count() == 0
         assert _staged_files(staging_user) == []
+        # Rejected adds must not create an area (no TTL burned) — see I1.
+        assert db_session.query(StagingArea).count() == 0
 
     def test_include_all_admin_stages_foreign_account(self, db_session, real_store, tmp_path):
         admin = _mk_user(db_session, real_store, username="boss", role=UserRole.admin)
@@ -328,6 +423,41 @@ class TestLifecycle:
         assert db_session.query(StagingArea).count() == 0
         assert db_session.query(StagingMessage).count() == 0
         assert not os.path.isdir(staging_service.staging_dir(staging_user))
+
+    def test_expired_area_swept_and_recreated_on_add(
+        self, db_session, real_store, staging_user, tmp_path
+    ):
+        """An expired-but-unswept area is absent for get_status and replaced by
+        a FRESH area (new TTL, old files gone) on the next add (I4)."""
+        acc, row = _mk_indexed_account(db_session, real_store, tmp_path, owner=staging_user)
+        staging_service.add_messages(db_session, staging_user, [(acc.id, row.message_id_hash)])
+        area = db_session.query(StagingArea).one()
+        old_id = area.id
+        area.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+        db_session.commit()
+
+        status = staging_service.get_status(db_session, staging_user)
+
+        assert status["exists"] is False
+        assert status["count"] == 0
+        # get_status is read-only: it neither purges nor reconciles the corpse.
+        assert db_session.query(StagingArea).one().id == old_id
+        assert db_session.query(StagingMessage).count() == 1
+
+        out = staging_service.add_messages(
+            db_session, staging_user, [(acc.id, row.message_id_hash)]
+        )
+
+        assert out == {"staged": 1, "skipped": 0, "failed": 0}
+        fresh = db_session.query(StagingArea).one()
+        assert fresh.id != old_id
+        exp = fresh.expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=UTC)
+        assert exp > datetime.now(UTC)
+        # Old rows died with the old area; the swept dir holds only the re-add.
+        assert db_session.query(StagingMessage).one().staging_id == fresh.id
+        assert len(_staged_files(staging_user)) == 1
 
     def test_cleanup_expired_keeps_active_areas(
         self, db_session, real_store, staging_user, tmp_path
