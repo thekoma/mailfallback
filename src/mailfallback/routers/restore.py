@@ -13,7 +13,13 @@ from mailfallback.config import settings
 from mailfallback.dependencies import get_current_user, get_db
 from mailfallback.models import BackupPolicy, RecoveryStatus, User
 from mailfallback.routers.dovecot import account_namespace_prefix
-from mailfallback.services import account_service, mount_service, restic_service, search_service
+from mailfallback.services import (
+    account_service,
+    mount_service,
+    preview_service,
+    restic_service,
+    search_service,
+)
 from mailfallback.services.audit_service import log_action
 from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
 from mailfallback.services.imap_check import connect_imap
@@ -821,6 +827,27 @@ def api_restore_search(
         page=req.page,
         page_size=req.page_size,
     )
+
+
+@router.get("/preview/{account_id}/{message_id_hash_hex}")
+def api_restore_preview(
+    account_id: str,
+    message_id_hash_hex: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Headers + body snippet of one indexed message, live or from snapshot."""
+    account = account_service.get_account(db, account_id, user)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    try:
+        message_id_hash = bytes.fromhex(message_id_hash_hex)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid hash") from None
+    out = preview_service.get_preview(db, account, message_id_hash)
+    if out is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return out
 
 
 class WorkspaceSnapshotCountRequest(BaseModel):

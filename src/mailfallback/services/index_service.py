@@ -142,6 +142,20 @@ def _walk_maildir(maildir_root: str):
             yield folder, fn, os.path.join(dirpath, fn)
 
 
+def maildir_folder_bases(maildir_path: str, folder_path: str) -> tuple[str, ...]:
+    """Candidate filesystem base directories for an indexed folder_path.
+
+    "INBOX" is ambiguous: production mbsync writes a real INBOX/ subdirectory
+    (`Inbox {path}/INBOX` in mbsync_config), but _walk_maildir also maps bare
+    top-level cur/new to folder_path="INBOX". Callers reconstructing a file
+    path from index coordinates must therefore try BOTH bases, in this order.
+    Every other folder (including "INBOX/Sub") maps 1:1 to its subdirectory.
+    """
+    if folder_path == "INBOX":
+        return (os.path.join(maildir_path, "INBOX"), maildir_path)
+    return (os.path.join(maildir_path, folder_path),)
+
+
 def upsert_message_set(db: Session, account_id: str) -> int:
     """Walk the account's live Maildir, upsert every mail's headers, mark
     rows missing-from-disk as deleted. Returns count of rows touched.
@@ -444,15 +458,8 @@ def backfill_attachments(db: Session, account_id: str) -> int:
     processed = 0
     now = datetime.now(UTC)
     for row in pending:
-        if row.folder_path == "INBOX":
-            # "INBOX" is ambiguous: mbsync writes a real INBOX/ subdirectory
-            # (`Inbox {path}/INBOX`), but _walk_maildir also maps bare
-            # top-level cur/new to folder_path="INBOX". Try both bases.
-            bases = (os.path.join(account.maildir_path, "INBOX"), account.maildir_path)
-        else:
-            bases = (os.path.join(account.maildir_path, row.folder_path),)
         path = None
-        for base in bases:
+        for base in maildir_folder_bases(account.maildir_path, row.folder_path):
             for sub in ("cur", "new"):
                 candidate = os.path.join(base, sub, row.maildir_filename)
                 if os.path.exists(candidate):
