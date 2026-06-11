@@ -43,6 +43,8 @@ function restoreWorkspace() {
 
     // Staging bar / push panel state
     staging: {exists: false, count: 0, bytes_used: 0, expires_at: null, max_bytes: 0},
+    stagingStatus: '',          // staging feedback — rendered in the bar (statusText
+                                // only renders inside the single-mail preset)
     pushPanelOpen: false,
     pushDestination: 'origin',  // 'origin' | 'override' (the API gets an account id)
     pushOverrideId: '',
@@ -447,7 +449,12 @@ function restoreWorkspace() {
         const resp = await fetch('/api/restore/staging');
         if (resp.ok) this.staging = await resp.json();
       } catch (e) { /* keep last known state */ }
-      finally { this.refreshIcons(); }
+      finally {
+        // The status slot lives in the bar: when the area disappears the bar
+        // hides, and a stale message must not resurface with the next one.
+        if (!this.staging.exists) this.stagingStatus = '';
+        this.refreshIcons();
+      }
     },
     fmtExpiry(iso) {
       if (!iso) return '—';
@@ -458,6 +465,15 @@ function restoreWorkspace() {
       const hours = Math.floor(ms / 3600000);
       if (hours >= 1) return 'in ' + hours + 'h';
       return 'in ' + Math.max(1, Math.floor(ms / 60000)) + 'm';
+    },
+    _stagingFeedback(msg) {
+      // Staging messages go to the bar — single slot, no duplication. But a
+      // rejected FIRST add creates no area server-side (verified: the service
+      // quota-checks before creating anything), so there is no bar to host
+      // the message — fall back to statusText, which IS rendered in the
+      // single-mail preset where add-to-staging lives.
+      if (this.staging.exists) this.stagingStatus = msg;
+      else this.statusText = msg;
     },
     async addToStaging(results) {
       const items = results
@@ -472,21 +488,23 @@ function restoreWorkspace() {
         });
         if (resp.status === 413) {
           // Quota refusal — the detail is the user-facing message.
-          this.statusText = (await resp.json()).detail;
+          this._stagingFeedback((await resp.json()).detail);
           return;
         }
         if (!resp.ok) {
-          this.statusText = `Add to staging failed: ${resp.status}`;
+          this._stagingFeedback(`Add to staging failed: ${resp.status}`);
           return;
         }
         const r = await resp.json();
         const bits = [`${r.staged} staged`];
         if (r.skipped) bits.push(`${r.skipped} already there`);
         if (r.failed) bits.push(`${r.failed} failed`);
-        this.statusText = bits.join(' · ');
+        // Refresh FIRST: a successful first add just created the area, so the
+        // bar is up before the message lands in its status slot.
         await this.refreshStaging();
+        this.stagingStatus = bits.join(' · ');
       } catch (e) {
-        this.statusText = `Add to staging error: ${e.message}`;
+        this._stagingFeedback(`Add to staging error: ${e.message}`);
       } finally {
         this.refreshIcons();
       }
@@ -500,12 +518,16 @@ function restoreWorkspace() {
       try {
         const resp = await fetch('/api/restore/staging', {method: 'DELETE'});
         if (resp.ok) {
-          this.statusText = 'Staging emptied';
+          // The refresh below flips exists=false and clears this again —
+          // the disappearing bar IS the success feedback.
+          this.stagingStatus = 'Staging emptied';
           this.pushPanelOpen = false;
+        } else {
+          this.stagingStatus = `Empty failed: ${resp.status}`;
         }
         await this.refreshStaging();
       } catch (e) {
-        this.statusText = `Empty failed: ${e.message}`;
+        this.stagingStatus = `Empty failed: ${e.message}`;
       } finally {
         this.refreshIcons();
       }
@@ -516,7 +538,7 @@ function restoreWorkspace() {
       try {
         const dest = this.pushDestination === 'origin' ? 'origin' : this.pushOverrideId;
         if (!dest) {
-          this.statusText = 'Pick a destination mailbox';
+          this.stagingStatus = 'Pick a destination mailbox';
           return;
         }
         const resp = await fetch('/api/restore/staging/push', {
@@ -525,7 +547,7 @@ function restoreWorkspace() {
           body: JSON.stringify({destination: dest, folder_mode: this.pushFolderMode}),
         });
         if (!resp.ok) {
-          this.statusText = `Push failed: ${resp.status}`;
+          this.stagingStatus = `Push failed: ${resp.status}`;
           return;
         }
         const r = await resp.json();
@@ -536,12 +558,12 @@ function restoreWorkspace() {
         if (r.skipped_targets.length) {
           bits.push(`${r.skipped_targets.length} target${r.skipped_targets.length === 1 ? '' : 's'} busy — those messages stay staged`);
         }
-        this.statusText = bits.join(' · ') || 'Nothing to push';
         this.pushPanelOpen = false;
         await this.refreshStaging();
+        this.stagingStatus = bits.join(' · ') || 'Nothing to push';
         if (r.job_ids.length) this._schedulePostPushRefresh();
       } catch (e) {
-        this.statusText = `Push error: ${e.message}`;
+        this.stagingStatus = `Push error: ${e.message}`;
       } finally {
         this.pushing = false;
         this.refreshIcons();

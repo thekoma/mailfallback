@@ -2136,6 +2136,10 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 
 /* === Staging bar + push panel === */
 
+/* Standard Alpine pre-init hide: x-show only kicks in once Alpine boots, so
+   cloaked elements (staging bar, push panel) must not flash before that. */
+[x-cloak] { display: none !important; }
+
 /* Docked to the viewport bottom, offset by the 220px sidebar (matches
    .content's margin-left); full-width at the 768px drawer breakpoint. */
 .ws-staging-bar {
@@ -2153,6 +2157,14 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 }
 .ws-staging-bar > i { color: var(--ws-cyan); flex: 0 0 auto; }
 .ws-staging-count { font-weight: 650; }
+/* Feedback slot — long push/quota messages shrink with an ellipsis (full
+   text rides the title attribute) instead of blowing up the bar layout. */
+.ws-staging-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .ws-staging-grow { flex: 1; }
 
 /* Ghost-styled danger (the bar's Empty button). NOT .ws-btn-danger — that is
