@@ -1,6 +1,12 @@
 <div x-data="restoreWorkspace()" x-init="init()" class="ws-root" data-webmail-url="{{ webmail_url }}">
-  {# Data island (data, not code): account id → name/email for the Alpine component #}
+  {# Data island (data, not code): account id → name/email for the Alpine component.
+     Accessible accounts only (ownership OR groups) — the search privacy default. #}
   <script type="application/json" id="ws-accounts-data">{{ accounts_json | safe }}</script>
+  {% if user.role.value == "admin" %}
+  {# Admin-only second island: every account, unlocked by the audited
+     "All users' mailboxes" toggle in the search row. #}
+  <script type="application/json" id="ws-accounts-all-data">{{ all_accounts_json | safe }}</script>
+  {% endif %}
 
   <div class="ws-header">
     <div>
@@ -68,12 +74,20 @@
       <template x-if="preset === 'single-mail'">
         <div class="ws-search">
           <form @submit.prevent="runSearch()" class="ws-search-row">
+            {# Options render from the active dataset (accessible vs all) via
+               Alpine so the admin toggle swap re-renders them. #}
             <select x-model="scopeAccountId" class="ws-scope" @change="onScopeChange()">
-              <option value="">All mailboxes ({{ all_accounts | length }})</option>
-              {% for acct in all_accounts %}
-              <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address or "—" }})</option>
-              {% endfor %}
+              <option value="" x-text="'All mailboxes (' + accounts.length + ')'"></option>
+              <template x-for="a in accounts" :key="a.id">
+                <option :value="a.id" x-text="a.name + ' (' + (a.email || '—') + ')'"></option>
+              </template>
             </select>
+            {% if user.role.value == "admin" %}
+            <label class="ws-inline ws-admin-toggle">
+              <input type="checkbox" role="switch" x-model="includeAll" @change="onIncludeAllChange()">
+              All users' mailboxes <span class="text-muted text-xsmall">— audited</span>
+            </label>
+            {% endif %}
             <input type="text" x-model="query" placeholder="Search subject, sender…" autocomplete="off">
             <button type="submit" class="ws-btn-primary" :disabled="searching">
               <template x-if="!searching">

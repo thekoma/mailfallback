@@ -39,11 +39,11 @@ def _msg(msgid, subject="hello"):
     return msg
 
 
-def _mk_user(db_session, default_store, username):
+def _mk_user(db_session, default_store, username, role=UserRole.user):
     u = User(
         username=username,
         password_hash=hash_password("x"),
-        role=UserRole.user,
+        role=role,
         enabled=True,
         store_id=default_store.id,
     )
@@ -118,6 +118,80 @@ def test_non_owner_gets_404(mock_connect, mock_delete, client, db_session, defau
     resp = client.post(
         "/api/restore/resolve-uids",
         json={"account_id": acc.id, "message_ids": ["<p1@x>"]},
+    )
+
+    assert resp.status_code == 404
+    mock_connect.assert_not_called()
+
+
+@patch(DELETE_PATCH)
+@patch(CONNECT_PATCH)
+def test_admin_include_all_resolves_foreign_account(
+    mock_connect, mock_delete, client, db_session, default_store, tmp_path
+):
+    """The support scenario: with include_all an admin resolves UIDs in a
+    mailbox they don't own (the restore that follows is audited by
+    restore.start)."""
+    owner = _mk_user(db_session, default_store, "mario")
+    _mk_user(db_session, default_store, "root", role=UserRole.admin)
+    acc = _mk_account(db_session, default_store, tmp_path, owner=owner)
+    _write_maildir_message(acc.maildir_path, "1.m1.host:2,S", _msg("<p1@x>"))
+    index_service.upsert_message_set(db_session, acc.id)
+    _login(client, "root")
+
+    conn = MagicMock()
+    conn.select.return_value = ("OK", [b"1"])
+    conn.uid.return_value = ("OK", [b"7"])
+    mock_connect.return_value = (conn, "_restore_tmpA")
+
+    resp = client.post(
+        "/api/restore/resolve-uids",
+        json={"account_id": acc.id, "message_ids": ["<p1@x>"], "include_all": True},
+    )
+
+    assert resp.status_code == 200, resp.text
+    ns = account_namespace_prefix(acc)
+    assert resp.json() == {"resolved": {f"{ns}INBOX": ["7"]}, "missing": []}
+
+
+@patch(DELETE_PATCH)
+@patch(CONNECT_PATCH)
+def test_admin_without_include_all_gets_404_on_foreign_account(
+    mock_connect, mock_delete, client, db_session, default_store, tmp_path
+):
+    """Privacy default: no implicit admin access in the workspace flow — the
+    audited include_all escalation is the only way in."""
+    owner = _mk_user(db_session, default_store, "mario")
+    _mk_user(db_session, default_store, "root", role=UserRole.admin)
+    acc = _mk_account(db_session, default_store, tmp_path, owner=owner)
+    _write_maildir_message(acc.maildir_path, "1.m1.host:2,S", _msg("<p1@x>"))
+    index_service.upsert_message_set(db_session, acc.id)
+    _login(client, "root")
+
+    resp = client.post(
+        "/api/restore/resolve-uids",
+        json={"account_id": acc.id, "message_ids": ["<p1@x>"]},
+    )
+
+    assert resp.status_code == 404
+    mock_connect.assert_not_called()
+
+
+@patch(DELETE_PATCH)
+@patch(CONNECT_PATCH)
+def test_non_admin_include_all_gets_404(
+    mock_connect, mock_delete, client, db_session, default_store, tmp_path
+):
+    owner = _mk_user(db_session, default_store, "mario")
+    _mk_user(db_session, default_store, "luigi")  # owns nothing
+    acc = _mk_account(db_session, default_store, tmp_path, owner=owner)
+    _write_maildir_message(acc.maildir_path, "1.m1.host:2,S", _msg("<p1@x>"))
+    index_service.upsert_message_set(db_session, acc.id)
+    _login(client, "luigi")
+
+    resp = client.post(
+        "/api/restore/resolve-uids",
+        json={"account_id": acc.id, "message_ids": ["<p1@x>"], "include_all": True},
     )
 
     assert resp.status_code == 404

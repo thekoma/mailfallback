@@ -1725,6 +1725,7 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   gap: .5rem;
   align-items: stretch;
   width: 100%;
+  flex-wrap: wrap;  /* the admin scope toggle can push the row past one line */
 }
 .ws-root .ws-search-row input[type="text"] {
   flex: 1 1 auto !important;
@@ -2079,6 +2080,13 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   border: 1px solid var(--ws-border);
   border-radius: .5rem;
   color: var(--ws-text);
+}
+/* Admin escalation toggle — sits in the search row, next to the scope select. */
+.ws-search .ws-admin-toggle {
+  margin: 0;
+  flex: 0 0 auto;
+  align-self: center;
+  white-space: nowrap;
 }
 /* Ghost button — used by the preview's "Open full in webmail" link. */
 .ws-root .ws-btn-ghost {

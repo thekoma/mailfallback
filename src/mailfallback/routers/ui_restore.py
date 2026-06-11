@@ -18,6 +18,7 @@ from mailfallback.services.restore_service import (
     list_all_restore_jobs,
     list_restore_jobs_for_user,
 )
+from mailfallback.services.search_service import _accessible_account_ids
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,21 @@ def restore_page(request: Request, db: Session = Depends(get_db)):
     # Destination dropdown lists every account the user owns — even ones
     # without a backup policy (e.g. a fresh mailbox seeded from a snapshot).
     all_accounts = sorted(accounts, key=lambda a: (a.name or "").lower())
+    # Search scope dataset — privacy default: even admins only get the
+    # accounts they could access as a regular user (ownership OR groups),
+    # matching search_service scoping. The full list ships in a second,
+    # admin-only data island unlocked by the audited "All users' mailboxes"
+    # toggle. (Sidebar Mailbox/Destination selects keep all_accounts: the
+    # folder/full presets go through account_service.get_account.)
+    accessible_ids = set(_accessible_account_ids(db, user))
+    accessible_accounts = [a for a in all_accounts if a.id in accessible_ids]
+
+    def _accounts_island(accts: list) -> str:
+        # `<` is escaped so a hostile account name can't break out of the
+        # <script> data island.
+        return json.dumps(
+            [{"id": a.id, "name": a.name, "email": a.email_address or ""} for a in accts]
+        ).replace("<", "\\u003c")
 
     health = _compute_health(policies)
     total_snapshots = sum((p.last_snapshot_count or 0) for p in policies)
@@ -106,11 +122,10 @@ def restore_page(request: Request, db: Session = Depends(get_db)):
             "protected": protected,
             "unprotected": unprotected,
             "all_accounts": all_accounts,
-            # Data island for the Alpine workspace component. `<` is escaped so a
-            # hostile account name can't break out of the <script> data island.
-            "accounts_json": json.dumps(
-                [{"id": a.id, "name": a.name, "email": a.email_address or ""} for a in all_accounts]
-            ).replace("<", "\\u003c"),
+            # Data islands for the Alpine workspace component: accessible set
+            # (default scope) + every account (admin island, audited toggle).
+            "accounts_json": _accounts_island(accessible_accounts),
+            "all_accounts_json": _accounts_island(all_accounts),
             "health": health,
             "total_snapshots": total_snapshots,
             "most_recent_snapshot": most_recent,

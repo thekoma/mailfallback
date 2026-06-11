@@ -21,6 +21,7 @@ function restoreWorkspace() {
     includeSnapshots: true,
     query: '',
     scopeAccountId: '',         // '' = all visible mailboxes
+    includeAll: false,          // admin-only: audited cross-user scope escalation
     deepSearch: false,
     partial: false,
     selectedFolder: '',
@@ -39,8 +40,10 @@ function restoreWorkspace() {
     previewLoading: false,
     _previewSeq: 0,             // monotonic seq — stale preview responses are dropped
 
-    // From the template: data island + root data attribute
-    accounts: [],
+    // From the template: data islands + root data attribute
+    accounts: [],               // active scope dataset (accessible or all)
+    accountsAccessible: [],     // ownership OR groups — the privacy default
+    accountsAll: [],            // admins only — empty island for everyone else
     webmailUrl: '',
 
     folders: [],
@@ -69,15 +72,11 @@ function restoreWorkspace() {
       const destSel = document.querySelector('[x-model="destinationId"]');
       if (destSel && destSel.options.length > 0) this.destinationId = destSel.options[0].value;
 
-      // Account names for result badges (data island) + webmail link target.
-      const island = document.getElementById('ws-accounts-data');
-      if (island) {
-        try {
-          this.accounts = JSON.parse(island.textContent) || [];
-        } catch (e) {
-          this.accounts = [];
-        }
-      }
+      // Account names for result badges + scope options (data islands) and
+      // webmail link target. The all-accounts island only exists for admins.
+      this.accountsAccessible = this._parseIsland('ws-accounts-data');
+      this.accountsAll = this._parseIsland('ws-accounts-all-data');
+      this.accounts = this.accountsAccessible;
       this.webmailUrl = (this.$el && this.$el.dataset.webmailUrl) || '';
 
       this._initCalendar();
@@ -93,6 +92,16 @@ function restoreWorkspace() {
       if (this._fp) this._fp.setDate([start, end], false);
 
       this.fetchSnapshotDates();
+    },
+
+    _parseIsland(id) {
+      const el = document.getElementById(id);
+      if (!el) return [];
+      try {
+        return JSON.parse(el.textContent) || [];
+      } catch (e) {
+        return [];
+      }
     },
 
     _initCalendar() {
@@ -168,7 +177,10 @@ function restoreWorkspace() {
 
     // === Result/preview helpers ===
     accountName(id) {
-      const a = this.accounts.find(x => x.id === id);
+      // Both datasets: a result badge must resolve even after the admin
+      // toggle swapped the active scope list.
+      const a = this.accountsAccessible.find(x => x.id === id)
+        || this.accountsAll.find(x => x.id === id);
       return a ? a.name : '?';
     },
     fmtSize(n) {
@@ -190,7 +202,9 @@ function restoreWorkspace() {
       this.previewOpen = true;
       this.previewLoading = true;
       try {
-        const resp = await fetch(`/api/restore/preview/${r.account_id}/${r.message_id_hash}`);
+        const url = `/api/restore/preview/${r.account_id}/${r.message_id_hash}`
+          + (this.includeAll ? '?include_all=true' : '');
+        const resp = await fetch(url);
         const data = resp.ok ? await resp.json() : null;
         if (seq !== this._previewSeq) return;
         this.preview = data;
@@ -244,6 +258,14 @@ function restoreWorkspace() {
       this.fetchSnapshotDates();
     },
 
+    onIncludeAllChange() {
+      // Swapping the dataset re-renders the scope options; everything tied
+      // to the old dataset (scope, results, selection, preview, dots) resets.
+      this.accounts = this.includeAll ? this.accountsAll : this.accountsAccessible;
+      this.scopeAccountId = '';
+      this.onScopeChange();
+    },
+
     async runSearch() {
       if (!this.query.trim()) return;
       this.searching = true;
@@ -266,6 +288,7 @@ function restoreWorkspace() {
             range_end: this.rangeEndIso,
             include_deleted: this.includeSnapshots,
             deep: this.deepSearch,
+            include_all: this.includeAll,
             page: 1,
             page_size: 100,
           }),
@@ -328,7 +351,11 @@ function restoreWorkspace() {
           const res = await fetch('/api/restore/resolve-uids', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({account_id: accountId, message_ids: messageIds}),
+            body: JSON.stringify({
+              account_id: accountId,
+              message_ids: messageIds,
+              include_all: this.includeAll,
+            }),
           });
           if (!res.ok) {
             failure = `resolve failed for ${this.accountName(accountId)}: ${res.status}`;

@@ -26,11 +26,95 @@ def test_restore_mailbox_select_lists_accounts_without_backup_policy(
     acct = _setup_separator_test(db_session, default_store, client)
     resp = client.get("/restore")
     assert resp.status_code == 200
-    # The account id must appear in the search scope select AND the
-    # Mailbox + Destination sidebar selects (folder/full presets).
-    assert resp.text.count(f'value="{acct.id}"') == 3
-    # ...and in the data island that maps account ids to display names.
+    # The account id must appear in the Mailbox + Destination sidebar selects
+    # (folder/full presets). The search scope select renders its options from
+    # the data island via Alpine x-for, so it adds no Jinja-rendered value.
+    assert resp.text.count(f'value="{acct.id}"') == 2
+    # ...and in the data island that feeds the scope select and maps account
+    # ids to display names.
     assert f'"id": "{acct.id}"' in resp.text
+
+
+def _extract_island(text, island_id):
+    """Parse one JSON data island out of the rendered page."""
+    import json
+    import re
+
+    m = re.search(
+        rf'<script type="application/json" id="{island_id}">(.*?)</script>',
+        text,
+        re.S,
+    )
+    return json.loads(m.group(1)) if m else None
+
+
+def _mk_owned_and_foreign_accounts(db_session, default_store, me):
+    """One account owned by `me` + one owned by somebody else."""
+    other = User(
+        username="someoneelse",
+        password_hash="x",
+        store_id=default_store.id,
+        role=UserRole.user,
+    )
+    db_session.add(other)
+    mine = Account(
+        name="mine",
+        email_address="mine@example.com",
+        imap_host="imap.example.com",
+        maildir_path="/data/mailboxes/mine",
+        store_id=default_store.id,
+    )
+    foreign = Account(
+        name="foreign",
+        email_address="foreign@example.com",
+        imap_host="imap.example.com",
+        maildir_path="/data/mailboxes/foreign",
+        store_id=default_store.id,
+    )
+    db_session.add_all([mine, foreign])
+    db_session.flush()
+    mine.owners.append(me)
+    foreign.owners.append(other)
+    db_session.commit()
+    return mine, foreign
+
+
+def test_restore_page_admin_has_audited_toggle_and_both_islands(client, db_session, default_store):
+    """Admins get the audited 'All users' mailboxes' switch plus a second data
+    island with every account; the default island stays accessible-only."""
+    admin = create_user(db_session, "wsadmin", "pass", UserRole.admin, store_id=default_store.id)
+    mine, foreign = _mk_owned_and_foreign_accounts(db_session, default_store, admin)
+    client.post("/api/auth/login", json={"username": "wsadmin", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    assert "ws-admin-toggle" in resp.text
+    accessible = _extract_island(resp.text, "ws-accounts-data")
+    everything = _extract_island(resp.text, "ws-accounts-all-data")
+    assert accessible is not None and everything is not None
+    accessible_ids = {a["id"] for a in accessible}
+    all_ids = {a["id"] for a in everything}
+    assert mine.id in accessible_ids
+    assert foreign.id not in accessible_ids
+    assert {mine.id, foreign.id} <= all_ids
+
+
+def test_restore_page_non_admin_has_no_toggle_and_no_all_island(client, db_session, default_store):
+    user = create_user(db_session, "wsuser", "pass", UserRole.user, store_id=default_store.id)
+    mine, foreign = _mk_owned_and_foreign_accounts(db_session, default_store, user)
+    client.post("/api/auth/login", json={"username": "wsuser", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    assert "ws-admin-toggle" not in resp.text
+    assert "ws-accounts-all-data" not in resp.text
+    accessible = _extract_island(resp.text, "ws-accounts-data")
+    accessible_ids = {a["id"] for a in accessible}
+    assert accessible_ids == {mine.id}
+    # The foreign account must not leak anywhere in the page.
+    assert foreign.id not in resp.text
 
 
 def _setup_separator_test(db_session, default_store, client):
