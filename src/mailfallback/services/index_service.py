@@ -90,7 +90,8 @@ def _parse_attachments(path: str) -> list[dict] | None:
     or Content-Type name param — policy.default decodes RFC 2047/2231).
     `part_index` numbers ALL non-multipart leaves in walk order, so a later
     re-walk can address the same part without ambiguity.
-    Returns None on unreadable/unparsable files.
+    `size_bytes` is None when the decoded size is unknown (message/* parts,
+    malformed CTE) — never a fake 0. Returns None on unreadable/unparsable files.
     """
     parser = BytesParser(policy=policy.default)
     try:
@@ -109,16 +110,17 @@ def _parse_attachments(path: str) -> list[dict] | None:
             if not filename:
                 continue
             try:
-                payload = part.get_payload(decode=True) or b""
+                # None for non-decodable parts (e.g. message/rfc822)
+                payload = part.get_payload(decode=True)
             except Exception:  # malformed CTE — keep the row, size unknown
-                payload = b""
+                payload = None
             ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
             out.append(
                 {
                     "part_index": part_index,
                     "filename": filename,
                     "ext": ext,
-                    "size_bytes": len(payload),
+                    "size_bytes": len(payload) if payload is not None else None,
                     "content_type": part.get_content_type(),
                 }
             )
@@ -190,7 +192,9 @@ def upsert_message_set(db: Session, account_id: str) -> int:
                         folder_path=folder,
                         maildir_filename=filename,
                         has_attachments=bool(atts),
-                        attachments_indexed_at=now,
+                        # parse failure (None) stays NULL so the backfill
+                        # (attachments_indexed_at IS NULL) retries the file
+                        attachments_indexed_at=now if atts is not None else None,
                         **parsed,
                     )
                 )

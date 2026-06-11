@@ -70,6 +70,37 @@ class TestAttachmentParse:
         assert row.attachments_indexed_at is not None
         assert db_session.query(MailIndexAttachment).count() == 0
 
+    def test_part_index_skips_body_and_is_stable(self, db_session, default_store, tmp_path):
+        acc = _mk_account(db_session, default_store, tmp_path)
+        _write_maildir_message(
+            acc.maildir_path,
+            "104.m1.host:2,S",
+            _msg("<a4@x>", attachments=[("a.pdf", b"A"), ("b.pdf", b"BB")]),
+        )
+        index_service.upsert_message_set(db_session, acc.id)
+        idx = [
+            a.part_index
+            for a in db_session.query(MailIndexAttachment).order_by(MailIndexAttachment.part_index)
+        ]
+        assert idx == [2, 3]  # body text/plain consumed index 1
+
+    def test_forwarded_message_attachment_size_none(self, db_session, default_store, tmp_path):
+        acc = _mk_account(db_session, default_store, tmp_path)
+        inner = EmailMessage()
+        inner["Subject"] = "inner"
+        inner.set_content("inner body")
+        msg = _msg("<a5@x>")
+        msg.add_attachment(inner, filename="forwarded.eml")
+        _write_maildir_message(acc.maildir_path, "105.m1.host:2,S", msg)
+
+        index_service.upsert_message_set(db_session, acc.id)
+
+        # message/rfc822 has no decodable payload — size must be honest NULL, not 0
+        att = db_session.query(MailIndexAttachment).filter_by(account_id=acc.id).one()
+        assert att.filename == "forwarded.eml"
+        assert att.content_type == "message/rfc822"
+        assert att.size_bytes is None
+
     def test_existing_rows_not_reparsed(self, db_session, default_store, tmp_path):
         acc = _mk_account(db_session, default_store, tmp_path)
         _write_maildir_message(
