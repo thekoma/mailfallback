@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy import (
     ARRAY,
     JSON,
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -494,6 +495,56 @@ class Recovery(Base):
 
     account = relationship("Account", backref="recoveries")
     repository = relationship("Repository")
+
+
+class StagingArea(Base):
+    """Per-user writable staging mailbox for curated restores.
+
+    At most one per user. The on-disk Maildir under the user's dovecot home
+    is the source of truth for contents (webmail deletions just remove
+    files); rows track quota, origin and expiry. TTL clock starts at
+    creation; the scheduler purges expired areas.
+    """
+
+    __tablename__ = "staging_areas"
+
+    id = Column(String, primary_key=True, default=_new_uuid)
+    user_id = Column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    max_bytes = Column(BigInteger, nullable=False, server_default=text("0"))
+    bytes_used = Column(BigInteger, nullable=False, server_default=text("0"))
+
+    messages = relationship(
+        "StagingMessage",
+        backref=backref("staging", passive_deletes=True),
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class StagingMessage(Base):
+    """Origin bookkeeping for one staged message (file lives in the Maildir)."""
+
+    __tablename__ = "staging_messages"
+
+    id = Column(String, primary_key=True, default=_new_uuid)
+    staging_id = Column(
+        String,
+        ForeignKey("staging_areas.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_account_id = Column(
+        String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    message_id_hash = Column(LargeBinary(20), nullable=False)
+    original_folder = Column(Text, nullable=False)
+    staged_filename = Column(Text, nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    staged_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
 
 class MailIndexMessage(Base):
