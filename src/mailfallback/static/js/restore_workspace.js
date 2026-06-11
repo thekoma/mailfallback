@@ -18,7 +18,6 @@ function restoreWorkspace() {
 
     includeLive: true,
     includeSnapshots: true,
-    ttlOverride: null,
     query: '',
     scopeAccountId: '',         // '' = all visible mailboxes
     deepSearch: false,
@@ -37,6 +36,7 @@ function restoreWorkspace() {
     preview: null,
     previewOpen: false,
     previewLoading: false,
+    _previewSeq: 0,             // monotonic seq — stale preview responses are dropped
 
     // From the template: data island + root data attribute
     accounts: [],
@@ -45,12 +45,6 @@ function restoreWorkspace() {
     folders: [],
     folderStatus: '',
     fullStatus: '',
-
-    // Cost preview state
-    costText: '— snapshots in range',
-    costLoading: false,
-    _costSeq: 0,
-    _costTimer: null,
 
     // === Computed ===
     get rangeStartIso() {
@@ -97,8 +91,7 @@ function restoreWorkspace() {
       this.rangeEnd = end;
       if (this._fp) this._fp.setDate([start, end], false);
 
-      this.fetchSnapshotDates().then(() => this.updateRangeCost());
-      this.updateRangeCost();
+      this.fetchSnapshotDates();
     },
 
     _initCalendar() {
@@ -114,7 +107,6 @@ function restoreWorkspace() {
           if (selectedDates.length === 2) {
             self.rangeStart = selectedDates[0];
             self.rangeEnd = selectedDates[1];
-            self.updateRangeCost();
           }
           // selectedDates.length === 1 — mid-range selection, wait for second click
         },
@@ -135,24 +127,27 @@ function restoreWorkspace() {
     },
 
     async fetchSnapshotDates() {
-      if (!this.accountId) return;
-      try {
-        const resp = await fetch('/api/restore/workspace/snapshot-dates', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({account_id: this.accountId}),
-        });
-        if (!resp.ok) {
-          this.snapshotDates = [];
-          return;
-        }
-        const body = await resp.json();
-        this.snapshotDates = body.dates || [];
-        // Re-render flatpickr to re-run onDayCreate with the fresh data set.
-        if (this._fp) this._fp.redraw();
-      } catch (e) {
+      // Calendar dots follow the search scope: a single mailbox shows its
+      // snapshot days; "All mailboxes" shows none (a merged dot-strip across
+      // accounts would be misleading).
+      if (!this.scopeAccountId) {
         this.snapshotDates = [];
+      } else {
+        try {
+          const resp = await fetch('/api/restore/workspace/snapshot-dates', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({account_id: this.scopeAccountId}),
+          });
+          const body = resp.ok ? await resp.json() : {};
+          this.snapshotDates = body.dates || [];
+        } catch (e) {
+          this.snapshotDates = [];
+        }
       }
+      // Re-render flatpickr to re-run onDayCreate with the fresh data set
+      // (also clears stale dots when the scope changes or the fetch fails).
+      if (this._fp) this._fp.redraw();
     },
 
     refreshIcons() {
@@ -180,16 +175,24 @@ function restoreWorkspace() {
     },
     selKey(r) { return r.account_id + ':' + r.message_id; },
     async openPreview(r) {
+      // Seq guard: rapid row clicks race their fetches — only the latest
+      // request may write state, stale responses are dropped.
+      const seq = ++this._previewSeq;
       this.previewOpen = true;
       this.previewLoading = true;
       try {
         const resp = await fetch(`/api/restore/preview/${r.account_id}/${r.message_id_hash}`);
-        this.preview = resp.ok ? await resp.json() : null;
+        const data = resp.ok ? await resp.json() : null;
+        if (seq !== this._previewSeq) return;
+        this.preview = data;
       } catch (e) {
+        if (seq !== this._previewSeq) return;
         this.preview = null;
       } finally {
-        this.previewLoading = false;
-        this.refreshIcons();
+        if (seq === this._previewSeq) {
+          this.previewLoading = false;
+          this.refreshIcons();
+        }
       }
     },
 
@@ -207,62 +210,29 @@ function restoreWorkspace() {
       this.selected = [];
       this.searched = false;
       this.statusText = '';
+      this.partial = false;
       this.preview = null;
       this.previewOpen = false;
       this.refreshIcons();
       if (id === 'folder') this.loadFolders();
-      this.updateRangeCost();
     },
 
     onAccountChange() {
+      // Source mailbox for the folder/full presets — search results live in
+      // the single-mail preset and follow scopeAccountId instead.
+      if (this.preset === 'folder') this.loadFolders();
+    },
+
+    onScopeChange() {
+      // New scope invalidates the current result set and the calendar dots.
       this.results = [];
       this.selected = [];
       this.searched = false;
       this.statusText = '';
-      this.fetchSnapshotDates().then(() => this.updateRangeCost());
-      if (this.preset === 'folder') this.loadFolders();
-    },
-
-    updateRangeCost() {
-      this.costText = '⟳ calculating…';
-      this.costLoading = true;
-      clearTimeout(this._costTimer);
-      this._costTimer = setTimeout(() => this._fetchCost(), 250);
-    },
-
-    async _fetchCost() {
-      if (!this.accountId || !this.rangeStart || !this.rangeEnd) {
-        this.costText = '— pick a range';
-        this.costLoading = false;
-        return;
-      }
-      const seq = ++this._costSeq;
-      try {
-        const resp = await fetch('/api/restore/workspace/snapshot-count', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            account_id: this.accountId,
-            range_start: this.rangeStartIso,
-            range_end: this.rangeEndIso,
-          }),
-        });
-        if (seq !== this._costSeq) return;
-        if (!resp.ok) {
-          this.costText = '— snapshots in range (error)';
-          this.costLoading = false;
-          return;
-        }
-        const body = await resp.json();
-        if (seq !== this._costSeq) return;
-        const sizeMB = (body.size_bytes / 1_000_000).toFixed(0);
-        this.costText = `${body.count} snapshot${body.count === 1 ? '' : 's'} in range · ~${sizeMB} MB`;
-        this.costLoading = false;
-      } catch (e) {
-        if (seq !== this._costSeq) return;
-        this.costText = '— snapshots in range';
-        this.costLoading = false;
-      }
+      this.partial = false;
+      this.preview = null;
+      this.previewOpen = false;
+      this.fetchSnapshotDates();
     },
 
     async runSearch() {
@@ -301,13 +271,19 @@ function restoreWorkspace() {
         // "Live" is unchecked we drop rows whose ONLY source is live mail
         // (i.e. keep rows that also exist in at least one snapshot). The
         // "Snapshots" toggle maps to include_deleted=false server-side, which
-        // drops snapshot-only rows (messages no longer in live mail).
+        // drops snapshot-only rows (messages no longer in live mail). With
+        // BOTH unchecked the two filters compose to the intersection: rows
+        // that are in live mail AND in at least one snapshot.
         if (!this.includeLive) {
           results = results.filter(r => (r.snapshots || []).length > 0);
         }
         this.results = results;
         this.partial = !!body.partial;
-        this.statusText = `${body.total} result${body.total === 1 ? '' : 's'}`;
+        // Honest counts: show what's visible; body.total can be larger after
+        // the includeLive client filter and/or page_size truncation.
+        const shown = results.length;
+        this.statusText = `${shown} result${shown === 1 ? '' : 's'}`
+          + (body.total > shown ? ` of ${body.total}` : '');
       } catch (e) {
         this.statusText = `Search error: ${e.message}`;
       } finally {
@@ -336,13 +312,17 @@ function restoreWorkspace() {
         }
         const jobs = [];
         let skippedTotal = 0;
+        let failure = '';
         for (const [accountId, messageIds] of Object.entries(byAccount)) {
           const res = await fetch('/api/restore/resolve-uids', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({account_id: accountId, message_ids: messageIds}),
           });
-          if (!res.ok) { this.statusText = `Resolve failed: ${res.status}`; return; }
+          if (!res.ok) {
+            failure = `resolve failed for ${this.accountName(accountId)}: ${res.status}`;
+            break;
+          }
           const {resolved, missing} = await res.json();
           skippedTotal += missing.length;
           if (Object.keys(resolved).length === 0) continue;
@@ -360,13 +340,20 @@ function restoreWorkspace() {
             }),
           });
           if (r.ok) jobs.push((await r.json()).job_id);
-          else { this.statusText = `Restore failed for ${this.accountName(accountId)}: ${r.status}`; return; }
+          else {
+            failure = `failed for ${this.accountName(accountId)}: ${r.status}`;
+            break;
+          }
         }
+        // A mid-loop failure must not hide jobs that DID start before it.
         const bits = [];
         if (jobs.length) bits.push(`Started ${jobs.length} restore job${jobs.length === 1 ? '' : 's'} (to origin)`);
         if (skippedTotal) bits.push(`${skippedTotal} message${skippedTotal === 1 ? '' : 's'} not in live mail — skipped (snapshot-only restore arrives with the staging area)`);
+        if (failure) bits.push(failure);
         this.statusText = bits.join(' · ') || 'Nothing to restore.';
-        this.selected = [];
+        if (!failure) this.selected = [];
+      } catch (e) {
+        this.statusText = `Restore error: ${e.message}`;
       } finally {
         this.restoring = false;
         this.refreshIcons();
