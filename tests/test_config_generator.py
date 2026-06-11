@@ -125,8 +125,10 @@ def test_dovecot_acl_content(tmp_path):
 
     acl = (tmp_path / "dovecot" / "dovecot-acl").read_text()
     # Exact content, in order: default read-only first, then the writable
-    # per-user Staging/ namespace (restore curation surface). Dovecot global
-    # ACL lines are not merged -- the most specific mailbox pattern wins.
+    # per-user Staging/ namespace (restore curation surface). All matching
+    # lines apply and same-identifier rights are unioned; a narrower pattern
+    # can only ADD rights, never remove them (subtraction needs negative
+    # entries). Verified against dovecot 2.4.2 source (acl-global-file.c).
     assert acl == "* owner lrs\nStaging owner lrwstie\nStaging/* owner lrwstie\n"
 
 
