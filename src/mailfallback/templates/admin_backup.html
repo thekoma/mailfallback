@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Repositories — MFB{% endblock %}
+{% block body_class %}page-wide{% endblock %}
 {% block content %}
 <h2><i data-lucide="cloud-upload" class="icon-xl icon-inline"></i>Repositories</h2>
 
@@ -17,7 +18,6 @@
         <tr>
             <th>Name</th>
             <th>Type</th>
-            <th>Bucket / Path</th>
             <th>Mailboxes</th>
             <th>Snapshots</th>
             <th>Last back-up</th>
@@ -34,13 +34,6 @@
                 <span class="badge badge-admin">S3</span>
                 {% else %}
                 <span class="badge">Local</span>
-                {% endif %}
-            </td>
-            <td>
-                {% if dest.backend_type.value == "s3" %}
-                <span class="text-muted text-small">(encrypted)</span>
-                {% else %}
-                <span class="text-muted text-small">(encrypted)</span>
                 {% endif %}
             </td>
             <td>{{ dest_account_counts.get(dest.id, 0) }}</td>
@@ -101,8 +94,8 @@
                 </div>
             </td>
         </tr>
-        <tr id="edit-{{ dest.id }}" class="hidden">
-            <td colspan="5">
+        <tr id="edit-{{ dest.id }}" class="hidden expand-row">
+            <td colspan="7">
                 <form method="post" action="/admin/backup/{{ dest.id }}/edit">
                     <div class="grid-2">
                         <div>
@@ -172,12 +165,12 @@
                 </form>
             </td>
         </tr>
-        <tr id="contents-{{ dest.id }}" class="hidden">
-            <td colspan="8"><div id="repo-contents-{{ dest.id }}"></div></td>
+        <tr id="contents-{{ dest.id }}" class="hidden expand-row">
+            <td colspan="7"><div id="repo-contents-{{ dest.id }}"></div></td>
         </tr>
         {% endfor %}
         {% if not destinations %}
-        <tr><td colspan="8" class="empty-cell">
+        <tr><td colspan="7" class="empty-cell">
             <i data-lucide="cloud-upload"></i>
             <strong>No repositories yet</strong>
             <span class="empty-hint">A Repository is an off-site, encrypted store for snapshots. Add your first one below, then attach a backup policy to a mailbox from its account-detail page.</span>

@@ -819,3 +819,145 @@ class TestBackfillRoute:
 
         assert resp.status_code == 303
         mock_backfill.assert_called_once()
+
+
+class TestContentsActions:
+    @patch("mailfallback.services.repo_inventory.list_prefixes")
+    def test_account_row_links_snapshot_picker(self, mock_list, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        acc = _mk_account(db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        mock_list.return_value = [acc.id]
+
+        resp = client.get(f"/admin/backup/{repo.id}/contents")
+
+        assert resp.status_code == 200
+        assert f"/accounts/{acc.id}#admin-offsite" in resp.text
+
+    @patch("mailfallback.services.repo_inventory.list_prefixes")
+    def test_config_row_has_restore_form(self, mock_list, client, db_session, default_store):
+        _login_admin(client, db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        mock_list.return_value = ["__mfb_config__"]
+
+        resp = client.get(f"/admin/backup/{repo.id}/contents")
+
+        assert resp.status_code == 200
+        assert f"/admin/backup/{repo.id}/config-restore/preview" in resp.text
+        assert 'name="passphrase"' in resp.text
+
+
+class TestConfigRestoreFromRepo:
+    def _blob(self, db_session, passphrase="averylongpassphrase"):  # noqa: S107
+        from mailfallback.services import config_backup_service as cbs
+
+        return cbs.encrypt_export(cbs.build_export(db_session), passphrase)
+
+    def _fake_fetch(self, blob):
+        import os
+
+        def fetch(repository, target_dir):
+            path = os.path.join(target_dir, "mfb-config.json.enc")
+            with open(path, "wb") as f:
+                f.write(blob)
+            return path
+
+        return fetch
+
+    @patch("mailfallback.routers.ui_backup.config_backup_service")
+    def test_preview_uses_stored_repo_and_shows_confirm(
+        self, mock_cbs, client, db_session, default_store
+    ):
+        from mailfallback.services import config_backup_service as cbs
+
+        _login_admin(client, db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        blob = self._blob(db_session)
+        mock_cbs.fetch_latest_config.side_effect = self._fake_fetch(blob)
+        mock_cbs.decrypt_export = cbs.decrypt_export
+        mock_cbs.ConfigDecryptError = cbs.ConfigDecryptError
+
+        resp = client.post(
+            f"/admin/backup/{repo.id}/config-restore/preview",
+            data={"passphrase": "averylongpassphrase"},
+        )
+
+        assert resp.status_code == 200
+        assert "Confirm restore" in resp.text
+        assert f"/admin/backup/{repo.id}/config-restore/confirm" in resp.text
+        # the stored Repository row is passed to fetch, no transient rebuild
+        fetched_repo = mock_cbs.fetch_latest_config.call_args[0][0]
+        assert fetched_repo.id == repo.id
+
+    @patch("mailfallback.routers.ui_backup.config_backup_service")
+    def test_preview_wrong_passphrase_shows_error(
+        self, mock_cbs, client, db_session, default_store
+    ):
+        from mailfallback.services import config_backup_service as cbs
+
+        _login_admin(client, db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        blob = self._blob(db_session, passphrase="different")
+        mock_cbs.fetch_latest_config.side_effect = self._fake_fetch(blob)
+        mock_cbs.decrypt_export = cbs.decrypt_export
+        mock_cbs.ConfigDecryptError = cbs.ConfigDecryptError
+
+        resp = client.post(
+            f"/admin/backup/{repo.id}/config-restore/preview",
+            data={"passphrase": "averylongpassphrase"},
+        )
+
+        assert resp.status_code == 200
+        assert "passphrase" in resp.text.lower()
+        assert "Confirm restore" not in resp.text
+
+    @patch("mailfallback.routers.ui_backup.config_backup_service")
+    def test_confirm_imports_and_redirects_to_backup_page(
+        self, mock_cbs, client, db_session, default_store
+    ):
+        from mailfallback.services import config_backup_service as cbs
+
+        _login_admin(client, db_session, default_store)
+        repo = _mk_repo(client, db_session, default_store)
+        blob = self._blob(db_session)
+        mock_cbs.fetch_latest_config.side_effect = self._fake_fetch(blob)
+        mock_cbs.decrypt_export = cbs.decrypt_export
+        mock_cbs.import_export.return_value = {
+            "imported": {"users": 1},
+            "skipped": {},
+            "errors": [],
+        }
+
+        resp = client.post(
+            f"/admin/backup/{repo.id}/config-restore/confirm",
+            data={"passphrase": "averylongpassphrase"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/admin/backup"
+        mock_cbs.import_export.assert_called_once()
+
+    def test_preview_requires_admin(self, client, db_session, default_store):
+        create_user(db_session, "user1", "pass", UserRole.user, store_id=default_store.id)
+        client.post("/api/auth/login", json={"username": "user1", "password": "pass"})
+
+        resp = client.post(
+            "/admin/backup/some-id/config-restore/preview",
+            data={"passphrase": "x"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+
+    def test_confirm_requires_admin(self, client, db_session, default_store):
+        create_user(db_session, "user1", "pass", UserRole.user, store_id=default_store.id)
+        client.post("/api/auth/login", json={"username": "user1", "password": "pass"})
+
+        resp = client.post(
+            "/admin/backup/some-id/config-restore/confirm",
+            data={"passphrase": "x"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303

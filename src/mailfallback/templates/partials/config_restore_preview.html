@@ -10,7 +10,7 @@
     </ul>
     <p class="text-small text-muted">Existing rows (matching ID, username, store path, or maildir path) are skipped, never overwritten.</p>
 </div>
-<form method="post" action="/admin/system/config-restore/confirm" class="mt-05">
+<form method="post" action="{{ confirm_action | default('/admin/system/config-restore/confirm') }}" class="mt-05">
     {% for key, value in form.items() %}
     <input type="hidden" name="{{ key }}" value="{{ value }}">
     {% endfor %}
