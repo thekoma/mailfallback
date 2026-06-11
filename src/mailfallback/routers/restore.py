@@ -11,7 +11,14 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_current_user, get_db
-from mailfallback.models import BackupPolicy, MailIndexMessage, RecoveryStatus, User
+from mailfallback.models import (
+    Account,
+    BackupPolicy,
+    MailIndexMessage,
+    RecoveryStatus,
+    User,
+    UserRole,
+)
 from mailfallback.routers.dovecot import account_namespace_prefix
 from mailfallback.services import (
     account_service,
@@ -795,6 +802,29 @@ def _legacy_mount_workspace_search(req, request, user, db):
     }
 
 
+def _workspace_account_for_user(
+    db: Session, user: User, account_id: str, include_all: bool
+) -> tuple[Account | None, bool]:
+    """Account lookup for the workspace search flow (preview / resolve-uids).
+
+    Privacy default: NO implicit admin access here, unlike
+    account_service.get_account — an admin reaches accounts outside their own
+    accessible set (ownership OR groups) only via the explicit ``include_all``
+    escalation, so the bypass is always auditable.
+
+    Returns ``(account, escalated)``; escalated=True iff the admin bypass was
+    actually used (the account lies outside the user's accessible set).
+    """
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not account:
+        return None, False
+    if account_id in search_service._accessible_account_ids(db, user):
+        return account, False
+    if include_all and user.role == UserRole.admin:
+        return account, True
+    return None, False
+
+
 class RestoreSearchRequest(BaseModel):
     query: str = ""
     account_ids: list[str] | None = None
@@ -803,6 +833,7 @@ class RestoreSearchRequest(BaseModel):
     include_deleted: bool = True
     snapshot_id: str | None = None
     deep: bool = False
+    include_all: bool = False
     page: int = 1
     page_size: int = 50
 
@@ -814,6 +845,19 @@ def api_restore_search(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if req.include_all and user.role == UserRole.admin:
+        # Audited escalation — log the attempt itself, before any results.
+        log_action(
+            db,
+            user=user,
+            action="restore.search_all",
+            resource_type="restore",
+            details={
+                "query": req.query,
+                "accounts": len(req.account_ids) if req.account_ids else "all",
+            },
+            ip_address=request.client.host if request.client else None,
+        )
     return search_service.search_messages(
         db,
         user=user,
@@ -824,6 +868,7 @@ def api_restore_search(
         include_deleted=req.include_deleted,
         snapshot_id=req.snapshot_id,
         deep=req.deep,
+        include_all=req.include_all,
         page=req.page,
         page_size=req.page_size,
     )
@@ -833,17 +878,31 @@ def api_restore_search(
 def api_restore_preview(
     account_id: str,
     message_id_hash_hex: str,
+    request: Request,
+    include_all: bool = False,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Headers + body snippet of one indexed message, live or from snapshot."""
-    account = account_service.get_account(db, account_id, user)
+    account, escalated = _workspace_account_for_user(db, user, account_id, include_all)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
     try:
         message_id_hash = bytes.fromhex(message_id_hash_hex)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid hash") from None
+    if escalated:
+        # Only the cross-user case is audited — admins previewing their own
+        # mail would be noise.
+        log_action(
+            db,
+            user=user,
+            action="restore.preview",
+            resource_type="restore",
+            resource_id=account_id,
+            details={"message_id_hash": message_id_hash_hex},
+            ip_address=request.client.host if request.client else None,
+        )
     out = preview_service.get_preview(db, account, message_id_hash)
     if out is None:
         raise HTTPException(status_code=404, detail="Message not found")
@@ -856,6 +915,7 @@ RESOLVE_UIDS_MAX_IDS = 200
 class ResolveUidsRequest(BaseModel):
     account_id: str
     message_ids: list[str]
+    include_all: bool = False
 
 
 @router.post("/resolve-uids")
@@ -885,8 +945,13 @@ def api_resolve_uids(
     first RESOLVE_UIDS_MAX_IDS are ignored entirely (neither resolved nor
     reported missing). Mirrors the DEPRECATED workspace_search wrapper's
     per-message resolution, but folder-grouped and server-side.
+
+    Account lookup is privacy-default (no implicit admin access): an admin
+    resolving UIDs in a foreign mailbox must send ``include_all=true``. No
+    audit row here — the restore that consumes the mapping logs
+    ``restore.start`` (restore-to-origin writes INTO the owner's mailbox).
     """
-    account = account_service.get_account(db, req.account_id, user)
+    account, _escalated = _workspace_account_for_user(db, user, req.account_id, req.include_all)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 

@@ -16,6 +16,7 @@ from mailfallback.models import (
     MailIndexMessage,
     SnapshotMessage,
     User,
+    UserRole,
     account_groups,
     account_owners,
     group_members,
@@ -51,6 +52,7 @@ def search_messages(
     include_deleted: bool = True,
     snapshot_id: str | None = None,
     deep: bool = False,
+    include_all: bool = False,
     page: int = 1,
     page_size: int = 50,
 ) -> dict[str, Any]:
@@ -61,10 +63,17 @@ def search_messages(
     `message_id_hash IN body_hashes`. Live-only; bounded by a soft timeout that
     surfaces as `partial`.
 
+    Privacy default: scope is the user's accessible accounts (ownership OR
+    groups) — admins included. `include_all=True` widens an ADMIN's scope to
+    every account; callers must audit that escalation (the API layer logs
+    `restore.search_all`). Non-admins: include_all is ignored.
+
     Returns: {results, total, page, page_size, partial}
     """
     empty = {"results": [], "total": 0, "page": page, "page_size": page_size, "partial": False}
     visible = _accessible_account_ids(db, user)
+    if include_all and user.role == UserRole.admin:
+        visible = [a_id for (a_id,) in db.query(Account.id).all()]
     if not visible:
         return empty
     scope = [a for a in account_ids if a in visible] if account_ids else visible
