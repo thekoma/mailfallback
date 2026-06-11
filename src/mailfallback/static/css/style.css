@@ -2026,6 +2026,20 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 .ws-preview-body::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2.2rem; background: linear-gradient(transparent, var(--ws-card)); }
 .ws-preview-atts { border: 1px dashed var(--ws-border); border-radius: 8px; padding: 0.5rem 0.7rem; margin-top: 0.7rem; display: flex; gap: 0.3rem; flex-wrap: wrap; align-items: center; }
 .ws-preview-webmail { margin-top: 0.7rem; display: inline-block; }
+/* Pico paints [role="button"] as a primary button; the result body is a
+   click/keyboard target inside the row card, not a button — neutralize. */
+.ws-result-body[role="button"] {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  text-align: left;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  box-shadow: none;
+}
 /* Scope select shares the search-input field treatment (Pico defaults would
    add bottom margin and theme colors that break the flex row). */
 .ws-root .ws-search-row .ws-scope {
