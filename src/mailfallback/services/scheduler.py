@@ -57,6 +57,20 @@ def _run_mount_cleanup() -> None:
         db.close()
 
 
+def _run_staging_cleanup() -> None:
+    from mailfallback.services import staging_service
+
+    db = SessionLocal()
+    try:
+        n = staging_service.cleanup_expired(db)
+        if n:
+            logger.info("Staging cleanup: purged %d expired area(s)", n)
+    except Exception:
+        logger.exception("Staging cleanup failed")
+    finally:
+        db.close()
+
+
 def sync_scheduler_jobs(db: Session) -> None:
     existing_job_ids = {j.id for j in scheduler.get_jobs()}
 
@@ -188,6 +202,13 @@ def start_scheduler(db: Session) -> None:
             _run_mount_cleanup,
             CronTrigger(minute=0),  # every hour at :00
             id="mount-cleanup",
+            replace_existing=True,
+        )
+    if not any(j.id == "staging-cleanup" for j in scheduler.get_jobs()):
+        scheduler.add_job(
+            _run_staging_cleanup,
+            CronTrigger(minute="*/15"),
+            id="staging-cleanup",
             replace_existing=True,
         )
     if not scheduler.running:
