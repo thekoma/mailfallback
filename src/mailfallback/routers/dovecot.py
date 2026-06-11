@@ -21,6 +21,7 @@ from mailfallback.models import (
     group_members,
 )
 from mailfallback.services.recovery_service import namespace_prefix as recovery_namespace_prefix
+from mailfallback.services.staging_service import staging_dir
 
 router = APIRouter(prefix="/api/internal/dovecot", tags=["dovecot-internal"])
 
@@ -118,6 +119,8 @@ def userdb_lookup(username: str, db: Session = Depends(get_db)):
     # lrwstie on "Staging" / "Staging/*" while everything else stays lrs.
     # Not gated on accounts: the Lua userdb unconditionally adds the mfb_root
     # inbox namespace, so a staging-only response cannot break login.
+    # mail_path comes from staging_service.staging_dir — the single source of
+    # truth shared with the copy-in side, byte-identical to {home}/staging.
     staging = (
         db.query(StagingArea)
         .filter(StagingArea.user_id == user.id)
@@ -130,7 +133,7 @@ def userdb_lookup(username: str, db: Session = Depends(get_db)):
                 "name": f"stg_{user.id}",
                 "prefix": "Staging/",
                 "mail_driver": "maildir",
-                "mail_path": f"{home}/staging",
+                "mail_path": staging_dir(user),
                 "inbox": False,
             }
         )
