@@ -143,6 +143,13 @@ def test_restore_page_renders_staging_ui(client, db_session, default_store):
     # Bar actions.
     assert "emptyStaging()" in resp.text
     assert "pushStaging()" in resp.text
+    # Staging feedback slot lives in the bar — statusText only renders inside
+    # the single-mail preset, the bar works in every preset.
+    assert 'x-text="stagingStatus"' in resp.text
+    # No pre-Alpine flash: bar + panel are cloaked until Alpine boots.
+    assert resp.text.count("x-cloak") >= 2
+    # The push panel must not float without its bar.
+    assert 'x-show="pushPanelOpen && staging.exists"' in resp.text
 
 
 def test_restore_staging_bar_no_webmail_link_by_default(client, db_session, default_store):

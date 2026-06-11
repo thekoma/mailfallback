@@ -293,12 +293,16 @@
 
   {# Docked staging bar — fixed to the bottom edge, visible in every preset
      while the user's staging area exists. #}
-  <div class="ws-staging-bar" x-show="staging.exists" x-transition>
+  <div class="ws-staging-bar" x-show="staging.exists" x-transition x-cloak>
     <i data-lucide="inbox" class="icon-md"></i>
     <span class="ws-staging-count"
           x-text="'Staging — ' + staging.count + ' message' + (staging.count === 1 ? '' : 's')"></span>
     <span class="ws-staging-meta text-muted text-xsmall"
           x-text="fmtSize(staging.bytes_used) + ' · expires ' + fmtExpiry(staging.expires_at) + ' · quota ' + (staging.max_bytes ? fmtSize(staging.max_bytes) : '∞')"></span>
+    {# Staging feedback lives here, not in statusText — that one only renders
+       inside the single-mail preset, while the bar works in every preset. #}
+    <span class="ws-staging-status text-xsmall"
+          x-text="stagingStatus" x-show="stagingStatus" :title="stagingStatus"></span>
     <span class="ws-staging-grow"></span>
     {% if webmail_enabled and webmail_url %}
     <a class="ws-btn-ghost" href="{{ webmail_url }}?_task=mail&amp;_mbox=Staging"
@@ -308,8 +312,9 @@
     <button class="ws-btn-primary" @click="pushPanelOpen = !pushPanelOpen">Push upstream →</button>
   </div>
 
-  {# Push options popover — anchored above the staging bar's right edge. #}
-  <div class="ws-push-panel" x-show="pushPanelOpen" x-transition>
+  {# Push options popover — anchored above the staging bar's right edge.
+     Tied to staging.exists too: it must not float without its bar. #}
+  <div class="ws-push-panel" x-show="pushPanelOpen && staging.exists" x-transition x-cloak>
     <div class="ws-push-group">
       <span class="ws-field-label">Destination</span>
       <label class="ws-inline">
