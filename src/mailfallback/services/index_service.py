@@ -5,8 +5,10 @@ Public functions:
 
 Future tasks add: record_snapshot, prune_snapshot, backfill_snapshots.
 
-The service owns reads from the live Maildir filesystem (header-only via
-email.parser.BytesHeaderParser — body is never touched).
+The service owns reads from the live Maildir filesystem. Header upserts use
+email.parser.BytesHeaderParser (headers only); on first insert of a message
+the file gets one full MIME walk (_parse_attachments) for attachment metadata.
+Maildir files are immutable, so attachments are never re-parsed on later walks.
 
 Known limitations:
 - Messages without a Message-Id header are silently skipped (the index PK
@@ -19,13 +21,14 @@ import logging
 import os
 from datetime import UTC, datetime
 from email import policy
-from email.parser import BytesHeaderParser
+from email.parser import BytesHeaderParser, BytesParser
 from email.utils import getaddresses, parsedate_to_datetime
 
 from sqlalchemy.orm import Session
 
 from mailfallback.models import (
     Account,
+    MailIndexAttachment,
     MailIndexMessage,
     MailIndexRebuildStatus,
 )
@@ -78,6 +81,51 @@ def _parse_headers(path: str) -> dict | None:
         "to_addrs": to_addrs or None,
         "size_bytes": os.path.getsize(path),
     }
+
+
+def _parse_attachments(path: str) -> list[dict] | None:
+    """Full MIME walk of one Maildir file. Returns attachment metadata rows.
+
+    An attachment is a non-multipart leaf with a filename (Content-Disposition
+    or Content-Type name param — policy.default decodes RFC 2047/2231).
+    `part_index` numbers ALL non-multipart leaves in walk order, so a later
+    re-walk can address the same part without ambiguity.
+    Returns None on unreadable/unparsable files.
+    """
+    parser = BytesParser(policy=policy.default)
+    try:
+        with open(path, "rb") as f:
+            msg = parser.parse(f)
+    except (OSError, ValueError):
+        return None
+    out: list[dict] = []
+    part_index = 0
+    try:
+        for part in msg.walk():
+            if part.get_content_maintype() == "multipart":
+                continue
+            part_index += 1
+            filename = part.get_filename()
+            if not filename:
+                continue
+            try:
+                payload = part.get_payload(decode=True) or b""
+            except Exception:  # malformed CTE — keep the row, size unknown
+                payload = b""
+            ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            out.append(
+                {
+                    "part_index": part_index,
+                    "filename": filename,
+                    "ext": ext,
+                    "size_bytes": len(payload),
+                    "content_type": part.get_content_type(),
+                }
+            )
+    except Exception:
+        logger.warning("Attachment parse failed for %s", path, exc_info=True)
+        return None
+    return out
 
 
 def _walk_maildir(maildir_root: str):
@@ -135,14 +183,25 @@ def upsert_message_set(db: Session, account_id: str) -> int:
                 existing.folder_path = folder
                 existing.maildir_filename = filename
             else:
+                atts = _parse_attachments(full_path)
                 db.add(
                     MailIndexMessage(
                         account_id=account_id,
                         folder_path=folder,
                         maildir_filename=filename,
+                        has_attachments=bool(atts),
+                        attachments_indexed_at=now,
                         **parsed,
                     )
                 )
+                for a in atts or []:
+                    db.add(
+                        MailIndexAttachment(
+                            account_id=account_id,
+                            message_id_hash=parsed["message_id_hash"],
+                            **a,
+                        )
+                    )
             touched += 1
             # Bound transaction size for big mailboxes (150k+ messages)
             if touched % BATCH_SIZE == 0:
