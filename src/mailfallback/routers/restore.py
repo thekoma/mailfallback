@@ -68,8 +68,13 @@ def _sanitize_imap_string(value: str) -> str:
 STAGING_ADD_MAX_ITEMS = 200
 
 
+class StagingItem(BaseModel):
+    account_id: str
+    message_id_hash: str
+
+
 class StagingItemsRequest(BaseModel):
-    items: list[dict]  # [{"account_id": ..., "message_id_hash": hex}]
+    items: list[StagingItem]
     include_all: bool = False
 
 
@@ -96,11 +101,12 @@ def api_staging_add(
     enforces the role, this layer makes the audit row self-describing.
     """
     try:
+        # Shape garbage 422s in the typed schema; only bad hex is left to us.
         items = [
-            (i["account_id"], bytes.fromhex(i["message_id_hash"]))
+            (i.account_id, bytes.fromhex(i.message_id_hash))
             for i in req.items[:STAGING_ADD_MAX_ITEMS]
         ]
-    except (KeyError, ValueError, TypeError):
+    except ValueError:
         raise HTTPException(status_code=400, detail="Invalid items") from None
     try:
         result = staging_service.add_messages(db, user, items, include_all=req.include_all)
@@ -110,7 +116,10 @@ def api_staging_add(
         raise HTTPException(status_code=403, detail=str(e)) from None
     details = dict(result)
     if req.include_all and user.role == UserRole.admin:
+        # Forensics: WHICH mailboxes the escalated add touched (bounded by
+        # the item cap above), not just how many messages.
         details["include_all"] = True
+        details["accounts"] = sorted({account_id for account_id, _ in items})
     log_action(
         db,
         user=user,
@@ -195,6 +204,8 @@ def create_restore(
     }
 
 
+# New literal GET routes must register above this catch-all — /{job_id}
+# matches any single segment, e.g. "/staging" (see the staging section).
 @router.get("/{job_id}")
 def get_restore(
     job_id: str,

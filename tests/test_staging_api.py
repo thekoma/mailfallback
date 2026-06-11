@@ -127,8 +127,9 @@ def test_post_items_stages_live_message_and_audits(client, db_session, real_stor
     assert entry.username == "mario"
     assert entry.resource_type == "staging"
     assert entry.details["staged"] == 1
-    # No escalation happened: the audit row must not claim include_all.
+    # No escalation happened: no include_all claim, no accounts forensics.
     assert "include_all" not in entry.details
+    assert "accounts" not in entry.details
 
     status = client.get("/api/restore/staging").json()
     assert status["exists"] is True
@@ -192,21 +193,33 @@ def test_post_items_admin_include_all_stages_foreign_and_audits(
     entry = db_session.query(AuditLog).filter_by(action="staging.add").one()
     assert entry.username == "root"
     assert entry.details["staged"] == 1
-    # Escalated add: the audit row is self-describing.
+    # Escalated add: the audit row is self-describing — flag plus WHICH
+    # foreign mailboxes were touched.
     assert entry.details["include_all"] is True
+    assert entry.details["accounts"] == [acc.id]
 
 
-def test_post_items_malformed_returns_400(client, db_session, real_store):
+def test_post_items_malformed_returns_4xx(client, db_session, real_store):
+    """Shape garbage is rejected by the typed schema (422) — including the
+    unhashable account_id cases that used to 500 in the service's set lookup.
+    Only bad hex in an otherwise well-formed item reaches the endpoint's 400."""
     _mk_user(db_session, real_store)
     _login(client, "mario")
 
     missing_key = client.post("/api/restore/staging/items", json={"items": [{"account_id": "a"}]})
+    dict_valued = client.post(
+        "/api/restore/staging/items",
+        json={"items": [{"account_id": {"x": 1}, "message_id_hash": "00ff"}]},
+    )
+    bare_string_item = client.post("/api/restore/staging/items", json={"items": ["a"]})
     bad_hex = client.post(
         "/api/restore/staging/items",
         json={"items": [{"account_id": "a", "message_id_hash": "zz-not-hex"}]},
     )
 
-    assert missing_key.status_code == 400
+    assert missing_key.status_code == 422
+    assert dict_valued.status_code == 422
+    assert bare_string_item.status_code == 422
     assert bad_hex.status_code == 400
     assert db_session.query(AuditLog).filter_by(action="staging.add").count() == 0
 
