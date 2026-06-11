@@ -286,8 +286,10 @@ def test_push_origin_creates_job_and_audits(client, db_session, real_store, tmp_
         )
 
     assert resp.status_code == 200, resp.text
-    job_ids = resp.json()["job_ids"]
+    body = resp.json()
+    job_ids = body["job_ids"]
     assert len(job_ids) == 1
+    assert body["skipped_targets"] == []
     mock_submit.assert_called_once_with(job_ids[0])
     job = db_session.query(RestoreJob).one()
     assert job.id == job_ids[0]
@@ -303,6 +305,7 @@ def test_push_origin_creates_job_and_audits(client, db_session, real_store, tmp_
         "jobs": job_ids,
         "destination": "origin",
         "folder_mode": "original",
+        "skipped_targets": [],
     }
 
 

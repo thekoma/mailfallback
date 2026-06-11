@@ -4,8 +4,10 @@ Staging pushes reuse restore_jobs with restore_mode='staging_push'
 (selected_uids doubles as the {folder: [staged_filename]} manifest).
 PostgreSQL stores restore_mode as the native enum type "restoremode"
 (created by 007), so the new value needs ALTER TYPE — mirrors 008,
-which extended "jobstatus" the same way. SQLite (tests) renders the
-column as plain VARCHAR: nothing to do there.
+which extended "jobstatus" the same way. Non-native backends (SQLite
+in tests) render the column as VARCHAR sized to the longest value, so
+it is widened in place (9 -> 12 for 'staging_push') via batch alter to
+keep migrated schemas identical to the models.
 
 Revision ID: 020
 Revises: 019

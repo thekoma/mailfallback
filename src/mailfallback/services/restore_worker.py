@@ -204,7 +204,17 @@ def execute_restore_job(db: Session, job_id: str) -> None:
         if temp_username:
             with contextlib.suppress(Exception):
                 delete_temp_imap_user(db, temp_username)
-        db.refresh(job)
+        try:
+            db.refresh(job)
+        except Exception:
+            # Fail-safe twin of _fail_job's rollback: a broken session here
+            # must not leave the job stuck in `running`. Discard the dead
+            # transaction; the attribute access below re-reads from the DB.
+            logger.warning(
+                "Restore %s: job refresh failed in completion handler", job_id, exc_info=True
+            )
+            with contextlib.suppress(Exception):
+                db.rollback()
         if job.status == JobStatus.running:
             if job.restored_messages == 0 and job.failed_messages > 0:
                 job.status = JobStatus.failed
@@ -538,13 +548,18 @@ def _execute_staging_push(db, job, target, tgt_password, tgt_auth_method):
     selected_uids is reused as the push manifest {destination_folder:
     [staged_filename, ...]} — keys are already destination folders (mapped
     by staging_service.push per folder_mode), so neither _map_folder nor
-    namespace stripping applies here. Files are read from the REQUESTER's
-    staging Maildir; there is no source IMAP connection at all.
+    namespace stripping applies here. Known limitation (deferred): the
+    separator conversion below does NOT escape folder names that themselves
+    contain the target separator (unlike _map_folder's escape_char) — such
+    a folder lands as an extra hierarchy level. Files are read from the
+    REQUESTER's staging Maildir; there is no source IMAP connection at all.
 
     Delivered-or-duplicate files count as pushed: rows + files are removed
     afterwards. Failed files stay staged for a retry; files deleted in
-    webmail meanwhile are skipped (deletions win). The final job status is
-    settled by execute_restore_job's shared completion logic.
+    webmail meanwhile are skipped (deletions win). Cancellation is honored
+    between files: what already landed upstream is cleaned up, the rest
+    stays staged. The final job status is settled by execute_restore_job's
+    shared completion logic.
     """
     # Deferred: staging_service pulls in search/index machinery — keep the
     # worker import-light and cycle-free at module load.
@@ -584,6 +599,12 @@ def _execute_staging_push(db, job, target, tgt_password, tgt_auth_method):
                 _get_existing_message_ids(tgt_conn, tgt_folder) if job.skip_duplicates else set()
             )
             for fn in filenames:
+                if job.id in _cancel_flags:
+                    # Already-APPENDed files are delivered — clean those up
+                    # (delivered-or-duplicate rule), leave the rest staged.
+                    _cleanup_pushed(db, requester, sdir, pushed)
+                    _cancel_job(db, job)
+                    return
                 path = _locate_staged_file(sdir, fn)
                 if path is None:
                     # Deleted in webmail between push click and job run:
@@ -623,7 +644,14 @@ def _cleanup_pushed(db, requester, sdir, pushed):
     """Drop rows + files for pushed (delivered-or-duplicate) messages; the
     area and its dir die once neither rows nor message files remain.
     Row matching is flag-rename tolerant (same prefix rule as reconcile);
-    orphan files without rows are left for empty()/cleanup_expired()."""
+    orphan files without rows are left for empty()/cleanup_expired().
+
+    Residual races with a concurrent status-poll reconcile are benign by
+    construction: a double rmtree is ignore_errors, a double area DELETE
+    surfaces as a SAWarning on flush at worst, and a bytes_used lost-update
+    self-heals at the next reconcile (it recomputes from disk). A flush/
+    commit error here still fails the job safely — _fail_job rolls the
+    session back before marking it failed."""
     from mailfallback.models import StagingArea, StagingMessage
     from mailfallback.services import staging_service
     from mailfallback.services.index_service import maildir_filename_prefix
@@ -753,6 +781,13 @@ def _refresh_target_token(creds_json, db, account):
 
 
 def _fail_job(db, job, error_msg):
+    # Fail-safe: a failure may arrive with the session already poisoned (e.g.
+    # a flush that died mid-cleanup leaves it PendingRollback). Roll back
+    # FIRST, or the commit below raises, the executor swallows it, and the
+    # job sticks in `running` forever — blocking every future job to the
+    # same target via the create_restore_job busy check.
+    with contextlib.suppress(Exception):
+        db.rollback()
     job.status = JobStatus.failed
     job.error = error_msg
     job.completed_at = datetime.now(UTC)

@@ -162,21 +162,30 @@ def api_staging_push(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Push the surviving staged messages upstream — one job per target."""
+    """Push the surviving staged messages upstream — one job per target.
+
+    Targets that cannot take a job right now (busy, no credentials, …) come
+    back in skipped_targets; their messages stay staged for a later push.
+    """
     if req.folder_mode not in ("original", "restored"):
         raise HTTPException(status_code=400, detail="Invalid folder_mode")
     if req.destination != "origin" and not account_service.get_account(db, req.destination, user):
         raise HTTPException(status_code=404, detail="Destination account not found")
-    job_ids = staging_service.push(db, user, req.destination, req.folder_mode)
+    result = staging_service.push(db, user, req.destination, req.folder_mode)
     log_action(
         db,
         user=user,
         action="staging.push",
         resource_type="staging",
-        details={"jobs": job_ids, "destination": req.destination, "folder_mode": req.folder_mode},
+        details={
+            "jobs": result["job_ids"],
+            "destination": req.destination,
+            "folder_mode": req.folder_mode,
+            "skipped_targets": result["skipped_targets"],
+        },
         ip_address=request.client.host if request.client else None,
     )
-    return {"job_ids": job_ids}
+    return result
 
 
 # ---------------------------------------------------------------------------
