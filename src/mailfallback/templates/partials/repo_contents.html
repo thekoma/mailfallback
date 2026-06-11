@@ -11,14 +11,14 @@
         <i data-lucide="tags" class="icon-md"></i> Tag existing snapshots
     </button>
 </form>
-<table class="text-small">
+<table class="text-small repo-contents">
     <thead>
         <tr><th>Prefix</th><th>Kind</th><th>Snapshots</th><th class="text-right">Actions</th></tr>
     </thead>
     <tbody>
         {% for e in entries %}
         <tr>
-            <td><code>{{ e.prefix }}</code></td>
+            <td><code title="{{ e.prefix }}">{{ e.prefix }}</code></td>
             <td>
                 {% if e.kind == "account" %}
                 <span class="badge">{{ e.account.name }}</span>
@@ -37,7 +37,23 @@
                 </span>
             </td>
             <td class="text-right">
-                {% if e.kind == "orphan" %}
+                {% if e.kind == "account" %}
+                <a class="icon-btn" href="/accounts/{{ e.account.id }}#admin-offsite"
+                   title="Open the snapshot picker for this mailbox">
+                    <i data-lucide="history" class="icon-md"></i> Snapshots
+                </a>
+                {% elif e.kind == "config" %}
+                <form hx-post="/admin/backup/{{ dest.id }}/config-restore/preview"
+                      hx-target="#config-restore-result-{{ dest.id }}" hx-swap="innerHTML"
+                      class="inline-form">
+                    <input type="password" name="passphrase" placeholder="Snapshot passphrase"
+                           autocomplete="new-password" required>
+                    <button type="submit" class="icon-btn"
+                            title="Fetch the latest configuration snapshot and preview the restore">
+                        <i data-lucide="archive-restore" class="icon-md"></i> Restore…
+                    </button>
+                </form>
+                {% elif e.kind == "orphan" %}
                 {% if accounts %}
                 <form method="post" action="/admin/backup/{{ dest.id }}/attach" class="inline-form">
                     <input type="hidden" name="prefix" value="{{ e.prefix }}">
@@ -77,6 +93,9 @@
                 {% endif %}
             </td>
         </tr>
+        {% if e.kind == "config" %}
+        <tr><td colspan="4"><div id="config-restore-result-{{ dest.id }}"></div></td></tr>
+        {% endif %}
         {% endfor %}
     </tbody>
 </table>
