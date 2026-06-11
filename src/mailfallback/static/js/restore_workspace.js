@@ -151,7 +151,10 @@ function restoreWorkspace() {
           const resp = await fetch('/api/restore/workspace/snapshot-dates', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({account_id: this.scopeAccountId}),
+            body: JSON.stringify({
+              account_id: this.scopeAccountId,
+              include_all: this.includeAll,
+            }),
           });
           const body = resp.ok ? await resp.json() : {};
           dates = body.dates || [];

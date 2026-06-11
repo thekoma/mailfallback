@@ -22,7 +22,12 @@ from mailfallback.models import (  # noqa: F401 — register models
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers defaults to True, which silently disables every
+    # logger created before this point. In-process alembic runs (tests,
+    # migration resume in app lifespan) would otherwise kill application
+    # loggers — e.g. caplog assertions in any test running after
+    # test_alembic_sync.py in the same worker.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 db_url = os.environ.get("MAILFALLBACK_DATABASE_URL")
 if db_url:
