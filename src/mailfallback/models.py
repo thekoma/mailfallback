@@ -11,6 +11,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     LargeBinary,
     String,
@@ -531,6 +532,37 @@ class MailIndexMessage(Base):
     )
     deleted_at = Column(DateTime(timezone=True))
     tsv = Column(TSVECTOR().with_variant(Text(), "sqlite"))
+    has_attachments = Column(Boolean, nullable=False, server_default=text("false"))
+    attachments_indexed_at = Column(DateTime(timezone=True))
+
+
+class MailIndexAttachment(Base):
+    """One row per attachment MIME part (a leaf part with a filename).
+
+    `part_index` counts non-multipart leaves in msg.walk() order — the
+    download endpoint (Plan 3) re-walks with the same algorithm, so the
+    numbering is part of the contract with `index_service._parse_attachments`.
+    `content_text` stays NULL until the Tika extraction phase (Plan 3).
+    """
+
+    __tablename__ = "attachments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["account_id", "message_id_hash"],
+            ["mail_index.messages.account_id", "mail_index.messages.message_id_hash"],
+            ondelete="CASCADE",
+        ),
+        {"schema": "mail_index"},
+    )
+
+    account_id = Column(String, primary_key=True)
+    message_id_hash = Column(LargeBinary(20), primary_key=True)
+    part_index = Column(Integer, primary_key=True)
+    filename = Column(Text, nullable=False)
+    ext = Column(Text, nullable=False, server_default="")
+    size_bytes = Column(Integer)
+    content_type = Column(Text)
+    content_text = Column(Text)
 
 
 class SnapshotMessage(Base):
