@@ -167,8 +167,8 @@ def test_webmail_config_generated_when_enabled(tmp_path):
     assert "$config['use_subscriptions'] = false" in content
     assert "$config['disabled_actions'] = ['mail.compose']" in content
     # Curation contract: webmail Delete must work inside Staging/ (no Trash
-    # is reachable from read-only account namespaces).
-    assert "$config['delete_always'] = true" in content
+    # is reachable from read-only account namespaces; blank = delete directly).
+    assert "$config['trash_mbox'] = ''" in content
 
 
 def test_webmail_config_with_oauth(tmp_path):
