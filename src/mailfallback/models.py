@@ -543,6 +543,8 @@ class MailIndexAttachment(Base):
     download endpoint (Plan 3) re-walks with the same algorithm, so the
     numbering is part of the contract with `index_service._parse_attachments`.
     `content_text` stays NULL until the Tika extraction phase (Plan 3).
+    `ext` is normalized: lowercase, no leading dot, "" when the filename has
+    no extension.
     """
 
     __tablename__ = "attachments"
@@ -563,6 +565,18 @@ class MailIndexAttachment(Base):
     size_bytes = Column(Integer)
     content_type = Column(Text)
     content_text = Column(Text)
+
+    message = relationship(
+        "MailIndexMessage",
+        backref=backref("attachments", passive_deletes=True, cascade="all, delete-orphan"),
+    )
+
+
+# Must match idx_attachments_fts in migration 018 verbatim — PG matches
+# expression indexes structurally, so any deviation means a seq scan.
+ATTACHMENTS_FTS_EXPR = (
+    "to_tsvector('simple', coalesce(filename, '') || ' ' || coalesce(content_text, ''))"
+)
 
 
 class SnapshotMessage(Base):

@@ -35,7 +35,9 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("account_id", "message_id_hash", "part_index"),
     ]
     if not is_sqlite:
-        # SQLite cannot model cross-schema FKs to ATTACHed DBs; skip there (same as 014).
+        # This FK is same-schema (attachments -> messages, both in mail_index), so
+        # SQLite would actually enforce it; we skip it there only to stay symmetric
+        # with 014's convention for mail_index FKs.
         attachments_constraints.append(
             sa.ForeignKeyConstraint(
                 ["account_id", "message_id_hash"],
@@ -66,6 +68,9 @@ def upgrade() -> None:
 
     if not is_sqlite:
         # Combined name+content search index (content_text used from Plan 3 on).
+        # The expression must stay identical to models.ATTACHMENTS_FTS_EXPR —
+        # PG matches expression indexes structurally; queries built from that
+        # constant only use this index if the two never drift apart.
         op.execute(
             "CREATE INDEX idx_attachments_fts ON mail_index.attachments "
             "USING gin (to_tsvector('simple', coalesce(filename, '') || ' ' "
