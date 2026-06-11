@@ -271,6 +271,40 @@ def list_files(destination, account_id: str, snapshot_id: str):
             yield path
 
 
+def dump_file(
+    destination: Repository,
+    account_id: str,
+    snapshot_id: str,
+    path: str,
+    max_bytes: int = 26_214_400,
+) -> bytes | None:
+    """Extract one file's raw bytes from a snapshot via `restic dump`.
+
+    Binary subprocess call (NOT _run_restic, which is text-mode and would
+    corrupt raw message bytes). Output is truncated to max_bytes — callers
+    preview/parse, they don't archive. Returns None on any restic failure.
+    """
+    env = build_env(destination, account_id)
+    cmd = ["restic"]
+    if _is_insecure(destination):
+        cmd.append("--insecure-tls")
+    cmd.extend(["dump", snapshot_id, path])
+    full_env = {**os.environ, **env}
+    logger.debug("Running: %s", " ".join(cmd))
+    result = subprocess.run(cmd, capture_output=True, env=full_env)
+    if result.returncode != 0 or not result.stdout:
+        stderr = (result.stderr or b"").decode("utf-8", "replace").strip()
+        logger.warning(
+            "Restic dump failed for %s (snapshot %s, path %s): %s",
+            account_id,
+            snapshot_id,
+            path,
+            stderr,
+        )
+        return None
+    return result.stdout[:max_bytes]
+
+
 def add_tags(
     destination: Repository,
     account_id: str,
