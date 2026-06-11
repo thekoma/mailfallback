@@ -1,4 +1,6 @@
-<div x-data="restoreWorkspace()" x-init="init()" class="ws-root">
+<div x-data="restoreWorkspace()" x-init="init()" class="ws-root" data-webmail-url="{{ webmail_url }}">
+  {# Data island (data, not code): account id → name/email for the Alpine component #}
+  <script type="application/json" id="ws-accounts-data">{{ accounts_json | safe }}</script>
 
   <div class="ws-header">
     <div>
@@ -22,7 +24,9 @@
 
   <div class="ws-grid">
     <aside class="ws-sidebar">
-      <label class="ws-field">
+      {# Single-mail searches across accounts via the scope select in the search
+         row; the source mailbox only matters for the folder/full presets. #}
+      <label class="ws-field" x-show="preset !== 'single-mail'">
         <span class="ws-field-label">Mailbox</span>
         <select x-model="accountId" @change="onAccountChange()">
           {% for acct in all_accounts %}
@@ -60,7 +64,8 @@
         </label>
       </details>
 
-      <label class="ws-field">
+      {# Single-mail restores to origin — no destination pick needed there. #}
+      <label class="ws-field" x-show="preset !== 'single-mail'">
         <span class="ws-field-label">Destination</span>
         <select x-model="destinationId">
           {% for acct in all_accounts %}
@@ -75,6 +80,12 @@
       <template x-if="preset === 'single-mail'">
         <div class="ws-search">
           <form @submit.prevent="runSearch()" class="ws-search-row">
+            <select x-model="scopeAccountId" class="ws-scope">
+              <option value="">All mailboxes ({{ all_accounts | length }})</option>
+              {% for acct in all_accounts %}
+              <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address or "—" }})</option>
+              {% endfor %}
+            </select>
             <input type="text" x-model="query" placeholder="Search subject, sender…" autocomplete="off">
             <button type="submit" class="ws-btn-primary" :disabled="searching">
               <template x-if="!searching">
@@ -90,38 +101,6 @@
             <input type="checkbox" x-model="deepSearch">
             Deep search <span class="text-muted text-xsmall">— also search message bodies (active mail only, slower)</span>
           </label>
-
-          <details class="ws-filters" x-bind:open="filtersOpen">
-            <summary @click.prevent="filtersOpen = !filtersOpen" class="ws-field-label">Filters</summary>
-            <div class="ws-filters-grid">
-              {# Deep search uses IMAP TEXT (all headers + body), which supersedes
-                 the field scoping below — grey it out instead of lying. #}
-              <div class="ws-filter-group" role="group" aria-label="Search in"
-                   :class="{'is-overridden': deepSearch}">
-                <span class="ws-field-label">Search in</span>
-                <div class="ws-filter-row">
-                  <label class="ws-inline"><input type="checkbox" x-model="filters.subject" :disabled="deepSearch"> Subject</label>
-                  <label class="ws-inline"><input type="checkbox" x-model="filters.from" :disabled="deepSearch"> From</label>
-                  <label class="ws-inline"><input type="checkbox" x-model="filters.to" :disabled="deepSearch"> To</label>
-                </div>
-              </div>
-              <div class="ws-filter-group">
-                <span class="ws-field-label">Type</span>
-                <div class="ws-filter-row">
-                  <select x-model="filters.type">
-                    <option value="all">All</option>
-                    <option value="unseen">Unread</option>
-                    <option value="flagged">Flagged</option>
-                    <option value="unanswered">Unanswered</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-            <p class="ws-filter-note" x-show="deepSearch" x-transition>
-              <i data-lucide="info" class="icon-sm icon-inline"></i>
-              Deep search already covers subject, sender, recipients and the message body — "Search in" doesn't apply. The Type filter still does.
-            </p>
-          </details>
 
           <p class="ws-status text-muted text-xsmall" x-text="statusText" x-show="statusText"></p>
           <p class="ws-status text-warning text-xsmall" x-show="partial">
@@ -148,34 +127,73 @@
             </div>
           </template>
 
-          {# Results #}
-          <template x-if="results.length > 0">
-            <div class="ws-results">
-              <template x-for="r in results" :key="r.message_id">
-                <label class="ws-result"
-                       :class="{'is-selected': selected.includes(r.message_id)}">
-                  <input type="checkbox"
-                         :value="r.message_id"
-                         x-model="selected">
-                  <div class="ws-result-body">
-                    <div class="ws-result-subject" x-text="r.subject || '(no subject)'"></div>
-                    <div class="ws-result-meta text-xsmall text-muted">
-                      <span x-text="r.folder || ''"></span>
-                      <span> · from </span>
-                      <span x-text="r.from || '?'"></span>
-                    </div>
-                    <div class="ws-badges">
-                      <template x-for="s in r.sources" :key="s">
-                        <span class="ws-badge"
-                              :class="s === 'live' ? 'ws-badge-live' : 'ws-badge-snap'"
-                              x-text="s"></span>
-                      </template>
+          {# Results + preview pane — two-column grid. The row is a div (not a
+             label): clicking the body opens the preview, only the checkbox
+             itself toggles selection. #}
+          <div class="ws-results-grid">
+            <template x-if="results.length > 0">
+              <div class="ws-results">
+                <template x-for="r in results" :key="selKey(r)">
+                  <div class="ws-result"
+                       :class="{'is-selected': selected.includes(selKey(r))}">
+                    <input type="checkbox"
+                           :value="selKey(r)"
+                           x-model="selected">
+                    <div class="ws-result-body" @click="openPreview(r)">
+                      <div class="ws-result-subject">
+                        <span x-text="r.subject || '(no subject)'"></span>
+                        <span class="ws-badge ws-badge-acct" x-text="accountName(r.account_id)"></span>
+                        <i data-lucide="paperclip" class="icon-sm ws-att-mark" x-show="r.has_attachments"></i>
+                      </div>
+                      <div class="ws-result-meta text-xsmall text-muted">
+                        <span x-text="resultMeta(r)"></span>
+                        <span class="ws-badge ws-badge-live" x-show="r.alive_in_live">live</span>
+                        <span class="ws-badge ws-badge-snap" x-show="r.snapshots && r.snapshots.length" x-text="'snap ×' + r.snapshots.length"></span>
+                      </div>
+                      <div class="ws-atts" x-show="r.attachments && r.attachments.length">
+                        <template x-for="(a, ai) in r.attachments" :key="ai">
+                          <span class="ws-att-chip">
+                            <i data-lucide="paperclip" class="icon-sm icon-inline"></i>
+                            <span x-text="a.filename"></span>
+                            <span class="text-muted" x-text="' · ' + fmtSize(a.size_bytes)"></span>
+                          </span>
+                        </template>
+                      </div>
                     </div>
                   </div>
-                </label>
+                </template>
+              </div>
+            </template>
+
+            <div class="ws-preview" x-show="previewOpen" x-transition>
+              <h4 class="ws-field-label">Preview</h4>
+              <template x-if="previewLoading"><p class="text-muted text-small">Loading…</p></template>
+              <template x-if="!previewLoading && preview">
+                <div>
+                  <div class="ws-preview-subject" x-text="preview.subject || '(no subject)'"></div>
+                  <p class="ws-preview-kv">
+                    <strong>From</strong> <span x-text="preview.from_addr || '?'"></span>
+                    <strong>To</strong> <span x-text="(preview.to_addrs || []).join(', ') || '—'"></span><br>
+                    <strong>Date</strong> <span x-text="preview.date_sent ? preview.date_sent.slice(0,16).replace('T',' ') : '—'"></span>
+                    <strong>Folder</strong> <span x-text="preview.folder_path"></span>
+                    <strong>Source</strong> <span x-text="preview.source"></span>
+                  </p>
+                  <div class="ws-preview-body" x-text="preview.body_snippet || '(no text)'"></div>
+                  <div class="ws-preview-atts" x-show="preview.attachments && preview.attachments.length">
+                    <span class="ws-field-label">Attachments</span>
+                    <template x-for="(a, ai) in preview.attachments" :key="ai">
+                      <span class="ws-att-chip"><span x-text="a.filename"></span><span class="text-muted" x-text="' · ' + fmtSize(a.size_bytes)"></span></span>
+                    </template>
+                  </div>
+                  <a class="ws-btn-ghost ws-preview-webmail" :href="webmailUrl" target="_blank"
+                     x-show="preview.alive_in_live && webmailUrl">Open full in webmail</a>
+                </div>
+              </template>
+              <template x-if="!previewLoading && !preview">
+                <p class="text-muted text-small">Preview unavailable for this message.</p>
               </template>
             </div>
-          </template>
+          </div>
 
           <div class="ws-action-bar" x-show="results.length > 0" x-transition>
             <label class="ws-inline">

@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -105,6 +106,11 @@ def restore_page(request: Request, db: Session = Depends(get_db)):
             "protected": protected,
             "unprotected": unprotected,
             "all_accounts": all_accounts,
+            # Data island for the Alpine workspace component. `<` is escaped so a
+            # hostile account name can't break out of the <script> data island.
+            "accounts_json": json.dumps(
+                [{"id": a.id, "name": a.name, "email": a.email_address or ""} for a in all_accounts]
+            ).replace("<", "\\u003c"),
             "health": health,
             "total_snapshots": total_snapshots,
             "most_recent_snapshot": most_recent,
