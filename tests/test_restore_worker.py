@@ -799,10 +799,13 @@ def test_locate_staged_file_blocks_traversal(tmp_path):
     sdir = tmp_path / "staging"
     (sdir / "cur").mkdir(parents=True)
     (sdir / "cur" / "100.aa.h:2,").write_bytes(b"legit")
-    # Plant a real file at the traversal destination: without the guard,
-    # sdir/cur/../../secret.txt exists and would be returned (and pushed).
+    # Plant a real file at the traversal destination. Candidates are joined
+    # under cur/, so escaping sdir takes TWO ".." levels: without the guard,
+    # sdir/cur/../../secret.txt EXISTS and would be returned (and pushed).
     (tmp_path / "secret.txt").write_bytes(b"top secret")
 
+    assert _locate_staged_file(str(sdir), "../../secret.txt") is None
+    # Shallower / nonexistent traversals as extras.
     assert _locate_staged_file(str(sdir), "../secret.txt") is None
     assert _locate_staged_file(str(sdir), "../../etc/passwd") is None
     # Sanity: legitimate lookups still resolve.
