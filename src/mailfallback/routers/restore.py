@@ -914,6 +914,15 @@ def api_resolve_uids(
                 key = f"{ns}{_sanitize_imap_string(folder)}"
                 typ, _ = conn.select(f'"{key}"', readonly=True)
                 if typ != "OK":
+                    # B5 drift class: a silent fold into `missing` would be
+                    # undiagnosable in production — log which SELECT failed.
+                    logger.warning(
+                        "UID resolution: SELECT %r failed for account %s; "
+                        "%d message-id(s) fold into missing",
+                        key,
+                        account.id,
+                        len(msgids),
+                    )
                     continue
                 for msgid in msgids:
                     quoted = _sanitize_imap_string(msgid)
