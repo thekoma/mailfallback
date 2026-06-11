@@ -1,8 +1,9 @@
+import imaplib
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mailfallback.models import Account, JobStatus, RestoreJob, RestoreMode, User
+from mailfallback.models import Account, AuthType, JobStatus, RestoreJob, RestoreMode, User
 from mailfallback.services.restore_worker import execute_restore_job
 
 
@@ -232,6 +233,77 @@ def test_execute_restore_to_origin_uses_uids_and_strips_live_namespace(
     # not in a folder literally named after the namespace.
     args, _kwargs = tgt_conn.append.call_args
     assert args[0] == '"INBOX"', f"expected bare INBOX destination, got {args[0]!r}"
+
+
+@patch("mailfallback.services.restore_worker._refresh_target_token")
+@patch("mailfallback.services.restore_worker.delete_temp_imap_user")
+@patch("mailfallback.services.restore_worker.create_temp_imap_user")
+@patch("mailfallback.services.restore_worker.connect_imap")
+@patch("mailfallback.services.restore_worker.decrypt_credentials")
+def test_execute_restore_oauth2_target_uses_xoauth2(
+    mock_decrypt,
+    mock_connect,
+    mock_create_temp,
+    mock_delete_temp,
+    mock_refresh,
+    db_session,
+    restore_job_fixtures,
+):
+    """Gmail/Microsoft reject an OAuth2 access token sent via plain LOGIN
+    ([AUTHENTICATIONFAILED] Invalid credentials): oauth2 targets must connect
+    with auth_method="xoauth2" — both the initial connection and any mid-job
+    reconnect. The Dovecot source connection stays on plain login."""
+    f = restore_job_fixtures
+    f["target"].auth_type = AuthType.oauth2
+    db_session.commit()
+
+    mock_decrypt.return_value = '{"provider": "google", "refresh_token": "rt"}'
+    mock_refresh.return_value = "ya29.fresh-token"
+    mock_create_temp.return_value = ("_restore_oauth1", "random-pass")
+
+    src_conn, tgt_conn = MagicMock(), MagicMock()
+    src_conn2, tgt_conn2 = MagicMock(), MagicMock()
+    mock_connect.side_effect = [src_conn, tgt_conn, src_conn2, tgt_conn2]
+
+    for conn in (src_conn, src_conn2):
+        conn.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "INBOX"'])
+        conn.select.return_value = ("OK", [b"2"])
+        conn.search.return_value = ("OK", [b"1 2"])
+
+    # First FETCH drops the connection mid-job to force the reconnect path.
+    src_conn.fetch.side_effect = imaplib.IMAP4.abort("connection dropped")
+    src_conn2.fetch.side_effect = [
+        ("OK", [(b"1 (RFC822 {100}", b"From: a@b.com\r\nSubject: T1\r\n\r\nB1"), b")"]),
+        ("OK", [(b"2 (RFC822 {100}", b"From: c@d.com\r\nSubject: T2\r\n\r\nB2"), b")"]),
+    ]
+    for conn in (tgt_conn, tgt_conn2):
+        conn.append.return_value = ("OK", [b"APPEND completed"])
+
+    execute_restore_job(db_session, f["job"].id)
+
+    db_session.refresh(f["job"])
+    assert f["job"].status == JobStatus.completed, f"job error: {f['job'].error}"
+    assert f["job"].restored_messages == 2
+    mock_refresh.assert_called_once()
+
+    assert mock_connect.call_count == 4, mock_connect.call_args_list
+    calls = mock_connect.call_args_list
+
+    def _password_of(call):
+        return call.args[4] if len(call.args) > 4 else call.kwargs.get("password")
+
+    # Calls 0 and 2: Dovecot source (initial + reconnect) — plain login.
+    for i in (0, 2):
+        assert calls[i].kwargs.get("auth_method", "login") == "login", (
+            f"source connection {i} must keep plain login: {calls[i]}"
+        )
+    # Calls 1 and 3: oauth2 target (initial + reconnect) — XOAUTH2 with the
+    # freshly refreshed access token.
+    for i in (1, 3):
+        assert calls[i].kwargs.get("auth_method") == "xoauth2", (
+            f"target connection {i} must use XOAUTH2: {calls[i]}"
+        )
+        assert _password_of(calls[i]) == "ya29.fresh-token", calls[i]
 
 
 @patch("mailfallback.services.restore_worker.delete_temp_imap_user")
