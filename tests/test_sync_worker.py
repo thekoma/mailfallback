@@ -58,9 +58,17 @@ def _isolated_sampler_sessions(monkeypatch):
     """execute_sync_job spawns a sampler thread that opens its OWN sessions
     via sync_worker.SessionLocal — point that at a throwaway in-memory DB so
     unit tests never reach for the real database_url (host 'db' does not
-    exist here). Sampler-specific tests re-patch with a shared factory."""
+    exist here). Sampler-specific tests re-patch with a shared factory.
+
+    The worker also runs an upstream STATUS pass for initial-sync accounts
+    (non-fatal by contract) — fail it by default so the unit suite stays
+    OFFLINE-deterministic; STATUS tests override via `with patch(...)`."""
     engine = _make_engine(shared=True)
     monkeypatch.setattr(sync_worker, "SessionLocal", sessionmaker(bind=engine))
+    monkeypatch.setattr(
+        "mailfallback.services.imap_check.connect_imap",
+        MagicMock(side_effect=OSError("offline unit tests")),
+    )
 
 
 def _make_store(session):
@@ -516,3 +524,376 @@ def test_worker_runs_sampler_with_own_sessions_and_keeps_progress(tmp_path, monk
     assert job.id not in sync_worker._live_progress
     assert job2.id in sync_worker._live_progress
     sync_worker._live_progress.pop(job2.id, None)
+
+
+# ---------------------------------------------------------------------------
+# Throttle-aware worker: priority pass, STATUS totals, pause columns (Task 5)
+# ---------------------------------------------------------------------------
+
+
+def _proc(lines, code=0):
+    p = MagicMock()
+    p.stdout = iter([ln + "\n" for ln in lines])
+    p.returncode = code
+    return p
+
+
+def _zero_jitter(monkeypatch):
+    from mailfallback.services import sync_budget
+
+    monkeypatch.setattr(sync_budget.random, "uniform", lambda a, b: 0.0)
+
+
+PATCH_RC = patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config")
+DONE = datetime(2026, 1, 1, tzinfo=UTC)  # any past initial-sync completion
+
+
+def test_initial_sync_runs_priority_pass_then_full(tmp_path):
+    """Initial sync incomplete: invocation 1 = <channel>:INBOX, invocation 2 =
+    full channel; one job row, both outputs logged with a marker; the clean
+    FULL exit completes the initial sync."""
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    job.status = JobStatus.pending
+    session.commit()
+
+    cmds = []
+
+    def fake_popen(cmd, **kw):
+        cmds.append(cmd)
+        return _proc([f"pass {len(cmds)}"])
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", side_effect=fake_popen),
+        PATCH_RC,
+        patch(
+            "mailfallback.services.imap_check.connect_imap",
+            side_effect=OSError("no upstream in tests"),
+        ),
+    ):
+        execute_sync_job(session, job.id)
+
+    assert len(cmds) == 2
+    assert cmds[0][-1] == "meter:INBOX"
+    assert cmds[1][-1] == "meter"
+    session.refresh(job)
+    session.refresh(account)
+    assert job.status == JobStatus.completed
+    assert "pass 1" in job.log and "pass 2" in job.log
+    assert "invocation 2/2" in job.log  # the marker line
+    assert account.initial_sync_completed_at is not None
+    assert account.sync_paused_until is None and account.pause_reason is None
+
+
+def test_completed_initial_sync_runs_single_full_pass(tmp_path):
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path, initial_sync_completed_at=DONE)
+    job.status = JobStatus.pending
+    session.commit()
+
+    cmds = []
+
+    def fake_popen(cmd, **kw):
+        cmds.append(cmd)
+        return _proc(["ok"])
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", side_effect=fake_popen),
+        PATCH_RC,
+    ):
+        execute_sync_job(session, job.id)
+
+    assert len(cmds) == 1
+    assert cmds[0][-1] == "-a"
+    session.refresh(account)
+    assert account.initial_sync_completed_at == DONE.replace(tzinfo=None) or (
+        account.initial_sync_completed_at is not None
+    )
+
+
+def test_inbox_pass_failure_skips_full_pass(tmp_path):
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    job.status = JobStatus.pending
+    session.commit()
+
+    cmds = []
+
+    def fake_popen(cmd, **kw):
+        cmds.append(cmd)
+        return _proc(["AUTHENTICATIONFAILED junk"], code=1)
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", side_effect=fake_popen),
+        PATCH_RC,
+        patch(
+            "mailfallback.services.imap_check.connect_imap",
+            side_effect=OSError("no upstream in tests"),
+        ),
+    ):
+        execute_sync_job(session, job.id)
+
+    assert len(cmds) == 1  # the full pass never started
+    session.refresh(job)
+    session.refresh(account)
+    assert job.status == JobStatus.failed
+    assert job.failure_kind == "error"
+    assert account.sync_state == SyncState.error
+    assert account.initial_sync_completed_at is None
+
+
+def test_throttled_exit_pauses_idle_not_error(tmp_path, monkeypatch):
+    """The production OVERQUOTA line: self-recovering pause, NOT the red
+    error path — state idle, last_error cleared, 4h backoff (attempt 1)."""
+    _zero_jitter(monkeypatch)
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(
+        session, tmp_path, provider="google", initial_sync_completed_at=DONE
+    )
+    job.status = JobStatus.pending
+    session.commit()
+
+    overquota = (
+        "IMAP error: unexpected BYE response: [OVERQUOTA] "
+        "Account exceeded command or bandwidth limits."
+    )
+    with (
+        patch(
+            "mailfallback.services.sync_worker.subprocess.Popen",
+            return_value=_proc([overquota], code=1),
+        ),
+        PATCH_RC,
+    ):
+        execute_sync_job(session, job.id)
+
+    session.refresh(job)
+    session.refresh(account)
+    assert job.status == JobStatus.failed
+    assert job.failure_kind == "throttled"
+    assert account.sync_state == SyncState.idle
+    assert account.last_error is None
+    assert account.pause_reason == "throttle"
+    delta = account.sync_paused_until - job.completed_at
+    assert abs(delta.total_seconds() - 4 * 3600) < 60
+
+
+def test_transient_exit_short_backoff(tmp_path, monkeypatch):
+    _zero_jitter(monkeypatch)
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path, initial_sync_completed_at=DONE)
+    job.status = JobStatus.pending
+    session.commit()
+
+    with (
+        patch(
+            "mailfallback.services.sync_worker.subprocess.Popen",
+            return_value=_proc(["socket: unexpected EOF"], code=1),
+        ),
+        PATCH_RC,
+    ):
+        execute_sync_job(session, job.id)
+
+    session.refresh(job)
+    session.refresh(account)
+    assert job.failure_kind == "transient"
+    assert account.pause_reason == "transient"
+    assert account.sync_state == SyncState.idle
+    delta = account.sync_paused_until - job.completed_at
+    assert abs(delta.total_seconds() - 120) < 30
+
+
+def test_attempt_count_escalates_backoff(tmp_path, monkeypatch):
+    """A second throttle TODAY doubles the backoff (4h -> 8h)."""
+    _zero_jitter(monkeypatch)
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(
+        session, tmp_path, provider="google", initial_sync_completed_at=DONE
+    )
+    prior = SyncJob(
+        account_id=account.id,
+        source="test",
+        status=JobStatus.failed,
+        failure_kind="throttled",
+        started_at=datetime.now(UTC),
+    )
+    session.add(prior)
+    job.status = JobStatus.pending
+    session.commit()
+
+    with (
+        patch(
+            "mailfallback.services.sync_worker.subprocess.Popen",
+            return_value=_proc(["BYE [OVERQUOTA] limits"], code=1),
+        ),
+        PATCH_RC,
+    ):
+        execute_sync_job(session, job.id)
+
+    session.refresh(job)
+    session.refresh(account)
+    assert job.failure_kind == "throttled"
+    delta = account.sync_paused_until - job.completed_at
+    assert abs(delta.total_seconds() - 8 * 3600) < 60
+
+
+def test_budget_stop_wins_over_signal(tmp_path, monkeypatch):
+    """A budget stop SIGTERMs the proc — the marker must beat the signal
+    interpretation: budget_paused, resume at next UTC midnight, marker
+    consumed."""
+    _zero_jitter(monkeypatch)
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path, initial_sync_completed_at=DONE)
+    job.status = JobStatus.pending
+    session.commit()
+
+    def fake_popen(cmd, **kw):
+        # Emulate the sampler's mid-run stop: marker + SIGTERM bookkeeping.
+        sync_worker._budget_stops.add(job.id)
+        sync_worker._killed_signals[job.id] = "SIGTERM"
+        return _proc(["killed mid-fetch"], code=-15)
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", side_effect=fake_popen),
+        PATCH_RC,
+    ):
+        execute_sync_job(session, job.id)
+
+    session.refresh(job)
+    session.refresh(account)
+    assert job.failure_kind == "budget_paused"
+    assert job.signal == "SIGTERM"
+    assert account.pause_reason == "budget"
+    assert account.sync_state == SyncState.idle
+    assert account.last_error is None
+    assert job.id not in sync_worker._budget_stops  # consumed
+    resume = account.sync_paused_until
+    assert (resume.hour, resume.minute) == (0, 0)  # next UTC midnight (no jitter)
+    assert resume.date() > job.completed_at.date()
+
+
+def test_user_stop_keeps_todays_error_behavior(tmp_path):
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path, initial_sync_completed_at=DONE)
+    job.status = JobStatus.pending
+    session.commit()
+
+    def fake_popen(cmd, **kw):
+        sync_worker._killed_signals[job.id] = "SIGTERM"
+        return _proc(["terminated"], code=-15)
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", side_effect=fake_popen),
+        PATCH_RC,
+    ):
+        execute_sync_job(session, job.id)
+
+    session.refresh(job)
+    session.refresh(account)
+    assert job.signal == "SIGTERM"
+    assert job.failure_kind is None  # untouched — today's behavior exactly
+    assert account.sync_state == SyncState.error
+    assert account.pause_reason is None and account.sync_paused_until is None
+
+
+def test_status_pass_persists_total_with_exclusions(tmp_path):
+    """The upstream STATUS pass sums MESSAGES over included folders only:
+    pattern !-exclusions and \\Noselect placeholders are skipped."""
+    import json as _json
+
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    account.extra_config = _json.dumps(
+        {"patterns": '* !"[Gmail]/All Mail" !"[Gmail]/Spam" !"[Gmail]/Trash"'}
+    )
+    job.status = JobStatus.pending
+    session.commit()
+
+    fake_conn = MagicMock()
+    fake_conn.list.return_value = (
+        "OK",
+        [
+            b'(\\HasNoChildren) "/" "INBOX"',
+            b'(\\HasNoChildren) "/" "Sent"',
+            b'(\\Noselect \\HasChildren) "/" "[Gmail]"',
+            b'(\\HasNoChildren) "/" "[Gmail]/All Mail"',
+        ],
+    )
+    fake_conn.status.side_effect = [
+        ("OK", [b'"INBOX" (MESSAGES 40000)']),
+        ("OK", [b'"Sent" (MESSAGES 1200)']),
+    ]
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=_proc(["ok"])),
+        PATCH_RC,
+        patch("mailfallback.services.imap_check.connect_imap", return_value=fake_conn),
+    ):
+        execute_sync_job(session, job.id)
+
+    session.refresh(account)
+    assert account.initial_sync_total_messages == 41200
+    assert fake_conn.status.call_count == 2  # excluded + Noselect cost nothing
+
+
+def test_status_pass_failure_is_nonfatal(tmp_path):
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    job.status = JobStatus.pending
+    session.commit()
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=_proc(["ok"])),
+        PATCH_RC,
+        patch(
+            "mailfallback.services.imap_check.connect_imap",
+            side_effect=OSError("upstream down"),
+        ),
+    ):
+        execute_sync_job(session, job.id)
+
+    session.refresh(job)
+    session.refresh(account)
+    assert job.status == JobStatus.completed  # the sync itself proceeded
+    assert account.initial_sync_total_messages is None
+
+
+def test_pipeline_depth_injected_only_while_initial_incomplete(tmp_path):
+    """PipelineDepth 1 rides the RUNTIME config during the initial sync —
+    never persisted, gone once the initial sync completed."""
+    import json as _json
+
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    job.status = JobStatus.pending
+    session.commit()
+
+    captured = []
+
+    def fake_rc(**kwargs):
+        captured.append(kwargs.get("extra_config"))
+        return "config"
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=_proc(["ok"])),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", side_effect=fake_rc),
+        patch(
+            "mailfallback.services.imap_check.connect_imap",
+            side_effect=OSError("no upstream"),
+        ),
+    ):
+        execute_sync_job(session, job.id)
+
+    assert _json.loads(captured[0])["pipeline_depth"] == "1"
+    session.refresh(account)
+    assert account.extra_config is None  # runtime-only, never persisted
+
+    # Initial sync now complete -> no injection (passthrough of the stored config).
+    job2 = SyncJob(account_id=account.id, source="test")
+    session.add(job2)
+    session.commit()
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=_proc(["ok"])),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", side_effect=fake_rc),
+    ):
+        execute_sync_job(session, job2.id)
+    assert captured[1] is None

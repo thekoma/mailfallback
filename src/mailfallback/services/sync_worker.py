@@ -1,3 +1,5 @@
+import contextlib
+import fnmatch
 import json
 import logging
 import os
@@ -15,8 +17,12 @@ from mailfallback.config import settings
 from mailfallback.db import SessionLocal
 from mailfallback.models import Account, JobStatus, SyncJob, SyncState
 from mailfallback.security import decrypt_credentials
-from mailfallback.services import index_service, sync_budget
-from mailfallback.services.mbsync_config import generate_mbsyncrc
+from mailfallback.services import index_service, sync_budget, sync_failures
+from mailfallback.services.mbsync_config import (
+    channel_name,
+    excluded_folder_names,
+    generate_mbsyncrc,
+)
 from mailfallback.services.sync_progress import parse_mbsync_lines
 
 logger = logging.getLogger(__name__)
@@ -292,6 +298,105 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^a-z0-9_]", "_", name.lower().strip())
 
 
+_STATUS_MESSAGES_RE = re.compile(r"MESSAGES\s+(\d+)")
+_LIST_NAME_RE = re.compile(r'"([^"]+)"\s*$')
+
+
+def _folder_excluded(name: str, patterns: list[str]) -> bool:
+    """mbsync pattern semantics: literal names plus * and ? wildcards ONLY —
+    fnmatch's [..] character classes must NOT fire ("[Gmail]/All Mail" is a
+    literal bracket, not a class of one char among G,m,a,i,l)."""
+    for pattern in patterns:
+        if name == pattern:
+            return True
+        if ("*" in pattern or "?" in pattern) and fnmatch.fnmatchcase(
+            name, pattern.replace("[", "[[]")
+        ):
+            return True
+    return False
+
+
+def _count_upstream_messages(
+    account: "Account", password: str | None, access_token: str | None
+) -> int | None:
+    """Upstream STATUS pass — the initial-sync progress denominator.
+
+    LIST every folder on the provider, drop the channel's pattern
+    !-exclusions (fnmatch — exact names and globs) and \\Noselect
+    placeholders, STATUS (MESSAGES) the rest, sum. Raises on connection
+    trouble — the CALLER treats any failure as non-fatal (the ETA degrades
+    gracefully without a total). One cheap pass per job, before mbsync.
+    """
+    from mailfallback.services.imap_check import connect_imap
+
+    extra = json.loads(account.extra_config) if account.extra_config else {}
+    excludes = excluded_folder_names(extra.get("patterns", "*"))
+    username = account.imap_user or account.email_address or account.name
+    conn = connect_imap(
+        account.imap_host,
+        account.imap_port,
+        account.tls_type or "IMAPS",
+        username,
+        access_token or password,
+        auth_method="xoauth2" if access_token else "login",
+    )
+    try:
+        typ, data = conn.list()
+        if typ != "OK" or not data:
+            return None
+        total = 0
+        for line in data:
+            if not line:
+                continue
+            decoded = line.decode() if isinstance(line, bytes) else str(line)
+            if "\\Noselect" in decoded:
+                continue
+            match = _LIST_NAME_RE.search(decoded)
+            name = match.group(1) if match else decoded.rsplit(" ", 1)[-1]
+            if _folder_excluded(name, excludes):
+                continue
+            st, st_data = conn.status(f'"{name}"', "(MESSAGES)")
+            if st != "OK" or not st_data:
+                continue
+            raw = st_data[0].decode() if isinstance(st_data[0], bytes) else str(st_data[0])
+            counted = _STATUS_MESSAGES_RE.search(raw)
+            if counted:
+                total += int(counted.group(1))
+        return total
+    finally:
+        with contextlib.suppress(Exception):
+            conn.logout()
+
+
+def _attempt_today(db: Session, account_id: str, kind: str) -> int:
+    """Backoff attempt number: today's UTC jobs with the same failure_kind
+    + 1 (the current job's kind is not yet written when this counts). No
+    new column — the job history IS the counter."""
+    day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    prior = (
+        db.query(SyncJob)
+        .filter(
+            SyncJob.account_id == account_id,
+            SyncJob.failure_kind == kind,
+            SyncJob.started_at >= day_start,
+        )
+        .count()
+    )
+    return prior + 1
+
+
+def _pause_account(account: "Account", job: "SyncJob", kind: str, resume_at: datetime) -> None:
+    """A self-recovering pause: NOT an error. State idle, last_error clear,
+    the scheduler gate set (Task 7 reads sync_paused_until/pause_reason)."""
+    reason = {"budget_paused": "budget", "throttled": "throttle"}.get(kind, "transient")
+    job.status = JobStatus.failed
+    job.failure_kind = kind
+    account.sync_state = SyncState.idle
+    account.last_error = None
+    account.pause_reason = reason
+    account.sync_paused_until = resume_at
+
+
 def execute_sync_job(db: Session, job_id: str) -> None:
     job = db.query(SyncJob).filter(SyncJob.id == job_id).first()
     if not job:
@@ -343,6 +448,7 @@ def execute_sync_job(db: Session, job_id: str) -> None:
     password = None
     token_command = None
     token_file = None
+    status_access_token = None
     if account.credentials:
         creds = decrypt_credentials(account.credentials, settings.secret_key)
         if account.auth_type.value == "oauth2":
@@ -355,6 +461,7 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 account.last_error = job.log
                 db.commit()
                 return
+            status_access_token = access_token
             token_file = os.path.join(tempfile.gettempdir(), f"mfb_token_{account.id}")
             fd = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w") as f:
@@ -362,6 +469,31 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             token_command = f"cat {token_file}"
         else:
             password = creds
+
+    # === Initial-sync regime (sync-budget spec §7) ===
+    initial_sync = account.initial_sync_completed_at is None
+    runtime_extra_config = account.extra_config
+    if initial_sync:
+        # Upstream STATUS pass: the progress denominator. Once per job,
+        # before mbsync starts (cheap, but it still counts as traffic).
+        # NON-FATAL by contract — without a total the ETA degrades.
+        try:
+            total = _count_upstream_messages(account, password, status_access_token)
+            if total is not None:
+                account.initial_sync_total_messages = total
+                db.commit()
+        except Exception:
+            logger.warning(
+                "Upstream STATUS pass failed for %s — proceeding without total",
+                account.name,
+                exc_info=True,
+            )
+        # Gentle first sync: PipelineDepth 1, injected at RUNTIME only —
+        # never persisted into account.extra_config. setdefault: an
+        # explicit per-account override wins over the regime default.
+        extra_dict = json.loads(account.extra_config) if account.extra_config else {}
+        extra_dict.setdefault("pipeline_depth", "1")
+        runtime_extra_config = json.dumps(extra_dict)
 
     config_content = generate_mbsyncrc(
         account_name=account.name,
@@ -373,7 +505,7 @@ def execute_sync_job(db: Session, job_id: str) -> None:
         tls_type=account.tls_type or "IMAPS",
         password=password,
         token_command=token_command,
-        extra_config=account.extra_config,
+        extra_config=runtime_extra_config,
     )
 
     config_path = None
@@ -393,9 +525,21 @@ def execute_sync_job(db: Session, job_id: str) -> None:
 
         os.makedirs(account.maildir_path, exist_ok=True)
 
-        cmd = [settings.mbsync_binary, "-c", config_path, "-a"]
+        # Priority pass while the initial sync is incomplete: INBOX first
+        # (the mail the user is waiting for), then the full channel. One job
+        # row, sequential subprocesses, the sampler spans both. After the
+        # initial sync: single full invocation, exactly as before.
+        if initial_sync:
+            channel = channel_name(account.name)
+            invocations = [
+                [settings.mbsync_binary, "-c", config_path, f"{channel}:INBOX"],
+                [settings.mbsync_binary, "-c", config_path, channel],
+            ]
+        else:
+            invocations = [[settings.mbsync_binary, "-c", config_path, "-a"]]
         if settings.debug:
-            cmd.insert(1, "-Dm")
+            for inv in invocations:
+                inv.insert(1, "-Dm")
 
         log_file_path = None
         try:
@@ -409,13 +553,6 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             )
 
         run_start_ts = time.time()
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        _running_procs[job_id] = proc
         _running_logs[job_id] = []
 
         # A new run for this account evicts the PREVIOUS job's last-known
@@ -440,20 +577,42 @@ def execute_sync_job(db: Session, job_id: str) -> None:
         sampler_thread.start()
 
         log_file = None
+        result_code = 1
         try:
             if log_file_path:
                 log_fd = os.open(log_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                 log_file = os.fdopen(log_fd, "w")
-            for line in proc.stdout:
-                line = line.rstrip()
-                if settings.debug:
-                    logger.debug("[mbsync/%s] %s", account.name, line)
-                _running_logs[job_id].append(line)
-                if log_file:
-                    log_file.write(line + "\n")
-                    log_file.flush()
-            proc.wait(timeout=3600)
-            result_code = proc.returncode
+            for idx, cmd in enumerate(invocations):
+                if idx and job_id in _budget_stops:
+                    # The budget tripped between invocations (the stop found
+                    # an already-finished proc) — don't start the full pass.
+                    break
+                if idx:
+                    marker = f"--- mbsync invocation {idx + 1}/{len(invocations)}: full pass ---"
+                    _running_logs[job_id].append(marker)
+                    if log_file:
+                        log_file.write(marker + "\n")
+                        log_file.flush()
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                # CURRENT subprocess — stop_sync_job must kill the right one.
+                _running_procs[job_id] = proc
+                for line in proc.stdout:
+                    line = line.rstrip()
+                    if settings.debug:
+                        logger.debug("[mbsync/%s] %s", account.name, line)
+                    _running_logs[job_id].append(line)
+                    if log_file:
+                        log_file.write(line + "\n")
+                        log_file.flush()
+                proc.wait(timeout=3600)
+                result_code = proc.returncode
+                if result_code != 0:
+                    break  # an INBOX-pass failure skips the full pass
             result_output = "\n".join(_running_logs.get(job_id, []))
         finally:
             # Stop the sampler BEFORE dropping the proc handle: its final
@@ -483,11 +642,22 @@ def execute_sync_job(db: Session, job_id: str) -> None:
         except Exception:
             logger.warning("Failed to serialize parsed summary for job %s", job_id)
 
-        if result_code == 0:
+        # Budget stop FIRST — it SIGTERMs the proc, so the marker must beat
+        # both the exit code and the signal interpretation. Consume it.
+        budget_stopped = job_id in _budget_stops
+        _budget_stops.discard(job_id)
+
+        if result_code == 0 and not budget_stopped:
             job.status = JobStatus.completed
             account.sync_state = SyncState.idle
             account.last_sync_at = datetime.now(UTC)
             account.last_error = None
+            if account.initial_sync_completed_at is None:
+                # A clean FULL pass (the loop only reaches exit 0 after the
+                # last invocation) ends the initial-sync regime.
+                account.initial_sync_completed_at = datetime.now(UTC)
+            account.sync_paused_until = None
+            account.pause_reason = None
             logger.info("Sync completed for %s", account.name)
             try:
                 from mailfallback.services.stats_service import collect_account_stats
@@ -505,11 +675,55 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 index_service.upsert_message_set(db, account.id)
             except Exception:
                 logger.warning("Mail index upsert failed for %s", account.name, exc_info=True)
-        else:
+        elif budget_stopped:
+            _pause_account(
+                account, job, "budget_paused", sync_budget.next_budget_resume(datetime.now(UTC))
+            )
+            logger.info(
+                "Sync paused for %s: daily budget reached, resumes %s",
+                account.name,
+                account.sync_paused_until,
+            )
+        elif job_signal:
+            # User-initiated stop: today's behavior, untouched (a budget
+            # stop also SIGTERMs — consumed above, never reaches here).
             job.status = JobStatus.failed
             account.sync_state = SyncState.error
             account.last_error = job.log
-            logger.warning("Sync failed for %s (exit %d)", account.name, result_code)
+            logger.warning("Sync stopped for %s (%s)", account.name, job_signal)
+        else:
+            # Classify the tail: throttles and network blips are
+            # self-recovering pauses, not red errors (sync-budget spec §1).
+            now = datetime.now(UTC)
+            kind = sync_failures.classify_failure(result_output[-4096:], account.provider)
+            if kind == "throttled":
+                attempt = _attempt_today(db, account.id, "throttled")
+                _pause_account(
+                    account, job, "throttled", sync_budget.next_throttle_resume(now, attempt)
+                )
+                logger.info(
+                    "Sync throttled for %s (attempt %d today), resumes %s",
+                    account.name,
+                    attempt,
+                    account.sync_paused_until,
+                )
+            elif kind == "transient":
+                attempt = _attempt_today(db, account.id, "transient")
+                _pause_account(
+                    account, job, "transient", sync_budget.next_transient_resume(now, attempt)
+                )
+                logger.info(
+                    "Sync hit a transient failure for %s (attempt %d today), resumes %s",
+                    account.name,
+                    attempt,
+                    account.sync_paused_until,
+                )
+            else:
+                job.status = JobStatus.failed
+                job.failure_kind = "error"
+                account.sync_state = SyncState.error
+                account.last_error = job.log
+                logger.warning("Sync failed for %s (exit %d)", account.name, result_code)
 
     except subprocess.TimeoutExpired:
         job.status = JobStatus.failed

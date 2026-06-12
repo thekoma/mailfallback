@@ -9,6 +9,38 @@ from mailfallback.services.account_service import assign_owner, create_account
 from mailfallback.services.user_service import create_user
 
 
+@pytest.fixture(autouse=True)
+def _offline_worker(monkeypatch):
+    """The worker's sampler thread opens sessions via sync_worker.SessionLocal
+    and its initial-sync STATUS pass dials the upstream (non-fatal) — keep
+    these flows OFFLINE-deterministic in the test suite."""
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from mailfallback.db import Base
+    from mailfallback.services import sync_worker
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("ATTACH DATABASE ':memory:' AS mail_index")
+        cursor.close()
+
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(sync_worker, "SessionLocal", sessionmaker(bind=engine))
+    monkeypatch.setattr(
+        "mailfallback.services.imap_check.connect_imap",
+        MagicMock(side_effect=OSError("offline tests")),
+    )
+
+
 @pytest.fixture
 def tmp_store(db_session):
     """Create a MailStore with a writable temp directory for integration tests."""
