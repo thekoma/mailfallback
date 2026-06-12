@@ -138,6 +138,12 @@ def test_sync_job_failure_kind_plain_string():
     session.commit()
     session.refresh(job)
     assert job.failure_kind == "budget_paused"
+    # The plain-string PROOF: a value outside the documented vocabulary
+    # round-trips too — an Enum column would reject it at flush time.
+    job.failure_kind = "future_kind"
+    session.commit()
+    session.refresh(job)
+    assert job.failure_kind == "future_kind"
 
 
 def test_account_defaults():
