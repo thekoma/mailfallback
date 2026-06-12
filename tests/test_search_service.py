@@ -278,6 +278,48 @@ def test_results_include_attachments(db_session, search_setup):
     assert hit["message_id_hash"] == row.message_id_hash.hex()
 
 
+def test_attachment_enrichment_never_selects_content_text(db_session, search_setup):
+    """The attachment chip fetch must use explicit column projection: once Tika
+    populates content_text (up to 200 KB per row), a whole-entity fetch would
+    drag the extracted text into every search page."""
+    from sqlalchemy import event
+
+    acct = search_setup["account"]
+    db_session.add(
+        MailIndexAttachment(
+            account_id=acct.id,
+            message_id_hash=b"\x01" * 20,
+            part_index=2,
+            filename="a.pdf",
+            ext="pdf",
+            size_bytes=10,
+            content_text="huge extracted text",
+        )
+    )
+    db_session.commit()
+
+    statements: list[str] = []
+    engine = db_session.get_bind()
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    try:
+        out = search_service.search_messages(db_session, user=search_setup["user"], query="fattura")
+    finally:
+        event.remove(engine, "before_cursor_execute", _capture)
+
+    att_stmts = [s for s in statements if "mail_index.attachments" in s]
+    assert att_stmts, "expected an attachment enrichment query"
+    assert all("content_text" not in s for s in att_stmts)
+    # the chips still come through
+    by_subject = {r["subject"]: r for r in out["results"]}
+    assert by_subject["fattura marzo"]["attachments"] == [
+        {"filename": "a.pdf", "ext": "pdf", "size_bytes": 10}
+    ]
+
+
 def test_results_without_attachments_have_empty_list(db_session, search_setup):
     """has_attachments=False (the column default) yields attachments == [] so
     the UI can iterate without guarding for a missing key."""
@@ -289,6 +331,291 @@ def test_results_without_attachments_have_empty_list(db_session, search_setup):
     hit = out["results"][0]
     assert hit["has_attachments"] is False
     assert hit["attachments"] == []
+
+
+# ---------------------------------------------------------------------------
+# search_attachments
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def att_setup(db_session, search_setup):
+    """Attachment rows hanging off search_setup's messages.
+
+    \\x01 "fattura marzo"  (now-2d):   Invoice_March.pdf  pdf  2 MB   part 2
+    \\x02 "hello world"    (now-10d):  photo.jpg          jpg  500 KB part 1
+                                       contract_scan.pdf  pdf  1234   part 3
+                                       (content_text = secret clause...)
+    \\x03 "old fattura"    (now-100d): invoice_old.zip    zip  NULL   part 1
+    """
+    acct = search_setup["account"]
+    db_session.add_all(
+        [
+            MailIndexAttachment(
+                account_id=acct.id,
+                message_id_hash=b"\x01" * 20,
+                part_index=2,
+                filename="Invoice_March.pdf",
+                ext="pdf",
+                size_bytes=2_000_000,
+            ),
+            MailIndexAttachment(
+                account_id=acct.id,
+                message_id_hash=b"\x02" * 20,
+                part_index=1,
+                filename="photo.jpg",
+                ext="jpg",
+                size_bytes=500_000,
+            ),
+            MailIndexAttachment(
+                account_id=acct.id,
+                message_id_hash=b"\x02" * 20,
+                part_index=3,
+                filename="contract_scan.pdf",
+                ext="pdf",
+                size_bytes=1_234,
+                content_text="the secret clause about payment terms",
+            ),
+            MailIndexAttachment(
+                account_id=acct.id,
+                message_id_hash=b"\x03" * 20,
+                part_index=1,
+                filename="invoice_old.zip",
+                ext="zip",
+                size_bytes=None,
+            ),
+        ]
+    )
+    db_session.commit()
+    return search_setup
+
+
+def test_attachment_search_filename_terms_are_anded(db_session, att_setup):
+    """Whitespace-split terms must ALL match the filename (case-insensitive)."""
+    out = search_service.search_attachments(db_session, user=att_setup["user"], query="invoice")
+    # ordered by containing-message date DESC
+    assert [r["filename"] for r in out["results"]] == ["Invoice_March.pdf", "invoice_old.zip"]
+    assert out["total"] == 2
+
+    out = search_service.search_attachments(
+        db_session, user=att_setup["user"], query="invoice march"
+    )
+    assert [r["filename"] for r in out["results"]] == ["Invoice_March.pdf"]
+
+
+def test_attachment_search_empty_query_returns_all_in_scope(db_session, att_setup):
+    out = search_service.search_attachments(db_session, user=att_setup["user"], query="")
+    assert out["total"] == 4
+
+
+def test_attachment_hit_shape_and_snapshot_presence(db_session, att_setup):
+    from mailfallback.models import SnapshotMessage
+
+    acct = att_setup["account"]
+    db_session.add(
+        SnapshotMessage(snapshot_id="snapA", account_id=acct.id, message_id_hash=b"\x01" * 20)
+    )
+    db_session.commit()
+
+    out = search_service.search_attachments(
+        db_session, user=att_setup["user"], query="invoice march"
+    )
+    hit = out["results"][0]
+    assert hit["account_id"] == acct.id
+    assert hit["message_id_hash"] == (b"\x01" * 20).hex()  # hex contract
+    assert hit["part_index"] == 2
+    assert hit["filename"] == "Invoice_March.pdf"
+    assert hit["ext"] == "pdf"
+    assert hit["size_bytes"] == 2_000_000
+    assert hit["content_snippet"] is None  # SQLite: no ts_headline
+    assert hit["subject"] == "fattura marzo"
+    assert hit["from_addr"] == "boss@ditta.it"
+    assert hit["folder_path"] == "INBOX"
+    assert hit["date_sent"] is not None
+    assert hit["alive_in_live"] is True
+    assert hit["snapshots"] == ["snapA"]
+    assert hit["has_live_or_snapshot"] is True
+
+
+def test_attachment_search_ext_filter(db_session, att_setup):
+    out = search_service.search_attachments(
+        db_session, user=att_setup["user"], query="", exts=["pdf"]
+    )
+    assert {r["filename"] for r in out["results"]} == {"Invoice_March.pdf", "contract_scan.pdf"}
+
+
+def test_attachment_search_size_filters_exclude_null_sizes(db_session, att_setup):
+    """size_bytes IS NULL rows are excluded by size filters but included
+    otherwise (SQL comparison semantics, pinned on purpose)."""
+    out = search_service.search_attachments(
+        db_session, user=att_setup["user"], query="", min_size=1_000_000
+    )
+    assert [r["filename"] for r in out["results"]] == ["Invoice_March.pdf"]
+
+    out = search_service.search_attachments(
+        db_session, user=att_setup["user"], query="", max_size=600_000
+    )
+    assert {r["filename"] for r in out["results"]} == {"photo.jpg", "contract_scan.pdf"}
+
+    out = search_service.search_attachments(db_session, user=att_setup["user"], query="")
+    assert "invoice_old.zip" in {r["filename"] for r in out["results"]}
+
+
+def test_attachment_content_search_sqlite_like_path(db_session, att_setup, monkeypatch):
+    """include_content + tika_enabled: SQLite falls back to LIKE over
+    filename OR content_text per term; snippet stays None (no ts_headline)."""
+    from mailfallback.config import settings
+
+    monkeypatch.setattr(settings, "tika_enabled", True)
+    out = search_service.search_attachments(
+        db_session, user=att_setup["user"], query="secret clause", include_content=True
+    )
+    assert [r["filename"] for r in out["results"]] == ["contract_scan.pdf"]
+    assert out["results"][0]["content_snippet"] is None
+
+    # without include_content the same query is filename-only -> no match
+    out = search_service.search_attachments(
+        db_session, user=att_setup["user"], query="secret clause", include_content=False
+    )
+    assert out["results"] == []
+    assert out["total"] == 0
+
+
+def test_attachment_include_content_ignored_when_tika_disabled(db_session, att_setup, monkeypatch):
+    """copy-must-match-behavior: with Tika off, include_content=True must
+    behave exactly like a filename-only search."""
+    from mailfallback.config import settings
+
+    monkeypatch.setattr(settings, "tika_enabled", False)
+    out = search_service.search_attachments(
+        db_session, user=att_setup["user"], query="secret clause", include_content=True
+    )
+    assert out["results"] == []
+    assert out["total"] == 0
+
+    # filename match still works with the flag on
+    out = search_service.search_attachments(
+        db_session, user=att_setup["user"], query="photo", include_content=True
+    )
+    assert [r["filename"] for r in out["results"]] == ["photo.jpg"]
+
+
+def test_attachment_search_scoping(db_session, foreign_setup):
+    """Foreign accounts are invisible by default; non-admin include_all is
+    ignored; admin include_all widens to every account."""
+    acct = foreign_setup["account"]
+    db_session.add(
+        MailIndexAttachment(
+            account_id=acct.id,
+            message_id_hash=b"\x0a" * 20,
+            part_index=1,
+            filename="riservato.pdf",
+            ext="pdf",
+            size_bytes=10,
+        )
+    )
+    db_session.commit()
+
+    out = search_service.search_attachments(
+        db_session, user=foreign_setup["admin"], query="riservato"
+    )
+    assert out["results"] == [] and out["total"] == 0
+
+    out = search_service.search_attachments(
+        db_session, user=foreign_setup["luigi"], query="riservato", include_all=True
+    )
+    assert out["results"] == [] and out["total"] == 0
+
+    out = search_service.search_attachments(
+        db_session, user=foreign_setup["admin"], query="riservato", include_all=True
+    )
+    assert [r["filename"] for r in out["results"]] == ["riservato.pdf"]
+    assert out["total"] == 1
+
+
+def test_attachment_search_account_ids_narrowing(db_session, att_setup, foreign_setup):
+    """account_ids narrows within the visible set; out-of-scope ids yield
+    nothing instead of leaking."""
+    out = search_service.search_attachments(
+        db_session,
+        user=att_setup["user"],
+        query="",
+        account_ids=[att_setup["account"].id],
+    )
+    assert out["total"] == 4
+
+    out = search_service.search_attachments(
+        db_session,
+        user=att_setup["user"],
+        query="",
+        account_ids=[foreign_setup["account"].id],
+    )
+    assert out["results"] == [] and out["total"] == 0
+
+
+def test_attachment_search_pagination(db_session, att_setup):
+    out = search_service.search_attachments(
+        db_session, user=att_setup["user"], query="", page=1, page_size=2
+    )
+    assert len(out["results"]) == 2
+    assert out["total"] == 4
+    assert out["page"] == 1
+    assert out["page_size"] == 2
+
+
+def test_attachment_pg_content_query_uses_fts_expression_verbatim(db_session, att_setup):
+    """Compile-only pin of the GIN-index contract: PG matches expression
+    indexes structurally, so the WHERE clause must contain
+    models.ATTACHMENTS_FTS_EXPR verbatim. No PG server needed."""
+    from sqlalchemy.dialects import postgresql
+
+    from mailfallback.models import ATTACHMENTS_FTS_EXPR
+
+    q = search_service._build_attachment_query(
+        db_session,
+        scope=[att_setup["account"].id],
+        query="secret",
+        content_mode=True,
+        exts=None,
+        min_size=None,
+        max_size=None,
+        dialect_name="postgresql",
+    )
+    sql = str(q.statement.compile(dialect=postgresql.dialect()))
+    assert ATTACHMENTS_FTS_EXPR in sql
+    assert "plainto_tsquery" in sql
+    assert "ts_headline" in sql
+
+
+def test_attachment_pg_filename_only_query_skips_fts_and_headline(db_session, att_setup):
+    """Without content mode, PG uses plain ILIKE: no tsvector scan, no
+    ts_headline evaluation cost."""
+    from sqlalchemy.dialects import postgresql
+
+    from mailfallback.models import ATTACHMENTS_FTS_EXPR
+
+    q = search_service._build_attachment_query(
+        db_session,
+        scope=[att_setup["account"].id],
+        query="secret",
+        content_mode=False,
+        exts=None,
+        min_size=None,
+        max_size=None,
+        dialect_name="postgresql",
+    )
+    sql = str(q.statement.compile(dialect=postgresql.dialect()))
+    assert ATTACHMENTS_FTS_EXPR not in sql
+    assert "ts_headline" not in sql
+    assert "ILIKE" in sql
+
+
+def test_attachment_headline_marker_contract():
+    """XSS contract (plan fact #8): snippets carry [[[ / ]]] markers the JS
+    splits on to build text nodes + <mark> — never raw HTML."""
+    assert (
+        search_service.ATTACHMENT_HEADLINE_OPTS == "StartSel=[[[,StopSel=]]],MaxWords=18,MinWords=8"
+    )
 
 
 def _install_fake_dovecot(monkeypatch, conn):
