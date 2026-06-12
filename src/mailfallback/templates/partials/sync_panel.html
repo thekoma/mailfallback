@@ -68,6 +68,26 @@
     <p class="text-small text-muted">This may take a while — the first sync downloads every message in your account.</p>
     {% endif %}
 
+    {% if live and live.initial_sync %}
+    {# ── Initial sync overall progress (sampler-fed, spec §8) ── #}
+    <div class="progress-bar">
+        {% if live.pct is not none %}
+        <div class="progress-bar-fill" style="width: {{ live.pct | int }}%"></div>
+        {% else %}
+        <div class="progress-bar-fill indeterminate"></div>
+        {% endif %}
+    </div>
+    <p class="text-small text-muted mt-025">
+        {%- if live.pct is not none %}{{ live.pct | int }}% {% endif -%}
+        {%- if live.done_msgs is not none and live.total_msgs -%}
+        ({{ live.done_msgs | number }} / {{ live.total_msgs | number }} messages)
+        {%- endif -%}
+        {%- if live.eta_label %} · ETA {{ live.eta_label }}{% endif -%}
+        {%- if live.budget_bytes %} · {{ (live.bytes_today or 0) | filesizeformat }} / {{ live.budget_bytes | filesizeformat }} today{% endif -%}
+    </p>
+    <p class="text-xs text-muted">INBOX first, then the archive — newest mail lands first.</p>
+    {% endif %}
+
     {% if snap and snap.current_folder %}
     <p>Downloading <strong>{{ snap.current_folder }}</strong></p>
 
@@ -223,6 +243,53 @@
         {% if account.total_messages %} · {{ account.total_messages | number }} messages{% endif %}
         {% endif %}
     </p>
+</div>
+
+{% elif hero_state == "sync-paused" %}
+{# ── STATE: SELF-RECOVERING PAUSE (budget / throttle / transient) ── #}
+<div class="hero-header">
+    <div class="hero-title">
+        <i data-lucide="pause-circle" class="icon-lg"></i>
+        <strong>
+            {%- if live and live.pause_reason == "budget" %}Paused — daily budget
+            {%- elif live and live.pause_reason == "throttle" %}Paused — provider throttled
+            {%- else %}Paused — retrying shortly
+            {%- endif -%}
+        </strong>
+    </div>
+    <div class="hero-actions">
+        <button class="icon-btn" title="Override the pause and sync now"
+            hx-post="/api/sync/{{ account.id }}" hx-swap="none"
+            hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);if(d.warning){showToast(d.warning,'error')}htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
+            <i data-lucide="refresh-cw" class="icon-md"></i> Sync now
+        </button>
+    </div>
+</div>
+<div class="hero-body">
+    <p>
+        {%- if live and live.pause_reason == "budget" %}Today's sync budget is used up — the sync continues automatically.
+        {%- elif live and live.pause_reason == "throttle" %}The provider asked us to slow down — the sync resumes with backoff.
+        {%- else %}A connection hiccup paused the sync — it retries automatically.
+        {%- endif -%}
+        {%- if live and live.resume_hhmm %} Resumes at {{ live.resume_hhmm }}.{% endif -%}
+    </p>
+    {% if live and live.initial_sync %}
+    <div class="progress-bar">
+        {% if live.pct is not none %}
+        <div class="progress-bar-fill" style="width: {{ live.pct | int }}%"></div>
+        {% else %}
+        <div class="progress-bar-fill indeterminate"></div>
+        {% endif %}
+    </div>
+    <p class="text-small text-muted mt-025">
+        {%- if live.pct is not none %}Initial sync {{ live.pct | int }}% {% endif -%}
+        {%- if live.done_msgs is not none and live.total_msgs -%}
+        ({{ live.done_msgs | number }} / {{ live.total_msgs | number }} messages)
+        {%- endif -%}
+        {%- if live.eta_label %} · ETA {{ live.eta_label }}{% endif -%}
+        {%- if live.budget_bytes %} · {{ (live.bytes_today or 0) | filesizeformat }} / {{ live.budget_bytes | filesizeformat }} today{% endif -%}
+    </p>
+    {% endif %}
 </div>
 
 {% elif hero_state == "paused" %}

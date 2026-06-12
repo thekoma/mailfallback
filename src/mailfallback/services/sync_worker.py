@@ -112,6 +112,16 @@ def get_live_progress(job_id: str) -> dict | None:
     return _live_progress.get(job_id)
 
 
+def get_live_progress_for_account(account_id: str) -> dict | None:
+    """Last-known sampler progress for an ACCOUNT — no DB lookup needed:
+    the eviction policy keeps at most one entry per account (the running
+    job's, or the last finished one until the next job starts)."""
+    for prog in list(_live_progress.values()):
+        if prog.get("account_id") == account_id:
+            return prog
+    return None
+
+
 def _budget_headroom_today(account: "Account") -> bool:
     """True when today's ledger leaves budget headroom. A stale traffic_date
     means the ledger belongs to a previous UTC day — fresh budget."""
