@@ -11,6 +11,8 @@ def handle_index(args) -> int:
     if args.index_cmd == "backfill-snapshots":
         return _backfill_snapshots(args.account_id)
     if args.index_cmd == "backfill-attachments":
+        if args.content_only:
+            return _backfill_attachment_content(args.account_id)
         return _backfill_attachments(args.account_id)
     return 1
 
@@ -77,6 +79,22 @@ def _backfill_attachments(account_id: str) -> int:
     try:
         n = index_service.backfill_attachments(db, account_id)
         print(f"Backfilled attachments for {n} message(s).")
+        return 0
+    finally:
+        db.close()
+
+
+def _backfill_attachment_content(account_id: str) -> int:
+    from mailfallback.services import index_service
+
+    db = SessionLocal()
+    try:
+        try:
+            n = index_service.backfill_attachment_content(db, account_id)
+        except ValueError as e:
+            print(f"Error: {e}")
+            return 1
+        print(f"Extracted content for {n} attachment row(s).")
         return 0
     finally:
         db.close()
