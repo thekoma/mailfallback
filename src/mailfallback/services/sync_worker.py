@@ -112,6 +112,71 @@ def get_live_progress(job_id: str) -> dict | None:
     return _live_progress.get(job_id)
 
 
+def _budget_headroom_today(account: "Account") -> bool:
+    """True when today's ledger leaves budget headroom. A stale traffic_date
+    means the ledger belongs to a previous UTC day — fresh budget."""
+    budget = sync_budget.daily_budget_bytes(account)
+    if budget is None:
+        return True
+    if account.traffic_date != datetime.now(UTC).date():
+        return True
+    return (account.bytes_synced_today or 0) < budget
+
+
+def recover_zombie_sync_jobs(db: Session) -> int:
+    """Boot-time crash recovery sweep (sync-budget spec §9).
+
+    Closes sync_jobs rows a dead process left behind:
+    - ``running`` rows whose job_id is not in ``_running_procs`` (a fresh
+      boot has an empty dict, so that is all of them);
+    - ``pending`` rows: queueing is a DB row + an IN-MEMORY executor
+      (submit_sync_job hands the id to the ThreadPoolExecutor; nothing
+      re-drives pending rows from the DB on boot), so a crash orphans
+      them — and an orphaned pending row blocks create_sync_job for that
+      account FOREVER via the existing-job guard.
+
+    Each zombie: status=failed, failure_kind="interrupted",
+    completed_at=now, a "[recovered]" marker appended to the log. Account
+    side: syncing → idle; if the initial sync is incomplete AND today's
+    budget has headroom, any pause is cleared so the scheduler resumes it
+    naturally — the sweep itself NEVER enqueues (idempotent and
+    side-effect-light by design: enqueueing from here would race the
+    scheduler that starts right after in the same lifespan).
+
+    Boot-time contract: run before the executor accepts new jobs (a
+    mid-flight pending row would be wrongly closed otherwise).
+    """
+    zombies = (
+        db.query(SyncJob).filter(SyncJob.status.in_([JobStatus.running, JobStatus.pending])).all()
+    )
+    now = datetime.now(UTC)
+    recovered = 0
+    for job in zombies:
+        if job.status == JobStatus.running and job.id in _running_procs:
+            continue  # genuinely alive — idempotent re-call safety
+        recovered += 1
+        job.status = JobStatus.failed
+        job.failure_kind = "interrupted"
+        job.completed_at = now
+        marker = "[recovered] container restarted mid-sync — closed as interrupted"
+        job.log = f"{job.log}\n{marker}" if job.log else marker
+        account = db.query(Account).filter(Account.id == job.account_id).first()
+        if not account:
+            continue
+        if account.sync_state == SyncState.syncing:
+            account.sync_state = SyncState.idle
+        if account.initial_sync_completed_at is None and _budget_headroom_today(account):
+            # Schedulable NOW — an interrupted initial sync should not sit
+            # out a pause it no longer needs.
+            account.sync_paused_until = None
+            account.pause_reason = None
+        # else: respect the existing pause (budget spent / throttled).
+    if recovered:
+        db.commit()
+        logger.info("Recovered %d zombie sync job(s) after restart", recovered)
+    return recovered
+
+
 def _sample_maildir(path: str, since_ts: float) -> tuple[int, int, int, int]:
     """One walk over the ACCOUNT maildir: (total_msgs, total_bytes,
     run_msgs, run_bytes).
