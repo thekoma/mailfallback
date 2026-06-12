@@ -264,6 +264,11 @@ def _sampler_tick(job_id: str, account_id: str, maildir_path: str, state: dict) 
         account.bytes_synced_today = (account.bytes_synced_today or 0) + max(
             0, run_bytes - state["last_run_bytes"]
         )
+        # The watermark follows run_bytes DOWN too (review F10, deliberate):
+        # a file vanishing mid-walk (e.g. a webmail \Seen rename) dips
+        # run_bytes; following it down re-books those bytes when the file
+        # reappears — bounded over-booking, the spec's safe direction. A
+        # max() watermark would instead UNDER-book after true deletions.
         state["last_run_bytes"] = run_bytes
 
         budget = sync_budget.daily_budget_bytes(account)
@@ -359,10 +364,6 @@ def _refresh_oauth_token(creds_json: str, db: Session, account: "Account") -> st
         return None
 
 
-def _safe_name(name: str) -> str:
-    return re.sub(r"[^a-z0-9_]", "_", name.lower().strip())
-
-
 _STATUS_MESSAGES_RE = re.compile(r"MESSAGES\s+(\d+)")
 _LIST_NAME_RE = re.compile(r'"([^"]+)"\s*$')
 
@@ -413,11 +414,20 @@ def _count_upstream_messages(
         for line in data:
             if not line:
                 continue
-            decoded = line.decode() if isinstance(line, bytes) else str(line)
+            if isinstance(line, tuple):
+                # Literal-encoded LIST entry (review F4a): imaplib yields
+                # (prefix_with_flags, name_bytes) for folder names that
+                # need a literal (e.g. non-ASCII) — str(tuple) would
+                # garble the name and silently drop the folder.
+                decoded = line[0].decode() if isinstance(line[0], bytes) else str(line[0])
+                raw_name = line[1]
+                name = raw_name.decode() if isinstance(raw_name, bytes) else str(raw_name)
+            else:
+                decoded = line.decode() if isinstance(line, bytes) else str(line)
+                match = _LIST_NAME_RE.search(decoded)
+                name = match.group(1) if match else decoded.rsplit(" ", 1)[-1]
             if "\\Noselect" in decoded:
                 continue
-            match = _LIST_NAME_RE.search(decoded)
-            name = match.group(1) if match else decoded.rsplit(" ", 1)[-1]
             if _folder_excluded(name, excludes):
                 continue
             st, st_data = conn.status(f'"{name}"', "(MESSAGES)")
@@ -596,10 +606,17 @@ def execute_sync_job(db: Session, job_id: str) -> None:
         # initial sync: single full invocation, exactly as before.
         if initial_sync:
             channel = channel_name(account.name)
-            invocations = [
-                [settings.mbsync_binary, "-c", config_path, f"{channel}:INBOX"],
-                [settings.mbsync_binary, "-c", config_path, channel],
-            ]
+            invocations = []
+            # A command-line box-spec supersedes the channel Patterns — if
+            # the user's patterns EXCLUDE INBOX, the priority pass must not
+            # resurrect (or, depending on the mbsync build, error on) it.
+            patterns_extra = json.loads(account.extra_config) if account.extra_config else {}
+            inbox_excluded = _folder_excluded(
+                "INBOX", excluded_folder_names(patterns_extra.get("patterns", "*"))
+            )
+            if not inbox_excluded:
+                invocations.append([settings.mbsync_binary, "-c", config_path, f"{channel}:INBOX"])
+            invocations.append([settings.mbsync_binary, "-c", config_path, channel])
         else:
             invocations = [[settings.mbsync_binary, "-c", config_path, "-a"]]
         if settings.debug:
@@ -666,6 +683,15 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 )
                 # CURRENT subprocess — stop_sync_job must kill the right one.
                 _running_procs[job_id] = proc
+                # Re-arm the budget enforcer (review F1): if the sampler
+                # tripped in the window between the marker check above and
+                # this registration, its stop hit the already-reaped previous
+                # proc (a no-op) and the once-guard would never fire again —
+                # the new pass would run unbounded past the budget. The
+                # marker is set BEFORE the sampler's stop call, so seeing it
+                # here closes the race completely.
+                if job_id in _budget_stops:
+                    stop_sync_job(job_id)
                 for line in proc.stdout:
                     line = line.rstrip()
                     if settings.debug:
@@ -684,6 +710,14 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             # flush makes the job-end ledger/progress state accurate.
             sampler_stop.set()
             sampler_thread.join(timeout=15)
+            if sampler_thread.is_alive():
+                # Final walk still running (large maildir on a slow volume).
+                # The orphan only re-publishes a stale progress entry and may
+                # over-book bytes into the OLD run window — the conservative
+                # direction — but it must be visible in the logs.
+                logger.warning(
+                    "Sync sampler for job %s did not finish within 15s — orphaned", job_id
+                )
             _running_procs.pop(job_id, None)
             _running_logs.pop(job_id, None)
             if log_file:
@@ -711,6 +745,11 @@ def execute_sync_job(db: Session, job_id: str) -> None:
         # both the exit code and the signal interpretation. Consume it.
         budget_stopped = job_id in _budget_stops
         _budget_stops.discard(job_id)
+        # Known edge (review F3): a budget crossing in the FINAL sampler
+        # flush of a clean exit-0 run lands here as budget_paused — the
+        # 100%-done sync re-labels as paused and completes as a no-op rerun
+        # after the resume. Accepted: the alternative (trusting exit 0 over
+        # the marker) would mislabel real mid-run stops.
 
         if result_code == 0 and not budget_stopped:
             job.status = JobStatus.completed
@@ -750,11 +789,16 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 account.sync_paused_until,
             )
         elif job_signal:
-            # User-initiated stop: today's behavior, untouched (a budget
-            # stop also SIGTERMs — consumed above, never reaches here).
+            # User-initiated stop: today's behavior (a budget stop also
+            # SIGTERMs — consumed above, never reaches here). Pause columns
+            # CLEAR (review F2): an error state with a live pause would be
+            # skipped by the scheduler AND hidden by the dashboard's
+            # self-recovering-pause exclusion — contradictory.
             job.status = JobStatus.failed
             account.sync_state = SyncState.error
             account.last_error = job.log
+            account.sync_paused_until = None
+            account.pause_reason = None
             logger.warning("Sync stopped for %s (%s)", account.name, job_signal)
         else:
             # Classify the tail: throttles and network blips are
@@ -788,6 +832,10 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 job.failure_kind = "error"
                 account.sync_state = SyncState.error
                 account.last_error = job.log
+                # Review F2: a real error must not keep a stale pause — the
+                # scheduler would skip it and the dashboard would hide it.
+                account.sync_paused_until = None
+                account.pause_reason = None
                 logger.warning("Sync failed for %s (exit %d)", account.name, result_code)
 
     except subprocess.TimeoutExpired:
@@ -805,6 +853,10 @@ def execute_sync_job(db: Session, job_id: str) -> None:
         account.last_error = str(e)
 
     finally:
+        # Review F11: exception exits skip the straight-line marker consume —
+        # discard here too (idempotent) so a leaked marker can't relabel a
+        # FUTURE job of the same id (impossible) or sit forever in the set.
+        _budget_stops.discard(job_id)
         if config_path and not settings.debug:
             os.unlink(config_path)
         if token_file and os.path.exists(token_file):

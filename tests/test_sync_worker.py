@@ -606,9 +606,8 @@ def test_completed_initial_sync_runs_single_full_pass(tmp_path):
     assert len(cmds) == 1
     assert cmds[0][-1] == "-a"
     session.refresh(account)
-    assert account.initial_sync_completed_at == DONE.replace(tzinfo=None) or (
-        account.initial_sync_completed_at is not None
-    )
+    # The completion timestamp is NOT rewritten (SQLite hands it back naive).
+    assert account.initial_sync_completed_at == DONE.replace(tzinfo=None)
 
 
 def test_inbox_pass_failure_skips_full_pass(tmp_path):
@@ -771,10 +770,15 @@ def test_budget_stop_wins_over_signal(tmp_path, monkeypatch):
     assert resume.date() > job.completed_at.date()
 
 
-def test_user_stop_keeps_todays_error_behavior(tmp_path):
+def test_user_stop_keeps_error_behavior_and_clears_stale_pause(tmp_path):
+    """User stop: today's error behavior for job/state, but a PRE-EXISTING
+    pause clears (review F2): an error state with a live pause would be
+    skipped by the scheduler and hidden by the dashboard exclusion."""
     session = make_session()
     account, job = _mk_maildir_account_and_job(session, tmp_path, initial_sync_completed_at=DONE)
     job.status = JobStatus.pending
+    account.sync_paused_until = datetime.now(UTC) + timedelta(hours=2)
+    account.pause_reason = "throttle"
     session.commit()
 
     def fake_popen(cmd, **kw):
@@ -795,9 +799,37 @@ def test_user_stop_keeps_todays_error_behavior(tmp_path):
     assert account.pause_reason is None and account.sync_paused_until is None
 
 
+def test_real_error_clears_stale_pause(tmp_path):
+    """Unclassifiable failure on a previously-paused account (review F2):
+    the red error must win — pause columns clear."""
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path, initial_sync_completed_at=DONE)
+    job.status = JobStatus.pending
+    account.sync_paused_until = datetime.now(UTC) + timedelta(hours=2)
+    account.pause_reason = "throttle"
+    session.commit()
+
+    with (
+        patch(
+            "mailfallback.services.sync_worker.subprocess.Popen",
+            return_value=_proc(["AUTHENTICATIONFAILED Invalid credentials"], code=1),
+        ),
+        PATCH_RC,
+    ):
+        execute_sync_job(session, job.id)
+
+    session.refresh(job)
+    session.refresh(account)
+    assert job.failure_kind == "error"
+    assert account.sync_state == SyncState.error
+    assert account.pause_reason is None and account.sync_paused_until is None
+
+
 def test_status_pass_persists_total_with_exclusions(tmp_path):
     """The upstream STATUS pass sums MESSAGES over included folders only:
-    pattern !-exclusions and \\Noselect placeholders are skipped."""
+    pattern !-exclusions and \\Noselect placeholders are skipped, and
+    literal-encoded LIST entries (review F4a: imaplib hands non-ASCII
+    folder names back as tuples) are parsed, not garbled."""
     import json as _json
 
     session = make_session()
@@ -816,11 +848,14 @@ def test_status_pass_persists_total_with_exclusions(tmp_path):
             b'(\\HasNoChildren) "/" "Sent"',
             b'(\\Noselect \\HasChildren) "/" "[Gmail]"',
             b'(\\HasNoChildren) "/" "[Gmail]/All Mail"',
+            # Literal-encoded entry: (prefix, name_bytes) tuple.
+            (b'(\\HasNoChildren) "/" {12}', "Posta città".encode()),
         ],
     )
     fake_conn.status.side_effect = [
         ("OK", [b'"INBOX" (MESSAGES 40000)']),
         ("OK", [b'"Sent" (MESSAGES 1200)']),
+        ("OK", ['"Posta città" (MESSAGES 7)'.encode()]),
     ]
 
     with (
@@ -831,8 +866,10 @@ def test_status_pass_persists_total_with_exclusions(tmp_path):
         execute_sync_job(session, job.id)
 
     session.refresh(account)
-    assert account.initial_sync_total_messages == 41200
-    assert fake_conn.status.call_count == 2  # excluded + Noselect cost nothing
+    assert account.initial_sync_total_messages == 41207
+    assert fake_conn.status.call_count == 3  # excluded + Noselect cost nothing
+    # The literal-named folder was STATUSed by its REAL name.
+    assert any("Posta città" in str(c) for c in fake_conn.status.call_args_list)
 
 
 def test_status_pass_failure_is_nonfatal(tmp_path):
@@ -1043,3 +1080,101 @@ def test_recover_zombie_skips_live_and_finished_jobs(tmp_path):
     job.status = JobStatus.completed
     session.commit()
     assert sync_worker.recover_zombie_sync_jobs(session) == 0
+
+
+def test_budget_trip_between_invocations_skips_full_pass(tmp_path, monkeypatch):
+    """Review F7: a budget marker landing while the INBOX pass was finishing
+    (the sampler's stop found an already-finished proc) must prevent the
+    full pass from starting — and the job lands budget_paused."""
+    _zero_jitter(monkeypatch)
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    job.status = JobStatus.pending
+    session.commit()
+
+    cmds = []
+
+    def fake_popen(cmd, **kw):
+        cmds.append(cmd)
+        # Marker lands during the INBOX pass; the proc still exits clean.
+        sync_worker._budget_stops.add(job.id)
+        return _proc(["inbox done"])
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", side_effect=fake_popen),
+        PATCH_RC,
+    ):
+        execute_sync_job(session, job.id)
+
+    assert len(cmds) == 1  # the full pass never started
+    session.refresh(job)
+    session.refresh(account)
+    assert job.failure_kind == "budget_paused"
+    assert account.pause_reason == "budget"
+    assert account.initial_sync_completed_at is None  # NOT a clean full pass
+    assert job.id not in sync_worker._budget_stops  # consumed
+
+
+def test_budget_rearm_stops_freshly_registered_subprocess(tmp_path, monkeypatch):
+    """Review F1: the marker landing in the window AFTER the
+    inter-invocation check but before the new Popen registers would have
+    stopped the already-reaped previous proc (a no-op) — the once-guard
+    would never fire again and the full pass would run unbounded. The
+    worker re-arms right after registering the new proc."""
+    _zero_jitter(monkeypatch)
+    session = make_session()
+    _account, job = _mk_maildir_account_and_job(session, tmp_path)
+    job.status = JobStatus.pending
+    session.commit()
+
+    stops = []
+    monkeypatch.setattr(sync_worker, "stop_sync_job", lambda jid: stops.append(jid))
+    cmds = []
+
+    def fake_popen(cmd, **kw):
+        cmds.append(cmd)
+        if len(cmds) == 2:
+            # EXACTLY the race window: after the marker check passed for
+            # idx 1, before the new proc is registered.
+            sync_worker._budget_stops.add(job.id)
+        return _proc([f"pass {len(cmds)}"])
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", side_effect=fake_popen),
+        PATCH_RC,
+    ):
+        execute_sync_job(session, job.id)
+
+    assert len(cmds) == 2
+    assert stops == [job.id]  # the re-arm stopped the CURRENT subprocess
+    session.refresh(job)
+    assert job.failure_kind == "budget_paused"
+    assert job.id not in sync_worker._budget_stops
+
+
+def test_priority_pass_skipped_when_patterns_exclude_inbox(tmp_path):
+    """Review F5: a command-line box-spec supersedes Patterns — if the user
+    excluded INBOX, the priority pass must not resurrect it. Single full
+    invocation instead."""
+    import json as _json
+
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    account.extra_config = _json.dumps({"patterns": "* !INBOX"})
+    job.status = JobStatus.pending
+    session.commit()
+
+    cmds = []
+
+    def fake_popen(cmd, **kw):
+        cmds.append(cmd)
+        return _proc(["ok"])
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", side_effect=fake_popen),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"),
+    ):
+        execute_sync_job(session, job.id)
+
+    assert len(cmds) == 1
+    assert cmds[0][-1] == "meter"  # the full channel, no :INBOX box-spec
