@@ -30,14 +30,16 @@
     </template>
   </div>
 
-  {# The attachment preset is search-row-driven only — no sidebar fields
-     apply, so the whole column collapses (x-show, not x-if: the flatpickr
-     instance inside must stay alive across preset switches). #}
-  <div class="ws-grid" :class="{'ws-grid-nosidebar': preset === 'attachment'}">
-    <aside class="ws-sidebar" x-show="preset !== 'attachment'">
-      {# Single-mail searches across accounts via the scope select in the search
-         row; the source mailbox only matters for the folder/full presets. #}
-      <label class="ws-field" x-show="preset !== 'single-mail'">
+  {# Both search presets (single-mail + attachment) are search-row-driven:
+     their time/source/filter controls live in the compact control row below
+     the search row, so the sidebar collapses for both and the panel goes
+     full-width (no wasted screen space). The aside only picks the SOURCE
+     mailbox for the folder/full presets. #}
+  <div class="ws-grid" :class="{'ws-grid-nosidebar': preset === 'attachment' || preset === 'single-mail'}">
+    <aside class="ws-sidebar" x-show="preset === 'folder' || preset === 'full'">
+      {# Destination moved into the per-preset panels (the unified
+         destination panel partial) — the sidebar only picks the SOURCE. #}
+      <label class="ws-field">
         <span class="ws-field-label">Mailbox</span>
         <select x-model="accountId" @change="onAccountChange()">
           {% for acct in all_accounts %}
@@ -45,26 +47,6 @@
           {% endfor %}
         </select>
       </label>
-
-      {# Search-only parameters — the folder and full presets restore from the
-         local backup and ignore these, so hide them there. x-show (not x-if)
-         keeps the inline flatpickr instance alive across preset switches. #}
-      <div class="ws-field" x-show="preset === 'single-mail'">
-        <span class="ws-field-label">Time range</span>
-        <div class="ws-calendar-wrap">
-          {# flatpickr will replace this input with its inline calendar UI #}
-          <input type="text" id="ws-calendar-input" placeholder="Pick range">
-        </div>
-      </div>
-
-      <fieldset class="ws-field" x-show="preset === 'single-mail'">
-        <legend class="ws-field-label">Sources</legend>
-        <label class="ws-inline"><input type="checkbox" x-model="includeLive"> Live</label>
-        <label class="ws-inline"><input type="checkbox" x-model="includeSnapshots"> Snapshots</label>
-      </fieldset>
-
-      {# Destination moved into the per-preset panels (the unified
-         destination panel partial) — the sidebar only picks the SOURCE. #}
     </aside>
 
     <main class="ws-panel">
@@ -104,15 +86,77 @@
         </form>
       </div>
 
+      {# Compact control row — shared by both search presets, OUTSIDE their
+         x-if templates: WHEN chips (All time default), the Custom… popover
+         hosting the inline flatpickr (x-show, never x-if — the instance must
+         stay alive), per-preset toggles, and the status count right-aligned.
+         The attachment preset queues its Type/Size chips after WHEN. #}
+      <div class="ws-controls"
+           x-show="preset === 'single-mail' || preset === 'attachment'">
+        <span class="ws-att-filters-label">When</span>
+        <template x-for="t in timeChips" :key="t.id">
+          <button type="button" class="ws-fchip"
+                  :class="{'is-on': timePreset === t.id}"
+                  @click="setTimePreset(t.id)" x-text="t.label"></button>
+        </template>
+        <div class="ws-when-custom" @click.outside="customPopoverOpen = false">
+          {# Once applied, the chip label IS the compact range ("4–12 Jun"). #}
+          <button type="button" class="ws-fchip"
+                  :class="{'is-on': timePreset === 'custom'}"
+                  @click="customPopoverOpen = !customPopoverOpen"
+                  x-text="timePreset === 'custom' && customLabel ? customLabel : 'Custom…'"></button>
+          <div class="ws-when-popover" x-show="customPopoverOpen" x-cloak>
+            <div class="ws-calendar-wrap">
+              {# flatpickr replaces this input with its inline calendar UI;
+                 snapshot days keep their dots (scope-driven fetch). #}
+              <input type="text" id="ws-calendar-input" placeholder="Pick range">
+            </div>
+            <div class="ws-when-popover-foot">
+              <span class="ws-when-hint text-muted text-xsmall">
+                <span class="ws-when-dot"></span> = snapshot day
+              </span>
+              <button type="button" class="ws-btn-ghost ws-btn-sm" @click="clearCustomRange()">Clear</button>
+              <button type="button" class="ws-btn-primary ws-btn-sm" @click="applyCustomRange()">Apply</button>
+            </div>
+          </div>
+        </div>
+
+        <span class="ws-ctrl-group" x-show="preset === 'single-mail'">
+          <label class="ws-inline"><input type="checkbox" x-model="includeLive"> Live</label>
+          <label class="ws-inline"><input type="checkbox" x-model="includeSnapshots"> Snapshots</label>
+          <label class="ws-inline ws-deep-toggle"
+                 title="Also searches message bodies — active mail only, slower">
+            <input type="checkbox" x-model="deepSearch"> Deep search
+          </label>
+        </span>
+
+        <span class="ws-ctrl-group" x-show="preset === 'attachment'">
+          <span class="ws-att-filters-label">Type</span>
+          <template x-for="g in attGroupDefs" :key="g.id">
+            <button type="button" class="ws-fchip"
+                    :class="{'is-on': attGroups.includes(g.id)}"
+                    @click="toggleAttGroup(g.id)" x-text="g.label"></button>
+          </template>
+          <span class="ws-att-filters-label">Size</span>
+          <button type="button" class="ws-fchip"
+                  :class="{'is-on': attMinSize !== null}"
+                  @click="toggleAttMinSize()">&gt; 1 MB</button>
+          {% if tika_enabled %}
+          <label class="ws-inline ws-att-content-toggle"
+                 title="Searches text extracted via Tika">
+            <input type="checkbox" x-model="attIncludeContent" @change="onAttFilterChange()">
+            Search inside attachments
+          </label>
+          {% endif %}
+        </span>
+
+        <span class="ws-status ws-controls-status text-muted text-xsmall"
+              x-text="statusText" x-show="statusText"></span>
+      </div>
+
       {# Single-mail / search-first preset #}
       <template x-if="preset === 'single-mail'">
         <div class="ws-search">
-          <label class="ws-inline ws-deep-toggle">
-            <input type="checkbox" x-model="deepSearch">
-            Deep search <span class="text-muted text-xsmall">— also search message bodies (active mail only, slower)</span>
-          </label>
-
-          <p class="ws-status text-muted text-xsmall" x-text="statusText" x-show="statusText"></p>
           <p class="ws-status text-warning text-xsmall" x-show="partial">
             Partial results — the deep search timed out. Narrow the date range for completeness.
           </p>
@@ -218,32 +262,9 @@
 
       {# Attachment preset — name/type/size search over the local index,
          plus content search when Tika is enabled. Driven by the shared
-         search row above; chips refine, rows download/preview/stage. #}
+         search row + control row above; rows download/preview/stage. #}
       <template x-if="preset === 'attachment'">
         <div class="ws-att-flow">
-          <div class="ws-att-filters">
-            <span class="ws-att-filters-label">Type</span>
-            <template x-for="g in attGroupDefs" :key="g.id">
-              <button type="button" class="ws-fchip"
-                      :class="{'is-on': attGroups.includes(g.id)}"
-                      @click="toggleAttGroup(g.id)" x-text="g.label"></button>
-            </template>
-            <span class="ws-att-filters-label">Size</span>
-            <button type="button" class="ws-fchip"
-                    :class="{'is-on': attMinSize !== null}"
-                    @click="toggleAttMinSize()">&gt; 1 MB</button>
-          </div>
-
-          <div class="ws-att-content-row">
-            {% if tika_enabled %}
-            <label class="ws-inline ws-att-content-toggle">
-              <input type="checkbox" x-model="attIncludeContent" @change="onAttFilterChange()">
-              Search inside attachments <span class="text-muted text-xsmall">— text extracted via Tika</span>
-            </label>
-            {% endif %}
-            <p class="ws-status text-muted text-xsmall" x-text="statusText" x-show="statusText"></p>
-          </div>
-
           {# Loading skeletons #}
           <template x-if="attSearching && attResults.length === 0">
             <div class="ws-results">

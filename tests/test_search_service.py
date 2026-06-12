@@ -461,6 +461,58 @@ def test_attachment_search_size_filters_exclude_null_sizes(db_session, att_setup
     assert "invoice_old.zip" in {r["filename"] for r in out["results"]}
 
 
+def test_attachment_search_range_filters_on_message_date(db_session, att_setup):
+    """range_start/range_end filter on the joined message's date_sent with the
+    SAME null-tolerant semantics as search_messages: NULL date_sent rows are
+    kept in any range — a message whose Date: header didn't parse must not
+    disappear from date-filtered searches."""
+    acct = att_setup["account"]
+    db_session.add(
+        MailIndexMessage(
+            account_id=acct.id,
+            message_id_hash=b"\x04" * 20,
+            message_id="<4@h>",
+            subject="dateless",
+            folder_path="INBOX",
+            maildir_filename="4.host:2,",
+        )
+    )
+    db_session.add(
+        MailIndexAttachment(
+            account_id=acct.id,
+            message_id_hash=b"\x04" * 20,
+            part_index=1,
+            filename="dateless.pdf",
+            ext="pdf",
+            size_bytes=10,
+        )
+    )
+    db_session.commit()
+    now = datetime.now(UTC)
+
+    # Open-ended range (the fixed chips: range_start only).
+    out = search_service.search_attachments(
+        db_session, user=att_setup["user"], query="", range_start=now - timedelta(days=7)
+    )
+    names = {r["filename"] for r in out["results"]}
+    assert "Invoice_March.pdf" in names  # 2 days old — in range
+    assert "photo.jpg" not in names  # 10 days old — out
+    assert "contract_scan.pdf" not in names  # same 10-day-old message — out
+    assert "invoice_old.zip" not in names  # 100 days old — out
+    assert "dateless.pdf" in names  # NULL date_sent — kept in ANY range
+
+    # Bounded range (the Custom… popover: both ends).
+    out = search_service.search_attachments(
+        db_session,
+        user=att_setup["user"],
+        query="",
+        range_start=now - timedelta(days=30),
+        range_end=now - timedelta(days=5),
+    )
+    names = {r["filename"] for r in out["results"]}
+    assert names == {"photo.jpg", "contract_scan.pdf", "dateless.pdf"}
+
+
 def test_attachment_content_search_sqlite_like_path(db_session, att_setup, monkeypatch):
     """include_content + tika_enabled: SQLite falls back to LIKE over
     filename OR content_text per term; snippet stays None (no ts_headline)."""

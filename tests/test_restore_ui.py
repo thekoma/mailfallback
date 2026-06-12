@@ -315,6 +315,79 @@ def test_restore_page_unified_destination_panels(client, db_session, default_sto
     assert 'x-model="destinationId"' not in resp.text
 
 
+def test_restore_page_time_controls_row(client, db_session, default_store):
+    """The single-mail preset loses its sidebar entirely: Time range + Sources
+    live in ONE compact control row under the shared search row — WHEN chips,
+    a Custom… popover hosting the always-alive inline flatpickr (x-show, never
+    x-if), inline Sources/Deep toggles, status right-aligned. The attachment
+    preset reuses the same row (its Type/Size chips queue after WHEN)."""
+    create_user(db_session, "whenui", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "whenui", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    text = resp.text
+    # The old sidebar fields are gone — the aside only serves folder/full.
+    assert "Time range" not in text
+    assert "x-show=\"preset === 'folder' || preset === 'full'\"" in text
+    assert "'ws-grid-nosidebar': preset === 'attachment' || preset === 'single-mail'" in text
+    # WHEN chips render from the timeChips array; exactly-one-active styling.
+    assert 'class="ws-controls"' in text
+    assert '@click="setTimePreset(t.id)"' in text
+    assert "'is-on': timePreset === t.id" in text
+    # Custom… popover: chip label swaps to the applied compact range; the
+    # inline calendar input moved INSIDE; dots hint + Clear/Apply footer;
+    # click-outside closes.
+    assert "ws-when-popover" in text
+    assert 'id="ws-calendar-input"' in text
+    assert text.index('class="ws-when-popover"') < text.index('id="ws-calendar-input"')
+    assert "customLabel" in text
+    assert '@click.outside="customPopoverOpen = false"' in text
+    assert "= snapshot day" in text
+    assert '@click="clearCustomRange()"' in text
+    assert '@click="applyCustomRange()"' in text
+    # The popover must never be torn down (flatpickr instance) — no x-if.
+    assert 'x-if="customPopoverOpen"' not in text
+    # Sources + Deep search inline in the row (single-mail only); the deep
+    # hint is a tooltip now — honest copy, compact row.
+    assert 'x-model="includeLive"' in text
+    assert 'x-model="includeSnapshots"' in text
+    assert 'x-model="deepSearch"' in text
+    assert 'title="Also searches message bodies — active mail only, slower"' in text
+    assert "also search message bodies (active mail only, slower)" not in text
+    # Status text right-aligned at the row's edge.
+    assert "ws-controls-status" in text
+
+
+def test_workspace_js_time_chips_default_all_time(client):
+    """All time is the DEFAULT (the 7-day trap is gone); the fixed chips
+    compute range_start client-side with an open end; ONE helper feeds both
+    search payloads; chip switches re-run the active search through the
+    seq-guarded paths."""
+    resp = client.get("/static/js/restore_workspace.js")
+    assert resp.status_code == 200
+    js = resp.text
+    assert "timePreset: 'all'" in js
+    assert "{id: 'all', label: 'All time'}" in js
+    # One range source of truth, sent by BOTH searches (message + attachment).
+    assert js.count("const range = this.currentRange();") == 2
+    assert js.count("range_start: range.start,") == 2
+    assert js.count("range_end: range.end,") == 2
+    # The old per-preset default ranges and the Iso getters are gone.
+    assert "'single-mail': 7" not in js
+    assert "rangeStartIso" not in js
+    assert "rangeEndIso" not in js
+    # Chip clicks re-query whichever search already ran.
+    assert "_requeryActive()" in js
+    # The flatpickr hook only records the PENDING selection; Apply commits.
+    assert "applyCustomRange()" in js
+    assert "clearCustomRange()" in js
+    # Snapshot dots wiring untouched: scope-driven fetch + stale-response guard.
+    assert "fetchSnapshotDates()" in js
+    assert "_datesSeq" in js
+
+
 def test_workspace_js_restore_confirms_share_reassurance(client):
     """Every restore entry point confirms first, closing with the shared
     non-destructive reassurance line (frozen copy); the staging Empty confirm
