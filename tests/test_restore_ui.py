@@ -313,6 +313,9 @@ def test_workspace_js_restore_confirms_share_reassurance(client):
         assert "confirm(" in body[: body.index("await fetch")], method
         assert "RESTORE_REASSURANCE" in body[: body.index("await fetch")], method
     assert "Staged copies are removed" in js  # Empty's destructive confirm, unchanged
+    # Hygiene 400s surface their detail in the panels, not a bare status code.
+    assert "`Push failed: ${await this._errDetail(resp)}`" in js
+    assert js.count("`Failed: ${await this._errDetail(resp)}`") == 2  # folder + full panels
 
 
 def test_workspace_js_attachment_preset_chip_second(client):

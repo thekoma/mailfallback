@@ -66,14 +66,20 @@ def _sanitize_imap_string(value: str) -> str:
 
 CUSTOM_FOLDER_MAX_LEN = 200
 
+# _sanitize_imap_string stops at \x1f (house line — left alone); folder
+# validation also rejects DEL + the C1 control range.
+_CTRL_GAP_RE = re.compile(r"[\x7f-\x9f]")
+
 
 def _validate_custom_folder(value: str | None, field: str = "custom_folder") -> str:
     """Hygiene for user-named destination folders (staging push custom mode,
     non-"original" folder_mapping). The string lands verbatim inside a quoted
     IMAP atom and becomes an on-disk Maildir path, so anything the
-    _sanitize_imap_string class would strip is rejected outright, along with
-    traversal/empty segments and leading/trailing separators. Returns the
-    stripped path."""
+    _sanitize_imap_string class would strip is rejected outright (plus
+    DEL/C1 controls), along with traversal/empty segments and
+    leading/trailing separators. Other non-ASCII (accents, CJK) is fine —
+    the worker mUTF-7-encodes mailbox names at the IMAP boundary. Returns
+    the stripped path."""
     folder = (value or "").strip()
     if not folder:
         raise HTTPException(status_code=400, detail=f"{field} must not be empty")
@@ -82,7 +88,7 @@ def _validate_custom_folder(value: str | None, field: str = "custom_folder") -> 
             status_code=400,
             detail=f"{field} too long (max {CUSTOM_FOLDER_MAX_LEN} characters)",
         )
-    if _sanitize_imap_string(folder) != folder:
+    if _sanitize_imap_string(folder) != folder or _CTRL_GAP_RE.search(folder):
         raise HTTPException(
             status_code=400,
             detail=f"{field} contains quotes, backslashes or control characters",
