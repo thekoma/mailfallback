@@ -245,11 +245,11 @@ def test_restore_page_renders_attachment_preset(client, db_session, default_stor
     assert resp.text.count(':value="selKey(a)"') == 1
     assert resp.text.count(':value="selKey(r)"') == 1
     # ONE shared selection bar, rendered for both search presets, counting
-    # MESSAGES (selectableCount dedupes sibling attachment rows).
+    # MESSAGES (selectableCount dedupes sibling attachment rows). Its x-show
+    # is the actionBarVisible JS getter — the same predicate the dock
+    # height tracker watches, so slot and render can never disagree.
     assert resp.text.count('class="ws-action-bar"') == 1
-    assert (
-        "(preset === 'single-mail' || preset === 'attachment') && selectableCount > 0" in resp.text
-    )
+    assert 'x-show="actionBarVisible"' in resp.text
     assert "toggleSelectAll($event.target.checked)" in resp.text
     # Previewed-row marker is shared semantics across both presets.
     assert "'is-previewing': isPreviewing(r)" in resp.text
@@ -469,13 +469,18 @@ def test_workspace_css_responsive_grid_and_preview_overlay(client):
     block = block[: block.index("}")]
     assert "position: fixed" in block
     assert "top: auto" in block  # overrides the desktop sticky top
-    assert "max-height: 80vh" in block
+    # Height cap derives from the dock vars so the close button stays
+    # on-screen on short viewports (dvh: iOS URL bar).
+    assert "max-height: min(80vh, calc(100dvh" in block
     assert "overflow-y: auto" in block
     assert "z-index: 70" in block
-    # Staging-bar lift twins — derived from the bar's REAL measured height
-    # (--ws-staging-h; the bar wraps at narrow widths, a fixed constant let
-    # it cover the lifted elements).
-    assert ".ws-preview.has-staging { bottom: calc(var(--ws-staging-h, 4rem) + .5rem); }" in css
+    # Dock lifts — derived from the bars' REAL measured heights (the bars
+    # wrap at narrow widths, fixed constants let them cover each other).
+    # The sheet clears BOTH bars; the action bar clears the staging bar.
+    assert (
+        ".ws-preview.has-staging { "
+        "bottom: calc(var(--ws-staging-h, 4rem) + var(--ws-action-h, 0px) + .5rem); }"
+    ) in css
     assert ".ws-action-bar.has-staging { bottom: calc(var(--ws-staging-h, 4rem) + .5rem); }" in css
     # Medium widths: results may shrink, preview keeps a usable minimum.
     assert "grid-template-columns: minmax(0, 1.1fr) minmax(280px, 1fr);" in css
@@ -497,22 +502,41 @@ def test_workspace_css_responsive_grid_and_preview_overlay(client):
 
 
 def test_workspace_staging_height_var_drives_bottom_offsets(client):
-    """Every bottom offset that must clear the docked staging bar derives from
-    --ws-staging-h — the bar's ResizeObserver-measured height. At <=768px the
-    bar flex-wraps to 2+ rows, so the old 4.5rem/64px constants lied exactly
-    when it mattered: the fixed bar covered the sticky selection bar. JS owns
-    the var (0px while hidden); CSS consumes it at every dependent site."""
+    """The bottom dock STACKS on measured slots: --ws-staging-h and
+    --ws-action-h are the bars' ResizeObserver-measured heights (both bars
+    wrap/grow at narrow widths, so the old fixed constants let surfaces cover
+    each other: staging bar over action bar, then preview sheet over action
+    bar). ONE reusable tracker owns both vars (0px while hidden); CSS sums
+    them at every dependent site; z only breaks ties for transient surfaces
+    per the documented ladder."""
     js = client.get("/static/js/restore_workspace.js").text
     assert "ResizeObserver" in js
+    # One reusable tracker, applied to both bars — no copy-pasted observers.
+    assert js.count("this._trackHeightVar(") == 2
     assert "'--ws-staging-h'" in js
-    # Explicit 0px mirror on the exists flip: RO across display:none is not
-    # guaranteed in every engine, and the bar's x-transition delays
-    # display:none past $nextTick on leave.
-    assert "$watch('staging.exists'" in js
+    assert "'--ws-action-h'" in js
+    # Explicit 0px mirror on the visibility flip: RO across display:none is
+    # not guaranteed in every engine, and x-transition delays display:none
+    # past $nextTick on leave. The watched predicates: the staging flag and
+    # the action bar's x-show getter (single source of truth with the
+    # template).
+    assert "this.$watch(visibleProp" in js
+    assert "'staging.exists'" in js
+    assert "'actionBarVisible'" in js
+    assert "get actionBarVisible()" in js
 
     css = client.get("/static/css/style.css").text
-    # Action-bar lift + mobile preview-sheet lift + push-panel anchor.
-    assert css.count("calc(var(--ws-staging-h, 4rem) + .5rem)") == 3
+    # Action-bar lift + push-panel anchor clear the staging bar; the mobile
+    # sheet clears BOTH bars (sum), with and without a staging area.
+    assert css.count("calc(var(--ws-staging-h, 4rem) + .5rem)") == 2
+    assert "calc(var(--ws-staging-h, 4rem) + var(--ws-action-h, 0px) + .5rem)" in css
+    assert "bottom: calc(var(--ws-action-h, 0px) + .5rem)" in css
+    # Sheet height cap: the close button stays on-screen on short viewports
+    # (dvh, not vh — iOS URL bar).
+    assert (
+        "max-height: min(80vh, calc(100dvh - var(--ws-staging-h, 0px) "
+        "- var(--ws-action-h, 0px) - 2.5rem))"
+    ) in css
     # Content padding keeps its own breathing-room offset on the same var.
     assert "padding-bottom: calc(var(--ws-staging-h, 4rem) + 1.5rem)" in css
     # The stale magic constants are gone.
@@ -523,6 +547,16 @@ def test_workspace_staging_height_var_drives_bottom_offsets(client):
     action_bar = css[css.index(".ws-action-bar {") :]
     action_bar = action_bar[: action_bar.index("}")]
     assert "z-index: 40" in action_bar
+    # Push panel tops the ladder — a transient surface opened from the
+    # staging bar must overlay the mobile preview sheet (70), not hide
+    # behind it.
+    push_panel = css[css.index(".ws-push-panel {") :]
+    push_panel = push_panel[: push_panel.index("}")]
+    assert "z-index: 80" in push_panel
+    assert "z-index: 51" not in css
+    # The ladder is documented once, where its first z lives.
+    assert "content < action bar (40) < staging bar (50) < when-popover (60)" in css
+    assert "< preview sheet (70) < push panel (80)" in css
 
 
 def test_workspace_js_restore_confirms_share_reassurance(client):
