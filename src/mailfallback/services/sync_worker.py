@@ -4,6 +4,8 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
@@ -13,7 +15,7 @@ from mailfallback.config import settings
 from mailfallback.db import SessionLocal
 from mailfallback.models import Account, JobStatus, SyncJob, SyncState
 from mailfallback.security import decrypt_credentials
-from mailfallback.services import index_service
+from mailfallback.services import index_service, sync_budget
 from mailfallback.services.mbsync_config import generate_mbsyncrc
 from mailfallback.services.sync_progress import parse_mbsync_lines
 
@@ -23,6 +25,20 @@ _sync_executor: ThreadPoolExecutor | None = None
 _running_procs: dict[str, subprocess.Popen] = {}
 _running_logs: dict[str, list[str]] = {}
 _killed_signals: dict[str, str] = {}
+
+# === Byte meter / sampler (sync-budget spec §2/§3/§5) ===
+# Sampling cadence of the maildir walk. Module constant so tests shrink it.
+SAMPLE_INTERVAL = 30.0
+# job_id → last-known progress dict. Lifecycle: entries OUTLIVE their job
+# (the UI wants last-known %/ETA briefly after completion); the next job
+# START for the same account evicts the stale entry. Never grows unbounded:
+# at most one live + one last-known entry per account.
+_live_progress: dict[str, dict] = {}
+# job_ids the budget enforcer stopped. The worker translates the marker into
+# failure_kind=budget_paused and REMOVES it when consumed (Task 5).
+_budget_stops: set[str] = set()
+# EMA smoothing for the live msgs/s rate.
+_RATE_EMA_ALPHA = 0.3
 
 
 def get_live_log(job_id: str) -> str | None:
@@ -83,6 +99,159 @@ def stop_sync_job(job_id: str) -> bool:
         _killed_signals[job_id] = "SIGKILL"
         proc.kill()
     return True
+
+
+def get_live_progress(job_id: str) -> dict | None:
+    """Last-known sampler progress for a job (may outlive the job briefly)."""
+    return _live_progress.get(job_id)
+
+
+def _sample_maildir(path: str, since_ts: float) -> tuple[int, int, int, int]:
+    """One walk over the ACCOUNT maildir: (total_msgs, total_bytes,
+    run_msgs, run_bytes).
+
+    Cumulative totals count every message file under cur/ and new/ —
+    restart-proof by construction (re-derived from disk, never accumulated).
+    The run delta counts files with mtime >= since_ts: with
+    ``CopyArrivalDate no`` (the generator's setting) mbsync stamps files
+    with the WRITE time, so mtime identifies this run's downloads. If
+    CopyArrivalDate is ever enabled, mtime becomes the message's arrival
+    date and this must switch to st_ctime.
+
+    Skipped: tmp/ staging files (parent dir is not cur/new), dotfiles and
+    dovecot metadata inside cur/new, and nested .dovecot-home trees (only
+    the account's own mail counts).
+    """
+    total_msgs = total_bytes = run_msgs = run_bytes = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        dirnames[:] = [d for d in dirnames if d != ".dovecot-home"]
+        if os.path.basename(dirpath) not in ("cur", "new"):
+            continue
+        for fname in filenames:
+            if fname.startswith((".", "dovecot")):
+                continue
+            try:
+                st = os.stat(os.path.join(dirpath, fname))
+            except OSError:
+                continue  # delivered/expunged mid-walk
+            total_msgs += 1
+            total_bytes += st.st_size
+            if st.st_mtime >= since_ts:
+                run_msgs += 1
+                run_bytes += st.st_size
+    return total_msgs, total_bytes, run_msgs, run_bytes
+
+
+def _new_sampler_state(run_start_ts: float) -> dict:
+    """Per-run sampler bookkeeping: the run-bytes watermark (ledger booking
+    is delta-based within the run) + EMA rate inputs."""
+    return {
+        "run_start_ts": run_start_ts,
+        "last_run_bytes": 0,
+        "last_run_msgs": 0,
+        "last_tick_monotonic": time.monotonic(),
+        "rate": 0.0,
+        "had_tick": False,
+    }
+
+
+def _sampler_tick(job_id: str, account_id: str, maildir_path: str, state: dict) -> None:
+    """One sample + crash-safe flush.
+
+    Opens its OWN session (never the worker's — different thread), re-reads
+    the account row fresh each tick to honor external edits, books only the
+    NEW run bytes into the daily ledger (max(0, run - watermark): monotonic
+    within the run; across restarts the walk re-derives from disk inside the
+    new run window only), COMMITS, then enforces the budget. Commit-before-
+    stop: a container death right after the stop never forgets the spend.
+    """
+    totals = _sample_maildir(maildir_path, state["run_start_ts"])
+    total_msgs, total_bytes, run_msgs, run_bytes = totals
+
+    now_mono = time.monotonic()
+    dt = max(1e-6, now_mono - state["last_tick_monotonic"])
+    inst_rate = max(0, run_msgs - state["last_run_msgs"]) / dt
+    rate = (
+        inst_rate
+        if not state["had_tick"]
+        else _RATE_EMA_ALPHA * inst_rate + (1 - _RATE_EMA_ALPHA) * state["rate"]
+    )
+    state.update(last_run_msgs=run_msgs, last_tick_monotonic=now_mono, rate=rate, had_tick=True)
+
+    db = SessionLocal()
+    try:
+        account = db.query(Account).filter(Account.id == account_id).first()
+        if not account:
+            return
+        today = datetime.now(UTC).date()
+        if account.traffic_date != today:
+            # UTC rollover: yesterday's spend stays booked to yesterday; the
+            # within-run watermark is unaffected (it tracks run bytes, and
+            # pre-midnight run bytes were already booked).
+            account.traffic_date = today
+            account.bytes_synced_today = 0
+        account.bytes_synced_today = (account.bytes_synced_today or 0) + max(
+            0, run_bytes - state["last_run_bytes"]
+        )
+        state["last_run_bytes"] = run_bytes
+
+        budget = sync_budget.daily_budget_bytes(account)
+        pct = sync_budget.compute_progress(total_msgs, account.initial_sync_total_messages)
+        eta = sync_budget.estimate_eta(
+            done_msgs=total_msgs,
+            total_msgs=account.initial_sync_total_messages,
+            done_bytes=total_bytes,
+            bytes_today=account.bytes_synced_today,
+            budget_bytes=budget,
+            run_rate_msgs_per_s=rate,
+        )
+        _live_progress[job_id] = {
+            "account_id": account_id,
+            "done_msgs": total_msgs,
+            "done_bytes": total_bytes,
+            "run_msgs": run_msgs,
+            "run_bytes": run_bytes,
+            "bytes_today": account.bytes_synced_today,
+            "budget_bytes": budget,
+            "pct": pct,
+            "eta": eta,
+            "rate_msgs_per_s": rate,
+        }
+        db.commit()  # crash-safe ledger: every tick persists (spec §2)
+
+        over_budget = budget is not None and account.bytes_synced_today >= budget
+        if over_budget and job_id not in _budget_stops:
+            # Marker first: the worker must see WHY the proc died even if
+            # the stop is instant. Guarded — stop at most once per job.
+            _budget_stops.add(job_id)
+            logger.info(
+                "Daily sync budget reached for account %s (%d >= %d) — stopping job %s",
+                account_id,
+                account.bytes_synced_today,
+                budget,
+                job_id,
+            )
+            stop_sync_job(job_id)
+    finally:
+        db.close()
+
+
+def _run_sampler(
+    job_id: str, account_id: str, maildir_path: str, state: dict, stop_event: threading.Event
+) -> None:
+    """Sampler thread body: tick every SAMPLE_INTERVAL until stopped, then
+    one FINAL tick so the job-end ledger/progress state is accurate. A
+    sampler crash must NEVER kill the sync — every tick swallows and logs.
+    """
+    while not stop_event.wait(SAMPLE_INTERVAL):
+        try:
+            _sampler_tick(job_id, account_id, maildir_path, state)
+        except Exception:
+            logger.warning("Sync sampler tick failed for job %s", job_id, exc_info=True)
+    try:
+        _sampler_tick(job_id, account_id, maildir_path, state)
+    except Exception:
+        logger.warning("Sync sampler final flush failed for job %s", job_id, exc_info=True)
 
 
 def _refresh_oauth_token(creds_json: str, db: Session, account: "Account") -> str | None:
@@ -239,6 +408,7 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 settings.sync_log_dir,
             )
 
+        run_start_ts = time.time()
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -247,6 +417,28 @@ def execute_sync_job(db: Session, job_id: str) -> None:
         )
         _running_procs[job_id] = proc
         _running_logs[job_id] = []
+
+        # A new run for this account evicts the PREVIOUS job's last-known
+        # progress (entries deliberately outlive their job for the UI — see
+        # the _live_progress lifecycle note at the top).
+        for stale_id, prog in list(_live_progress.items()):
+            if prog.get("account_id") == account.id and stale_id != job_id:
+                _live_progress.pop(stale_id, None)
+        sampler_stop = threading.Event()
+        sampler_thread = threading.Thread(
+            target=_run_sampler,
+            args=(
+                job_id,
+                account.id,
+                account.maildir_path,
+                _new_sampler_state(run_start_ts),
+                sampler_stop,
+            ),
+            daemon=True,
+            name=f"sync-sampler-{job_id[:8]}",
+        )
+        sampler_thread.start()
+
         log_file = None
         try:
             if log_file_path:
@@ -264,6 +456,10 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             result_code = proc.returncode
             result_output = "\n".join(_running_logs.get(job_id, []))
         finally:
+            # Stop the sampler BEFORE dropping the proc handle: its final
+            # flush makes the job-end ledger/progress state accurate.
+            sampler_stop.set()
+            sampler_thread.join(timeout=15)
             _running_procs.pop(job_id, None)
             _running_logs.pop(job_id, None)
             if log_file:
