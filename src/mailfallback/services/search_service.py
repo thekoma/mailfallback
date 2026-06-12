@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, func, null, text
+from sqlalchemy import and_, func, literal_column, null, text
 from sqlalchemy.orm import Query, Session
 
 from mailfallback.models import (
@@ -221,10 +221,15 @@ def _build_attachment_query(
     `dialect_name` is a parameter instead of being read off `db` so tests can
     compile the PostgreSQL variant of the statement without a PG server.
     """
-    if content_mode and dialect_name == "postgresql":
-        ts_query = func.plainto_tsquery("simple", query)
+    terms = query.split()
+    if content_mode and terms and dialect_name == "postgresql":
+        # Inline regconfig literal: SQLAlchemy types a plain "simple" string
+        # as REGCONFIG, which has no literal renderer (breaks literal_binds
+        # compiles) — and the inline form matches the PG-docs style anyway.
+        regconfig = literal_column("'simple'")
+        ts_query = func.plainto_tsquery(regconfig, query)
         snippet_col = func.ts_headline(
-            "simple",
+            regconfig,
             func.coalesce(MailIndexAttachment.content_text, ""),
             ts_query,
             ATTACHMENT_HEADLINE_OPTS,
@@ -232,11 +237,14 @@ def _build_attachment_query(
         # Filename-only matches must not get a headline (it would render the
         # first words of unrelated content) — track content hits explicitly.
         content_matched_col = (
-            func.to_tsvector("simple", func.coalesce(MailIndexAttachment.content_text, ""))
+            func.to_tsvector(regconfig, func.coalesce(MailIndexAttachment.content_text, ""))
             .op("@@")(ts_query)
             .label("content_matched")
         )
     else:
+        # Also hit with content_mode + empty query (the default UI state once
+        # the content toggle lands): no per-row ts_headline/to_tsvector cost
+        # when there is nothing to highlight.
         snippet_col = null().label("content_snippet")
         content_matched_col = null().label("content_matched")
 
@@ -264,7 +272,6 @@ def _build_attachment_query(
         .filter(MailIndexAttachment.account_id.in_(scope))
     )
 
-    terms = query.split()
     if terms:
         if content_mode and dialect_name == "postgresql":
             # PG matches expression indexes structurally: the WHERE clause

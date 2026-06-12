@@ -585,6 +585,33 @@ def test_attachment_pg_content_query_uses_fts_expression_verbatim(db_session, at
     assert ATTACHMENTS_FTS_EXPR in sql
     assert "plainto_tsquery" in sql
     assert "ts_headline" in sql
+    # tie ATTACHMENT_HEADLINE_OPTS to the call site: the marker contract must
+    # appear in the fully rendered statement, not just in the constant
+    literal_sql = str(
+        q.statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    )
+    assert "StartSel=[[[" in literal_sql
+
+
+def test_attachment_pg_empty_query_content_mode_skips_headline_columns(db_session, att_setup):
+    """Empty query + content toggle ON is the default UI state once the toggle
+    lands: the SELECT must not compute ts_headline/to_tsvector per row only to
+    discard them in Python."""
+    from sqlalchemy.dialects import postgresql
+
+    q = search_service._build_attachment_query(
+        db_session,
+        scope=[att_setup["account"].id],
+        query="",
+        content_mode=True,
+        exts=None,
+        min_size=None,
+        max_size=None,
+        dialect_name="postgresql",
+    )
+    sql = str(q.statement.compile(dialect=postgresql.dialect()))
+    assert "ts_headline" not in sql
+    assert "to_tsvector" not in sql
 
 
 def test_attachment_pg_filename_only_query_skips_fts_and_headline(db_session, att_setup):
