@@ -314,16 +314,24 @@ def reconcile(db: Session, user: User, area: StagingArea) -> int:
     return dropped
 
 
-def push(db: Session, user: User, destination: str, folder_mode: str) -> dict:
+def push(
+    db: Session,
+    user: User,
+    destination: str,
+    folder_mode: str,
+    custom_folder: str | None = None,
+) -> dict:
     """Create one staging_push RestoreJob per target account.
 
     destination: "origin" (each message back to its source account) or an
     account id override (the API layer validates access). folder_mode:
-    "original" (per-row origin folder) or "restored" (everything into
-    Restored/<today>). reconcile() runs FIRST so webmail deletions win; the
-    per-target manifest {destination_folder: [staged_filename, ...]} rides
-    in the job's selected_uids JSON column. Rows and files stay staged —
-    the worker removes them only after confirmed delivery.
+    "original" (per-row origin folder), "restored" (everything into
+    Restored/<today>) or "custom" (everything into custom_folder VERBATIM —
+    user-named, hygiene-validated by the API layer). reconcile() runs FIRST
+    so webmail deletions win; the per-target manifest {destination_folder:
+    [staged_filename, ...]} rides in the job's selected_uids JSON column.
+    Rows and files stay staged — the worker removes them only after
+    confirmed delivery.
 
     Returns {"job_ids": [...], "skipped_targets": [...]}: skipped_targets
     lists accounts that could not take a job (busy with a pending/running
@@ -333,6 +341,11 @@ def push(db: Session, user: User, destination: str, folder_mode: str) -> dict:
     """
     from mailfallback.services.restore_service import create_restore_job
     from mailfallback.services.restore_worker import submit_restore_job
+
+    # Defense in depth below the endpoint validation: a custom push without a
+    # usable path must fail loudly, never group manifests under "None".
+    if folder_mode == "custom" and not (custom_folder and custom_folder.strip()):
+        raise ValueError("custom folder_mode requires a custom_folder")
 
     area = db.query(StagingArea).filter(StagingArea.user_id == user.id).first()
     if not area or _is_expired(area):
@@ -346,7 +359,12 @@ def push(db: Session, user: User, destination: str, folder_mode: str) -> dict:
     by_target: dict[str, dict[str, list[str]]] = {}
     for m in rows:
         target_id = m.source_account_id if destination == "origin" else destination
-        folder = m.original_folder if folder_mode == "original" else f"Restored/{stamp}"
+        if folder_mode == "original":
+            folder = m.original_folder
+        elif folder_mode == "custom":
+            folder = custom_folder
+        else:
+            folder = f"Restored/{stamp}"
         by_target.setdefault(target_id, {}).setdefault(folder, []).append(m.staged_filename)
 
     job_ids: list[str] = []

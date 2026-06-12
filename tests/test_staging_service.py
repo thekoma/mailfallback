@@ -637,6 +637,46 @@ class TestPush:
         # The deleted file's row died in the reconcile, not in some manifest.
         assert db_session.query(StagingMessage).one().staged_filename == "101.bb.h:2,"
 
+    def test_push_custom_folder_mode_nests_everything_verbatim(
+        self, db_session, real_store, staging_user, tmp_path
+    ):
+        """folder_mode="custom": every staged message's manifest folder is the
+        user-named path VERBATIM — like "restored" but user-named, and the
+        same path across every per-target job."""
+        acc1 = _mk_push_account(db_session, real_store, tmp_path, "a1")
+        acc2 = _mk_push_account(db_session, real_store, tmp_path, "a2")
+        _stage_raw(db_session, staging_user, acc1, "<c1@x>", "100.aa.h:2,", folder="INBOX")
+        _stage_raw(db_session, staging_user, acc1, "<c2@x>", "101.bb.h:2,", folder="Sent")
+        _stage_raw(db_session, staging_user, acc2, "<c3@x>", "102.cc.h:2,", folder="Archive/2025")
+
+        with patch(_SUBMIT):
+            result = staging_service.push(
+                db_session, staging_user, "origin", "custom", custom_folder="Recovered/Q2"
+            )
+
+        assert len(result["job_ids"]) == 2
+        assert result["skipped_targets"] == []
+        jobs = {j.source_account_id: j for j in db_session.query(RestoreJob).all()}
+        assert jobs[acc1.id].selected_uids == {"Recovered/Q2": ["100.aa.h:2,", "101.bb.h:2,"]}
+        assert jobs[acc2.id].selected_uids == {"Recovered/Q2": ["102.cc.h:2,"]}
+
+    @pytest.mark.parametrize("missing", [None, "", "   "])
+    def test_push_custom_mode_without_folder_raises(
+        self, db_session, real_store, staging_user, tmp_path, missing
+    ):
+        """Defense in depth below the endpoint validation: custom mode without
+        a usable path must fail loudly, never group manifests under "None"."""
+        acc = _mk_push_account(db_session, real_store, tmp_path, "a1")
+        _stage_raw(db_session, staging_user, acc, "<c4@x>", "100.aa.h:2,")
+
+        with patch(_SUBMIT) as mock_submit, pytest.raises(ValueError):
+            staging_service.push(
+                db_session, staging_user, "origin", "custom", custom_folder=missing
+            )
+
+        assert db_session.query(RestoreJob).count() == 0
+        mock_submit.assert_not_called()
+
     def test_push_skips_busy_targets_and_reports(
         self, db_session, real_store, staging_user, tmp_path
     ):

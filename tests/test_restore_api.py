@@ -70,6 +70,52 @@ def test_create_restore_job_api(mock_submit, client, db_session, restore_api_fix
     mock_submit.assert_called_once()
 
 
+@patch("mailfallback.routers.restore.submit_restore_job")
+def test_create_restore_custom_folder_mapping_accepted(
+    mock_submit, client, db_session, restore_api_fixtures
+):
+    """Any non-"original" folder_mapping is a custom destination root (the
+    worker nests everything under it) — a clean path passes, stripped."""
+    f = restore_api_fixtures
+    _login(client, db_session, "apiuser")
+    resp = client.post(
+        "/api/restore",
+        json={
+            "source_account_id": f["source"].id,
+            "target_account_id": f["target"].id,
+            "restore_mode": "full",
+            "folder_mapping": " Restored/2026-06-12 ",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    job = db_session.query(RestoreJob).one()
+    assert job.folder_mapping == "Restored/2026-06-12"
+    mock_submit.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["", "   ", "/lead", "trail/", "a//b", "a/../b", 'Rest"ored', "bad\x01name", "x" * 201],
+)
+def test_create_restore_garbage_folder_mapping_400(client, db_session, restore_api_fixtures, bad):
+    """The workspace now feeds user-typed text into folder_mapping; the same
+    hygiene as staging custom_folder applies (quoted IMAP atom + Maildir path)."""
+    f = restore_api_fixtures
+    _login(client, db_session, "apiuser")
+    resp = client.post(
+        "/api/restore",
+        json={
+            "source_account_id": f["source"].id,
+            "target_account_id": f["target"].id,
+            "restore_mode": "full",
+            "folder_mapping": bad,
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    assert "folder_mapping" in resp.json()["detail"]
+    assert db_session.query(RestoreJob).count() == 0
+
+
 def test_get_restore_job_api(client, db_session, restore_api_fixtures):
     f = restore_api_fixtures
     _login(client, db_session, "apiuser")
