@@ -83,22 +83,17 @@ def _backfill_allowed_stores(db):
 
 
 def _recover_zombie_jobs(db):
-    from datetime import UTC, datetime
+    # Delegated to the worker's sweep — it owns _running_procs and the
+    # budget/pause resume policy (sync-budget spec §9). Error-isolated:
+    # a sweep failure must never block boot, and the shared lifespan
+    # session must stay clean for the next boot step.
+    from mailfallback.services.sync_worker import recover_zombie_sync_jobs
 
-    from mailfallback.models import Account, JobStatus, SyncJob, SyncState
-
-    zombies = db.query(SyncJob).filter(SyncJob.status == JobStatus.running).all()
-    for job in zombies:
-        logger.warning("Recovering zombie job %s for account %s", job.id, job.account_id)
-        job.status = JobStatus.failed
-        job.log = "Killed by application restart"
-        job.completed_at = datetime.now(UTC)
-        account = db.query(Account).filter(Account.id == job.account_id).first()
-        if account and account.sync_state == SyncState.syncing:
-            account.sync_state = SyncState.idle
-    if zombies:
-        db.commit()
-        logger.info("Recovered %d zombie sync jobs", len(zombies))
+    try:
+        recover_zombie_sync_jobs(db)
+    except Exception:
+        logger.exception("Zombie sync job sweep failed — continuing boot")
+        db.rollback()
 
 
 def _cleanup_temp_restore_users(db):

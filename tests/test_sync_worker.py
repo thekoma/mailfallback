@@ -897,3 +897,149 @@ def test_pipeline_depth_injected_only_while_initial_incomplete(tmp_path):
     ):
         execute_sync_job(session, job2.id)
     assert captured[1] is None
+
+
+# ---------------------------------------------------------------------------
+# Crash recovery sweep (Task 6, spec §9)
+# ---------------------------------------------------------------------------
+
+
+def test_recover_zombie_closes_running_and_makes_schedulable(tmp_path):
+    """A running job from a dead process closes as interrupted (marker
+    appended to the log); the syncing account returns to idle and — initial
+    sync incomplete + budget headroom (none configured = unlimited) — any
+    stale pause is CLEARED so the scheduler can resume immediately. The
+    sweep itself never enqueues."""
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    job.status = JobStatus.running
+    job.log = "partial output"
+    account.sync_state = SyncState.syncing
+    account.sync_paused_until = datetime.now(UTC) + timedelta(hours=4)
+    account.pause_reason = "throttle"
+    session.commit()
+
+    recovered = sync_worker.recover_zombie_sync_jobs(session)
+
+    assert recovered == 1
+    session.refresh(job)
+    session.refresh(account)
+    assert job.status == JobStatus.failed
+    assert job.failure_kind == "interrupted"
+    assert job.completed_at is not None
+    assert job.log.startswith("partial output")
+    assert "[recovered]" in job.log
+    assert account.sync_state == SyncState.idle
+    assert account.sync_paused_until is None
+    assert account.pause_reason is None
+
+
+def test_recover_zombie_respects_pause_without_headroom(tmp_path):
+    """Initial sync incomplete but today's budget is spent: the pause stays
+    (resuming now would re-burn the provider quota)."""
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path, daily_sync_budget_mb=1)
+    job.status = JobStatus.running
+    account.sync_state = SyncState.syncing
+    account.traffic_date = datetime.now(UTC).date()
+    account.bytes_synced_today = 2 * 1024 * 1024  # over the 1 MiB budget
+    paused_until = datetime.now(UTC) + timedelta(hours=6)
+    account.sync_paused_until = paused_until
+    account.pause_reason = "budget"
+    session.commit()
+
+    sync_worker.recover_zombie_sync_jobs(session)
+
+    session.refresh(account)
+    session.refresh(job)
+    assert job.failure_kind == "interrupted"
+    assert account.sync_state == SyncState.idle
+    assert account.pause_reason == "budget"  # untouched
+    assert account.sync_paused_until is not None
+
+
+def test_recover_zombie_stale_traffic_date_is_fresh_budget(tmp_path):
+    """Yesterday's ledger does not count against today: a stale traffic_date
+    means full headroom — the pause clears."""
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path, daily_sync_budget_mb=1)
+    job.status = JobStatus.running
+    account.traffic_date = (datetime.now(UTC) - timedelta(days=1)).date()
+    account.bytes_synced_today = 5 * 1024 * 1024  # spent — but YESTERDAY
+    account.sync_paused_until = datetime.now(UTC) + timedelta(hours=6)
+    account.pause_reason = "budget"
+    session.commit()
+
+    sync_worker.recover_zombie_sync_jobs(session)
+
+    session.refresh(account)
+    assert account.sync_paused_until is None
+    assert account.pause_reason is None
+
+
+def test_recover_zombie_initial_complete_keeps_pause(tmp_path):
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path, initial_sync_completed_at=DONE)
+    job.status = JobStatus.running
+    account.sync_paused_until = datetime.now(UTC) + timedelta(hours=2)
+    account.pause_reason = "throttle"
+    session.commit()
+
+    sync_worker.recover_zombie_sync_jobs(session)
+
+    session.refresh(account)
+    assert account.pause_reason == "throttle"
+    assert account.sync_paused_until is not None
+
+
+def test_recover_zombie_closes_orphaned_pending_jobs(tmp_path):
+    """The queue is DB rows + an IN-MEMORY executor: a crash orphans pending
+    rows, and an orphaned pending row blocks create_sync_job for that
+    account FOREVER (the existing-job guard) — the sweep must close them."""
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    job.status = JobStatus.pending
+    job.log = None
+    session.commit()
+
+    recovered = sync_worker.recover_zombie_sync_jobs(session)
+
+    assert recovered == 1
+    session.refresh(job)
+    assert job.status == JobStatus.failed
+    assert job.failure_kind == "interrupted"
+    assert "[recovered]" in job.log
+    # The account is schedulable again: create_sync_job no longer blocked.
+    from mailfallback.services.sync_service import create_sync_job
+
+    assert create_sync_job(session, account.id, source="test") is not None
+
+
+def test_recover_zombie_skips_live_and_finished_jobs(tmp_path):
+    """Idempotent re-call safety: a running job whose process is alive
+    (_running_procs) is untouched; completed/failed jobs are never touched;
+    a healthy DB is a no-op."""
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    job.status = JobStatus.running
+    done = SyncJob(account_id=account.id, source="test", status=JobStatus.completed)
+    failed = SyncJob(account_id=account.id, source="test", status=JobStatus.failed)
+    session.add_all([done, failed])
+    session.commit()
+
+    sync_worker._running_procs[job.id] = MagicMock()  # alive process
+    try:
+        recovered = sync_worker.recover_zombie_sync_jobs(session)
+    finally:
+        sync_worker._running_procs.pop(job.id, None)
+
+    assert recovered == 0
+    session.refresh(job)
+    session.refresh(done)
+    assert job.status == JobStatus.running  # untouched
+    assert done.status == JobStatus.completed
+    assert failed.status == JobStatus.failed
+    # Healthy DB after the real recovery: still a no-op.
+    job.status = JobStatus.completed
+    session.commit()
+    assert sync_worker.recover_zombie_sync_jobs(session) == 0
