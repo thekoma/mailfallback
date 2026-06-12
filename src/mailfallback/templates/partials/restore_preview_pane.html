@@ -47,18 +47,25 @@
         </template>
       </div>
       <div class="ws-preview-actions">
-        <button class="ws-btn-primary" x-show="previewRef"
-                @click="addToStaging([previewRef])">
-          <i data-lucide="inbox" class="icon-sm icon-inline"></i> Add to staging
-        </button>
+        {# x-if, NOT x-show, for anything wearing ws-btn-primary/-danger:
+           their anti-Pico `display: inline-flex !important` beats x-show's
+           inline display:none, so an x-show'd primary action stays visible
+           (the Download anchor measurably did in message previews). The
+           ghost variants carry no !important display — x-show is fine there. #}
+        <template x-if="previewRef">
+          <button class="ws-btn-primary" @click="addToStaging([previewRef])">
+            <i data-lucide="inbox" class="icon-sm icon-inline"></i> Add to staging
+          </button>
+        </template>
         {# Attachment context: native download of the selected attachment
            replaces the webmail link (noise there — webmail is an optional
            add-on and the user came for the file). #}
-        <a class="ws-btn-primary ws-preview-download"
-           x-show="previewIsAttachment"
-           :href="previewIsAttachment ? attDownloadUrl(previewRef) : null">
-          <i data-lucide="download" class="icon-sm icon-inline"></i> Download attachment
-        </a>
+        <template x-if="previewIsAttachment">
+          <a class="ws-btn-primary ws-preview-download"
+             :href="attDownloadUrl(previewRef)">
+            <i data-lucide="download" class="icon-sm icon-inline"></i> Download attachment
+          </a>
+        </template>
         {% if webmail_enabled and webmail_url %}
         <a class="ws-btn-ghost ws-preview-webmail" :href="webmailUrl"
            target="_blank" rel="noopener"
