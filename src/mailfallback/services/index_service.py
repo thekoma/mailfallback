@@ -21,6 +21,8 @@ Known limitations:
 import hashlib
 import logging
 import os
+import threading
+import time
 from datetime import UTC, datetime
 from email import policy
 from email.parser import BytesHeaderParser, BytesParser
@@ -45,9 +47,38 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 1000
 
 # Tika extraction caps (restore spec): parts above the byte cap are never
-# sent to Tika; extracted text is stored truncated to the text cap.
+# sent to Tika; extracted text is stored truncated to TIKA_TEXT_CAP
+# CHARACTERS (a str slice, not bytes — approximate for multibyte text).
 TIKA_MAX_PART_BYTES = 20 * 1024 * 1024
 TIKA_TEXT_CAP = 204_800
+
+# Per-walk Tika accounting seam: _extract_attachment_text bumps these
+# thread-local counters on every attempt; the walk drivers
+# (upsert_message_set, backfill_attachments, backfill_attachment_content)
+# reset them on entry and emit ONE INFO summary on exit when any part was
+# attempted. This keeps _parse_attachments' contract (list[dict] | None)
+# untouched. Thread-local because a walk is synchronous within its thread,
+# so concurrent walks (scheduler threads) keep independent counters.
+_TIKA_STATS = threading.local()
+
+
+def _reset_tika_stats() -> None:
+    _TIKA_STATS.attempts = 0
+    _TIKA_STATS.misses = 0
+    _TIKA_STATS.elapsed = 0.0
+
+
+def _log_tika_stats(context: str) -> None:
+    attempts = getattr(_TIKA_STATS, "attempts", 0)
+    if not attempts:
+        return
+    logger.info(
+        "Tika extraction (%s): %d parts attempted, %d misses, %.1fs",
+        context,
+        attempts,
+        _TIKA_STATS.misses,
+        _TIKA_STATS.elapsed,
+    )
 
 
 def _hash_message_id(message_id: str) -> bytes:
@@ -93,6 +124,20 @@ def _parse_headers(path: str) -> dict | None:
 
 
 def _extract_attachment_text(payload: bytes, content_type: str) -> str | None:
+    """Tika extraction for one part, with per-walk accounting. Never raises.
+
+    Thin wrapper over _tika_put that bumps the thread-local walk counters
+    (attempts / misses / elapsed) — the seam behind _log_tika_stats.
+    """
+    start = time.monotonic()
+    text = _tika_put(payload, content_type)
+    _TIKA_STATS.attempts = getattr(_TIKA_STATS, "attempts", 0) + 1
+    _TIKA_STATS.misses = getattr(_TIKA_STATS, "misses", 0) + (1 if text is None else 0)
+    _TIKA_STATS.elapsed = getattr(_TIKA_STATS, "elapsed", 0.0) + (time.monotonic() - start)
+    return text
+
+
+def _tika_put(payload: bytes, content_type: str) -> str | None:
     """Plain-text extraction of one attachment part via Apache Tika. Never raises.
 
     PUT {tika_url}/tika/ mirrors the URL shape Dovecot's fts decoder uses
@@ -100,7 +145,8 @@ def _extract_attachment_text(payload: bytes, content_type: str) -> str | None:
     to work against this Tika container. Non-200, transport errors and
     empty/whitespace-only output all collapse to None at DEBUG level:
     extraction misses are routine (encrypted PDFs, exotic formats) and
-    must never fail indexing or sync.
+    must never fail indexing or sync. Stored text is capped at
+    TIKA_TEXT_CAP characters (not bytes).
     """
     try:
         resp = httpx.put(
@@ -227,6 +273,7 @@ def upsert_message_set(db: Session, account_id: str) -> int:
 
     seen_hashes: set[bytes] = set()
     touched = 0
+    _reset_tika_stats()
     try:
         for folder, filename, full_path in _walk_maildir(account.maildir_path):
             parsed = _parse_headers(full_path)
@@ -301,6 +348,9 @@ def upsert_message_set(db: Session, account_id: str) -> int:
         raise
     finally:
         db.commit()
+        # One summary per walk, even on partial failure; silent when no
+        # part was attempted (tika disabled, or no new attachments).
+        _log_tika_stats("index walk")
     return touched
 
 
@@ -510,6 +560,7 @@ def backfill_attachments(db: Session, account_id: str) -> int:
     )
     processed = 0
     now = datetime.now(UTC)
+    _reset_tika_stats()
     for row in pending:
         path = None
         for base in maildir_folder_bases(account.maildir_path, row.folder_path):
@@ -544,6 +595,7 @@ def backfill_attachments(db: Session, account_id: str) -> int:
         if processed % BATCH_SIZE == 0:
             db.commit()
     db.commit()
+    _log_tika_stats("attachment backfill")
     return processed
 
 
@@ -594,6 +646,7 @@ def backfill_attachment_content(db: Session, account_id: str) -> int:
         .all()
     )
     filled = 0
+    _reset_tika_stats()
     for visited, row in enumerate(pending, start=1):
         path = _locate_live_file(account, row)
         # path None: file gone — skip without marking; the next walk reconciles
@@ -620,4 +673,5 @@ def backfill_attachment_content(db: Session, account_id: str) -> int:
         if visited % BATCH_SIZE == 0:
             db.commit()
     db.commit()
+    _log_tika_stats("content backfill")
     return filled
