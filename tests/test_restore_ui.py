@@ -347,13 +347,16 @@ def test_restore_page_time_controls_row(client, db_session, default_store):
     assert "= snapshot day" in text
     assert '@click="clearCustomRange()"' in text
     assert '@click="applyCustomRange()"' in text
+    # Apply is visibly disabled until a pick exists (not a silent no-op).
+    assert ':disabled="!rangeStart"' in text
     # The popover must never be torn down (flatpickr instance) — no x-if.
     assert 'x-if="customPopoverOpen"' not in text
     # Sources + Deep search inline in the row (single-mail only); the deep
-    # hint is a tooltip now — honest copy, compact row.
-    assert 'x-model="includeLive"' in text
-    assert 'x-model="includeSnapshots"' in text
-    assert 'x-model="deepSearch"' in text
+    # hint is a tooltip now — honest copy, compact row. All three are LIVE
+    # like the chips beside them: changing one re-runs the active search.
+    assert 'x-model="includeLive" @change="_requeryActive()"' in text
+    assert 'x-model="includeSnapshots" @change="_requeryActive()"' in text
+    assert 'x-model="deepSearch" @change="_requeryActive()"' in text
     assert 'title="Also searches message bodies — active mail only, slower"' in text
     assert "also search message bodies (active mail only, slower)" not in text
     # Status text right-aligned at the row's edge.
@@ -380,6 +383,11 @@ def test_workspace_js_time_chips_default_all_time(client):
     assert "rangeEndIso" not in js
     # Chip clicks re-query whichever search already ran.
     assert "_requeryActive()" in js
+    # Re-querying with an emptied query box clears stale message results
+    # instead of leaving them under a newly-clicked chip (the attachment
+    # guard's mirror): the clear happens BEFORE any fetch.
+    run_search = js[js.index("async runSearch()") :]
+    assert "_clearMsgState()" in run_search[: run_search.index("await fetch")]
     # The flatpickr hook only records the PENDING selection; Apply commits.
     assert "applyCustomRange()" in js
     assert "clearCustomRange()" in js
