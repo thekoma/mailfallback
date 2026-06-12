@@ -1968,6 +1968,9 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   border-color: var(--ws-cyan);
   border-left-color: var(--ws-cyan);
 }
+/* The row behind the OPEN PREVIEW pane — ring without the checked fill
+   (shared semantics with the attachment table's tr.is-previewing). */
+.ws-result.is-previewing { border-color: var(--ws-cyan); }
 .ws-result input[type="checkbox"] {
   margin: .15rem 0 0;
   accent-color: var(--ws-cyan);
@@ -2043,9 +2046,15 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 
 /* === Workspace: cross-account results + preview pane === */
 /* Full-width results until a preview opens, then a two-column split — the
-   same dynamic treatment as .ws-att-grid. */
+   results list and the attachment table get the same dynamic treatment, so
+   their grids are CO-LOCATED: the responsive media blocks below override
+   these base rules by SOURCE ORDER (same specificity) — an .ws-att-grid base
+   rule defined later in the file would survive at mobile (measured: phantom
+   half-width column under the bottom-sheet preview). */
 .ws-results-grid { display: grid; grid-template-columns: 1fr; gap: 1rem; align-items: start; }
 .ws-results-grid.has-preview { grid-template-columns: 1.1fr 1fr; }
+.ws-att-grid { display: grid; grid-template-columns: 1fr; gap: 1rem; align-items: start; }
+.ws-att-grid.has-preview { grid-template-columns: 1.1fr 1fr; }
 /* Grid items default to min-width:auto, so the results column grows to
    max-content (page-wide h-scroll) and the subject/meta ellipsis never
    engages. Let every pane shrink; .ws-att-card needs this too so its
@@ -2420,15 +2429,9 @@ body.page-restore-workspace .content { padding-bottom: 5rem; }
 
 .ws-att-content-toggle { margin: 0; }
 
-/* Results table — full width until the preview opens, then split like the
-   single-mail results grid. */
-.ws-att-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1rem;
-  align-items: start;
-}
-.ws-att-grid.has-preview { grid-template-columns: 1.1fr 1fr; }
+/* Results table grid (.ws-att-grid) — ALL its rules (base + responsive)
+   are co-located with the .ws-results-grid twin in the cross-account
+   results section: the media blocks must beat the base by source order. */
 
 /* Workspace-card dressing + horizontal scroll fallback on narrow screens
    (the app's .table-wrap pattern, minus its nowrap-everything rule — the
@@ -2489,11 +2492,25 @@ body.page-restore-workspace .content { padding-bottom: 5rem; }
   outline: 2px solid var(--ws-cyan);
   outline-offset: -2px;
 }
-/* The row behind the open preview pane — mirrors .ws-result.is-selected
+/* CHECKED rows (unified selection) — mirrors .ws-result.is-selected
    (cyan-soft fill + cyan left accent). After :hover so it wins the cascade
    at equal specificity. */
 .ws-att-table tbody tr.is-selected td { background: var(--ws-cyan-soft); }
 .ws-att-table tbody tr.is-selected td:first-child { box-shadow: inset 3px 0 0 var(--ws-cyan); }
+/* The row behind the OPEN PREVIEW pane — outline ring, distinct from the
+   checked fill (both can apply at once). Outlines render on table rows —
+   the tr:focus-visible rule above already relies on that. */
+.ws-att-table tbody tr.is-previewing {
+  outline: 1px solid var(--ws-cyan);
+  outline-offset: -1px;
+}
+
+/* Selection checkbox cell — first column, mirrors the .ws-result checkbox. */
+.ws-att-check { width: 2rem; padding-right: 0 !important; }
+.ws-att-check input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--ws-cyan);
+}
 
 .ws-att-ticon-cell { width: 2.25rem; padding-right: 0 !important; }
 .ws-att-ticon { color: var(--ws-text-dim); }
@@ -2547,13 +2564,9 @@ body.page-restore-workspace .content { padding-bottom: 5rem; }
 
 .ws-att-size,
 .ws-att-date { white-space: nowrap; color: var(--ws-text-muted); }
-.ws-att-actions { white-space: nowrap; text-align: right; }
 
-/* Compact ghost variant for table-row actions. */
+/* Compact ghost variant for small row/toolbar actions. */
 .ws-root .ws-btn-ghost.ws-btn-sm { padding: .3rem .6rem; font-size: .75rem; }
-
-/* ≤768px responsive rules for .ws-att-grid live with the results-grid twin
-   in the bottom-sheet overlay block (cross-account results section). */
 
 /* Folder + Full preset specific */
 

@@ -195,8 +195,10 @@
             <template x-if="results.length > 0">
               <div class="ws-results">
                 <template x-for="r in results" :key="selKey(r)">
+                  {# is-selected = CHECKED, is-previewing = behind the open
+                     pane — same two-state semantics as the attachment rows. #}
                   <div class="ws-result"
-                       :class="{'is-selected': selected.includes(selKey(r))}">
+                       :class="{'is-selected': selected.includes(selKey(r)), 'is-previewing': isPreviewing(r)}">
                     <input type="checkbox"
                            :value="selKey(r)"
                            x-model="selected">
@@ -234,34 +236,6 @@
 
             {% include "partials/restore_preview_pane.html" %}
           </div>
-
-          <div class="ws-action-bar" :class="{'has-staging': staging.exists}"
-               x-show="results.length > 0" x-transition>
-            <label class="ws-inline">
-              <input type="checkbox"
-                     :checked="selected.length === results.length && results.length > 0"
-                     @change="toggleSelectAll($event.target.checked)">
-              <span>
-                <span x-text="selected.length"></span> /
-                <span x-text="results.length"></span> selected
-              </span>
-            </label>
-            <div class="ws-action-buttons">
-              <button class="ws-btn-ghost"
-                      :disabled="selected.length === 0"
-                      @click="addSelectedToStaging()">
-                <i data-lucide="inbox" class="icon-sm icon-inline"></i> Add to staging
-              </button>
-              <button class="ws-btn-primary"
-                      :disabled="selected.length === 0 || restoring"
-                      @click="restoreSelected()">
-                <i :data-lucide="restoring ? 'loader' : 'play'"
-                   :class="{'spin': restoring}"
-                   class="icon-sm icon-inline"></i>
-                <span x-text="restoring ? 'Restoring…' : 'Restore selected →'"></span>
-              </button>
-            </div>
-          </div>
         </div>
       </template>
 
@@ -298,33 +272,38 @@
                 <table class="ws-att-table">
                   <thead>
                     <tr>
+                      <th class="ws-att-check"></th>
                       <th class="ws-att-ticon-cell"></th>
                       <th>Attachment</th>
                       <th>Message</th>
                       <th>Size</th>
                       <th>Date</th>
-                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
                     <template x-for="a in attResults" :key="attKey(a)">
-                      {# Row highlight: the attachment behind the open
-                         preview — siblings of one message preview identical
-                         content, so the selection must be visible here.
-                         The whole row is the preview gesture (same as
-                         .ws-result-body, keyboard parity included); the
-                         download anchor and the actions cell stop
-                         propagation so their own actions don't ALSO swap
-                         the preview. #}
+                      {# Two-state rows, same semantics as .ws-result:
+                         is-selected = CHECKED (message-level key — sibling
+                         attachments of one message tick together: you stage
+                         the whole message), is-previewing = behind the open
+                         pane. The whole row is the preview gesture (keyboard
+                         parity included); the checkbox cell and the download
+                         anchor stop propagation so ticking/downloading never
+                         ALSO swaps the preview. #}
                       {# .self on the key handlers: a bubbled Enter/Space from
-                         the inner buttons/anchor must keep its native
+                         the inner checkbox/anchor must keep its native
                          activation — Alpine wraps .self OUTSIDE .prevent, so
                          the guard short-circuits before preventDefault. #}
-                      <tr :class="{'is-selected': attIsSelected(a)}"
+                      <tr :class="{'is-selected': selected.includes(selKey(a)), 'is-previewing': attIsPreviewing(a)}"
                           @click="openPreview(a)"
                           tabindex="0" role="button"
                           @keydown.enter.prevent.self="openPreview(a)"
                           @keydown.space.prevent.self="openPreview(a)">
+                        <td class="ws-att-check" @click.stop>
+                          <input type="checkbox"
+                                 :value="selKey(a)"
+                                 x-model="selected">
+                        </td>
                         <td class="ws-att-ticon-cell">
                           <i :data-lucide="attIcon(a.ext)" class="icon-md ws-att-ticon"></i>
                         </td>
@@ -360,13 +339,6 @@
                         </td>
                         <td class="ws-att-size" x-text="fmtSize(a.size_bytes)"></td>
                         <td class="ws-att-date" x-text="a.date_sent ? a.date_sent.slice(0, 10) : '—'"></td>
-                        <td class="ws-att-actions" @click.stop>
-                          {# "Preview email", not bare "Preview": in an
-                             attachment list that would read as previewing
-                             the FILE — the pane previews its message. #}
-                          <button type="button" class="ws-btn-ghost ws-btn-sm" @click="openPreview(a)">Preview email</button>
-                          <button type="button" class="ws-btn-ghost ws-btn-sm" @click="addToStaging([a])">Add to staging</button>
-                        </td>
                       </tr>
                     </template>
                   </tbody>
@@ -377,6 +349,40 @@
           </div>
         </div>
       </template>
+
+      {# Shared selection bar — ONE block for both search presets (the
+         user's unification ask): message-level selection feeding Add to
+         staging and Restore selected. In the attachment preset the count
+         is MESSAGES (sibling attachment rows share one key). Lives outside
+         the preset x-if templates; x-cloak stops the pre-Alpine flash. #}
+      <div class="ws-action-bar" :class="{'has-staging': staging.exists}"
+           x-show="(preset === 'single-mail' || preset === 'attachment') && selectableCount > 0"
+           x-transition x-cloak>
+        <label class="ws-inline">
+          <input type="checkbox"
+                 :checked="selected.length === selectableCount && selectableCount > 0"
+                 @change="toggleSelectAll($event.target.checked)">
+          <span>
+            <span x-text="selected.length"></span> /
+            <span x-text="selectableCount"></span> selected
+          </span>
+        </label>
+        <div class="ws-action-buttons">
+          <button class="ws-btn-ghost"
+                  :disabled="selected.length === 0"
+                  @click="addSelectedToStaging()">
+            <i data-lucide="inbox" class="icon-sm icon-inline"></i> Add to staging
+          </button>
+          <button class="ws-btn-primary"
+                  :disabled="selected.length === 0 || restoring"
+                  @click="restoreSelected()">
+            <i :data-lucide="restoring ? 'loader' : 'play'"
+               :class="{'spin': restoring}"
+               class="icon-sm icon-inline"></i>
+            <span x-text="restoring ? 'Restoring…' : 'Restore selected →'"></span>
+          </button>
+        </div>
+      </div>
 
       {# Folder preset #}
       <template x-if="preset === 'folder'">

@@ -382,7 +382,30 @@ function restoreWorkspace() {
       if (r.date_sent) parts.push(r.date_sent.slice(0, 10));
       return parts.filter(Boolean).join(' · ');
     },
-    selKey(r) { return r.account_id + ':' + r.message_id; },
+    // Selection is keyed at MESSAGE level for BOTH search presets — message
+    // rows and attachment rows each carry account_id + message_id_hash, so
+    // one shared `selected` array (and one selection bar) serves both.
+    // Sibling attachments of one message share the key on purpose: staging
+    // and restore operate on whole messages, never half of one.
+    selKey(r) { return r.account_id + ':' + r.message_id_hash; },
+    _activeRows() {
+      return this.preset === 'attachment' ? this.attResults : this.results;
+    },
+    _selectionByKey() {
+      // key → message ref of the active preset's rows. Object.fromEntries
+      // dedupes sibling attachment rows for free (same message-level key,
+      // same underlying message).
+      return Object.fromEntries(this._activeRows().map(r => [this.selKey(r), r]));
+    },
+    get selectableCount() {
+      // What "select all" would select — MESSAGES, not rows.
+      return new Set(this._activeRows().map(r => this.selKey(r))).size;
+    },
+    isPreviewing(r) {
+      // The row behind the open preview pane (message-level marker).
+      return this.previewOpen && !!this.previewRef
+        && this.selKey(this.previewRef) === this.selKey(r);
+    },
     async openPreview(r) {
       // Seq guard: rapid row clicks race their fetches — only the latest
       // request may write state, stale responses are dropped.
@@ -638,6 +661,8 @@ function restoreWorkspace() {
       this.attTotal = 0;
       this.attSearching = false;
       this.attSearched = false;
+      // Shared selection: keys could reference rows no longer visible.
+      this.selected = [];
     },
     toggleAttGroup(id) {
       this.attGroups = this.attGroups.includes(id)
@@ -657,8 +682,9 @@ function restoreWorkspace() {
     attKey(a) {
       return a.account_id + ':' + a.message_id_hash + ':' + a.part_index;
     },
-    attIsSelected(a) {
-      // The table row behind the open preview pane.
+    attIsPreviewing(a) {
+      // The exact attachment row behind the open preview pane (part-level:
+      // the user clicked THIS row, not its same-message sibling).
       return this.previewIsAttachment && this.attKey(this.previewRef) === this.attKey(a);
     },
     attachmentDownloadUrl(accountId, hashHex, partIndex) {
@@ -734,6 +760,7 @@ function restoreWorkspace() {
       this.statusText = 'Searching…';
       this.attResults = [];
       this.attTotal = 0;
+      this.selected = [];  // new result set — same clearing as runSearch
       this.preview = null;
       this.previewRef = null;
       this.previewOpen = false;
@@ -782,7 +809,7 @@ function restoreWorkspace() {
     },
 
     toggleSelectAll(checked) {
-      this.selected = checked ? this.results.map(r => this.selKey(r)) : [];
+      this.selected = checked ? Object.keys(this._selectionByKey()) : [];
     },
 
     async restoreSelected() {
@@ -796,24 +823,26 @@ function restoreWorkspace() {
       this.restoring = true;
       this.refreshIcons();
       try {
-        const byKey = Object.fromEntries(this.results.map(r => [this.selKey(r), r]));
+        // Preset-agnostic: rows from the active preset are message refs
+        // (attachment hits carry message_id too — resolve-uids needs it).
+        const byKey = this._selectionByKey();
         const byAccount = {};
         for (const key of this.selected) {
           const r = byKey[key];
-          if (r) (byAccount[r.account_id] ||= []).push(r.message_id);
+          if (r) (byAccount[r.account_id] ||= []).push(r);
         }
         const jobs = [];
         let skippedTotal = 0;
         let failure = '';
         const startedAccounts = new Set();  // accounts whose restore job started
         const missingKeys = new Set();      // keys not in live mail — unrestorable here
-        for (const [accountId, messageIds] of Object.entries(byAccount)) {
+        for (const [accountId, rows] of Object.entries(byAccount)) {
           const res = await fetch('/api/restore/resolve-uids', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
               account_id: accountId,
-              message_ids: messageIds,
+              message_ids: rows.map(r => r.message_id),
               include_all: this.includeAll,
             }),
           });
@@ -823,7 +852,12 @@ function restoreWorkspace() {
           }
           const {resolved, missing} = await res.json();
           skippedTotal += missing.length;
-          for (const mid of missing) missingKeys.add(accountId + ':' + mid);
+          // Map missing Message-Ids back into selKey space (keys are
+          // hash-based; the API reports raw Message-Ids).
+          const missingSet = new Set(missing);
+          for (const r of rows) {
+            if (missingSet.has(r.message_id)) missingKeys.add(this.selKey(r));
+          }
           if (Object.keys(resolved).length === 0) continue;
           // SEAM CONTRACT: `resolved` keys are namespace-prefixed IMAP paths
           // produced by /api/restore/resolve-uids — pass the mapping to
@@ -942,7 +976,9 @@ function restoreWorkspace() {
       }
     },
     addSelectedToStaging() {
-      const byKey = Object.fromEntries(this.results.map(r => [this.selKey(r), r]));
+      // Preset-agnostic: the active rows map to message refs (account_id +
+      // message_id_hash), which is all addToStaging sends.
+      const byKey = this._selectionByKey();
       return this.addToStaging(this.selected.map(k => byKey[k]));
     },
     async emptyStaging() {
