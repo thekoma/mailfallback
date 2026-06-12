@@ -865,7 +865,7 @@ function restoreWorkspace() {
           }),
         });
         if (!resp.ok) {
-          this.stagingStatus = `Push failed: ${resp.status}`;
+          this.stagingStatus = `Push failed: ${await this._errDetail(resp)}`;
           return;
         }
         const r = await resp.json();
@@ -894,6 +894,17 @@ function restoreWorkspace() {
       this._stagingTimers = [5000, 15000, 30000].map(
         ms => setTimeout(() => this.refreshStaging(), ms),
       );
+    },
+    async _errDetail(resp) {
+      // Hygiene 400s carry an actionable detail ("folder_mapping has empty
+      // or relative path segments") — surface it instead of a bare code.
+      try {
+        const body = await resp.json();
+        if (body && body.detail) {
+          return typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
+        }
+      } catch (e) { /* not JSON — fall through to the status code */ }
+      return `${resp.status}`;
     },
 
     async loadFolders() {
@@ -937,7 +948,7 @@ function restoreWorkspace() {
         if (resp.ok) {
           this.folderStatus = `Folder restore started — job ${(await resp.json()).job_id}`;
         } else {
-          this.folderStatus = `Failed: ${resp.status}`;
+          this.folderStatus = `Failed: ${await this._errDetail(resp)}`;
         }
       } finally {
         this.restoring = false;
@@ -967,7 +978,7 @@ function restoreWorkspace() {
         if (resp.ok) {
           this.fullStatus = `Full restore started — job ${(await resp.json()).job_id}`;
         } else {
-          this.fullStatus = `Failed: ${resp.status}`;
+          this.fullStatus = `Failed: ${await this._errDetail(resp)}`;
         }
       } finally {
         this.restoring = false;

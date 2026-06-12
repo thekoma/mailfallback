@@ -95,7 +95,19 @@ def test_create_restore_custom_folder_mapping_accepted(
 
 @pytest.mark.parametrize(
     "bad",
-    ["", "   ", "/lead", "trail/", "a//b", "a/../b", 'Rest"ored', "bad\x01name", "x" * 201],
+    [
+        "",
+        "   ",
+        "/lead",
+        "trail/",
+        "a//b",
+        "a/../b",
+        'Rest"ored',
+        "bad\x01name",
+        "bad\x7fname",  # DEL — outside _sanitize_imap_string's class
+        "bad\x85name",  # C1 control range
+        "x" * 201,
+    ],
 )
 def test_create_restore_garbage_folder_mapping_400(client, db_session, restore_api_fixtures, bad):
     """The workspace now feeds user-typed text into folder_mapping; the same

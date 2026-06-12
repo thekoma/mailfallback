@@ -385,6 +385,8 @@ def test_push_custom_folder_creates_manifest_and_audits(client, db_session, real
         'Archi"ve',  # would break the quoted IMAP atom
         "Arch\\ive",
         "bad\x01name",  # control chars
+        "bad\x7fname",  # DEL — outside _sanitize_imap_string's class
+        "bad\x85name",  # C1 control range
         "x" * 201,  # over the length cap
     ],
 )
