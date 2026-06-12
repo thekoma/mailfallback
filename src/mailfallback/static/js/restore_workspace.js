@@ -518,12 +518,28 @@ function restoreWorkspace() {
       // UTC — matches the server-side Restored/<date> stamp on staging pushes.
       return new Date().toISOString().slice(0, 10);
     },
+    _uniqueFolders(list) {
+      // Belt and braces over the server-side dedupe (cached or pre-fix
+      // responses elsewhere): Dovecot can LIST the same folder twice
+      // (stale list index, measured on an Outlook account), and a
+      // duplicate name means duplicate x-for keys — Alpine's keyed loop
+      // CRASHES and renders ZERO options. Dedupe once, where lists are
+      // stored; the templates' `f.full_name || f.name` keys stay unique
+      // downstream.
+      const seen = new Set();
+      return (list || []).filter(f => {
+        const key = f.full_name || f.name;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    },
     async ensureDestFolders(accountId) {
       // Lazy per-account cache for the "pick from existing folders" selects.
       if (!accountId || this._destFolderCache[accountId]) return;
       try {
         const resp = await fetch(`/api/accounts/${accountId}/mailboxes`);
-        if (resp.ok) this._destFolderCache[accountId] = await resp.json();
+        if (resp.ok) this._destFolderCache[accountId] = this._uniqueFolders(await resp.json());
       } catch (e) { /* picker stays empty — the text input still works */ }
     },
     ensureRestFolders() {
@@ -1126,7 +1142,7 @@ function restoreWorkspace() {
       try {
         const resp = await fetch(`/api/accounts/${this.accountId}/mailboxes`);
         if (!resp.ok) return;
-        this.folders = await resp.json();
+        this.folders = this._uniqueFolders(await resp.json());
         // The source list doubles as the destination picker cache for
         // restores back into the same mailbox.
         this._destFolderCache[this.accountId] = this.folders;

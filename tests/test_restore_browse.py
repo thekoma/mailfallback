@@ -87,6 +87,44 @@ def test_list_mailboxes(client, db_session, browse_fixtures):
     md.assert_called_once()
 
 
+def test_list_mailboxes_dedupes_and_skips_noselect(client, db_session, browse_fixtures):
+    """The Outlook-account quirk, measured live: Dovecot LIST can return the
+    same folder twice (byte-identical lines — stale dovecot.list.index) and
+    lists \\Noselect parent placeholders ([Gmail]). A duplicate crashes the
+    UI's keyed x-for (zero picker options rendered); a \\Noselect pick would
+    fail upstream. The endpoint returns unique, selectable folders only —
+    and spends no STATUS round-trip on the skipped lines."""
+    f = browse_fixtures
+    _login(client, db_session)
+    mock_conn, mock_create, mock_delete, mock_connect = _mock_dovecot_connection()
+
+    prefix = f"browseacct (browse@example.com) [{f['account'].id[-4:]}]"
+    mock_conn.list.return_value = (
+        "OK",
+        [
+            f'(\\HasNoChildren) "/" "{prefix}/INBOX"'.encode(),
+            f'(\\HasNoChildren) "/" "{prefix}/INBOX"'.encode(),  # byte-identical dupe
+            f'(\\Noselect \\HasChildren) "/" "{prefix}/[Gmail]"'.encode(),
+            f'(\\HasNoChildren) "/" "{prefix}/[Gmail]/All Mail"'.encode(),
+        ],
+    )
+    # Only TWO status calls may happen — a third raises StopIteration (500).
+    mock_conn.status.side_effect = [
+        ("OK", [f'"{prefix}/INBOX" (MESSAGES 42)'.encode()]),
+        ("OK", [f'"{prefix}/[Gmail]/All Mail" (MESSAGES 7)'.encode()]),
+    ]
+
+    with mock_create, mock_delete, mock_connect:
+        resp = client.get(f"/api/accounts/{f['account'].id}/mailboxes")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [m["name"] for m in data] == ["INBOX", "[Gmail]/All Mail"]
+    assert data[0]["messages"] == 42
+    assert data[1]["messages"] == 7
+    assert mock_conn.status.call_count == 2
+
+
 def test_list_messages(client, db_session, browse_fixtures):
     f = browse_fixtures
     _login(client, db_session)

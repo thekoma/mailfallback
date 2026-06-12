@@ -582,6 +582,20 @@ def test_workspace_staging_height_var_drives_bottom_offsets(client):
     assert "sticky/in-flow on desktop and a FIXED dock member" in css
 
 
+def test_workspace_js_folder_lists_deduped_at_storage(client):
+    """Folder lists are deduped ONCE, where they are stored. Dovecot can LIST
+    the same folder twice (stale dovecot.list.index — measured live on an
+    Outlook account): the duplicate `f.full_name || f.name` x-for key crashes
+    Alpine's keyed loop, which then renders ZERO picker options (the user's
+    'every account loads except this one'). The server dedupes too — the JS
+    helper covers cached or pre-fix responses. Both storage sites go through
+    it: the destination-picker cache and the folder-preset source list."""
+    js = client.get("/static/js/restore_workspace.js").text
+    assert "_uniqueFolders(list)" in js
+    assert "this._destFolderCache[accountId] = this._uniqueFolders(await resp.json())" in js
+    assert "this.folders = this._uniqueFolders(await resp.json())" in js
+
+
 def test_workspace_js_restore_confirms_share_reassurance(client):
     """Every restore entry point confirms first, closing with the shared
     non-destructive reassurance line (frozen copy); the staging Empty confirm
