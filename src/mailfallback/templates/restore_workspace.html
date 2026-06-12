@@ -63,15 +63,8 @@
         <label class="ws-inline"><input type="checkbox" x-model="includeSnapshots"> Snapshots</label>
       </fieldset>
 
-      {# Single-mail restores to origin — no destination pick needed there. #}
-      <label class="ws-field" x-show="preset !== 'single-mail'">
-        <span class="ws-field-label">Destination</span>
-        <select x-model="destinationId">
-          {% for acct in all_accounts %}
-          <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address or "—" }})</option>
-          {% endfor %}
-        </select>
-      </label>
+      {# Destination moved into the per-preset panels (the unified
+         destination panel partial) — the sidebar only picks the SOURCE. #}
     </aside>
 
     <main class="ws-panel">
@@ -346,23 +339,39 @@
       {# Folder preset #}
       <template x-if="preset === 'folder'">
         <div class="ws-folder-flow">
-          <p class="text-muted">Pick a folder to copy in full from the source mailbox's local backup.</p>
-          <label class="ws-field">
-            <span class="ws-field-label">Folder</span>
-            <select x-model="selectedFolder">
-              <option value="" x-text="folders.length ? 'Choose a folder…' : 'Loading folders…'"></option>
+          <p class="text-muted">Pick the folders to copy in full from the source mailbox's local backup.</p>
+          <div class="ws-field">
+            <span class="ws-field-label">Folders</span>
+            <div class="ws-folder-toolbar">
+              <button type="button" class="ws-btn-ghost ws-btn-sm" @click="selectAllFolders(true)">Select all</button>
+              <button type="button" class="ws-btn-ghost ws-btn-sm" @click="selectAllFolders(false)">None</button>
+              <span class="text-muted text-xsmall"
+                    x-text="selectedFolders.length + ' / ' + folders.length + ' selected'"></span>
+            </div>
+            <div class="ws-folder-list" x-show="folders.length">
               <template x-for="f in folders" :key="f.full_name || f.name">
-                <option :value="f.full_name || f.name" x-text="f.name"></option>
+                <label class="ws-inline">
+                  <input type="checkbox" :value="f.full_name || f.name" x-model="selectedFolders">
+                  <span x-text="f.name"></span>
+                  <span class="text-muted text-xsmall"
+                        x-text="f.messages != null ? '· ' + f.messages : ''"></span>
+                </label>
               </template>
-            </select>
-          </label>
+            </div>
+            <p class="text-muted text-xsmall" x-show="!folders.length">Loading folders…</p>
+          </div>
+
+          {% include "partials/restore_destination_panel.html" %}
+
           <button class="ws-btn-primary"
-                  :disabled="!selectedFolder || restoring"
+                  :disabled="!selectedFolders.length || restoring || (restFolderMode === 'custom' && !restCustomFolder.trim())"
                   @click="restoreFolder()">
             <i :data-lucide="restoring ? 'loader' : 'play'"
                :class="{'spin': restoring}"
                class="icon-sm icon-inline"></i>
-            <span x-text="restoring ? 'Restoring folder…' : 'Restore folder →'"></span>
+            <span x-text="restoring
+              ? 'Restoring…'
+              : 'Restore ' + selectedFolders.length + ' folder' + (selectedFolders.length === 1 ? '' : 's') + ' →'"></span>
           </button>
           <p class="text-muted text-xsmall" x-text="folderStatus" x-show="folderStatus"></p>
         </div>
@@ -378,8 +387,11 @@
               <p>Copies the source mailbox's entire local backup to the destination mailbox. This can take a while.</p>
             </div>
           </div>
+
+          {% include "partials/restore_destination_panel.html" %}
+
           <button class="ws-btn-danger"
-                  :disabled="restoring"
+                  :disabled="restoring || (restFolderMode === 'custom' && !restCustomFolder.trim())"
                   @click="restoreFull()">
             <i :data-lucide="restoring ? 'loader' : 'play'"
                :class="{'spin': restoring}"
@@ -419,13 +431,14 @@
     <div class="ws-push-group">
       <span class="ws-field-label">Destination</span>
       <label class="ws-inline">
-        <input type="radio" value="origin" x-model="pushDestination">
+        <input type="radio" value="origin" x-model="pushDestination" @change="ensurePushFolders()">
         Each message back to its origin mailbox
       </label>
       <label class="ws-inline">
-        <input type="radio" value="override" x-model="pushDestination">
+        <input type="radio" value="override" x-model="pushDestination" @change="ensurePushFolders()">
         Everything into:
-        <select x-model="pushOverrideId" :disabled="pushDestination !== 'override'">
+        <select x-model="pushOverrideId" :disabled="pushDestination !== 'override'"
+                @change="ensurePushFolders()">
           <template x-for="a in accounts" :key="a.id">
             <option :value="a.id" x-text="a.name + ' (' + (a.email || '—') + ')'"></option>
           </template>
@@ -440,10 +453,28 @@
       </label>
       <label class="ws-inline">
         <input type="radio" value="restored" x-model="pushFolderMode">
-        Everything into Restored/&lt;today&gt;
+        <span x-text="'Everything into Restored/' + todayStamp()"></span>
       </label>
+      <label class="ws-inline">
+        <input type="radio" value="custom" x-model="pushFolderMode" @change="ensurePushFolders()">
+        Custom folder
+      </label>
+      {# Input is the source of truth; the picker (override mode only — an
+         origin push has no single destination account to list) fills it. #}
+      <div class="ws-custom-folder" x-show="pushFolderMode === 'custom'">
+        <input type="text" x-model="pushCustomFolder" maxlength="200"
+               placeholder="Folder or folder/subfolder — created if missing">
+        <select x-show="pushDestination === 'override'" @change="pickPushFolder($event)">
+          <option value="">Pick from existing folders…</option>
+          <template x-for="f in pushPickerFolders" :key="f.full_name || f.name">
+            <option :value="f.name" x-text="f.name"></option>
+          </template>
+        </select>
+      </div>
     </div>
-    <button class="ws-btn-primary" :disabled="pushing" @click="pushStaging()">
+    <button class="ws-btn-primary"
+            :disabled="pushing || (pushFolderMode === 'custom' && !pushCustomFolder.trim())"
+            @click="pushStaging()">
       <span x-text="pushing ? 'Pushing…' : 'Confirm push'"></span>
     </button>
   </div>

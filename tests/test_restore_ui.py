@@ -26,10 +26,12 @@ def test_restore_mailbox_select_lists_accounts_without_backup_policy(
     acct = _setup_separator_test(db_session, default_store, client)
     resp = client.get("/restore")
     assert resp.status_code == 200
-    # The account id must appear in the Mailbox + Destination sidebar selects
-    # (folder/full presets). The search scope select renders its options from
-    # the data island via Alpine x-for, so it adds no Jinja-rendered value.
-    assert resp.text.count(f'value="{acct.id}"') == 2
+    # The account id must appear in the sidebar Mailbox select plus the
+    # "Another mailbox" select of the destination panel partial (included by
+    # the folder AND full presets). The search scope select renders its
+    # options from the data island via Alpine x-for, so it adds no
+    # Jinja-rendered value.
+    assert resp.text.count(f'value="{acct.id}"') == 3
     # ...and in the data island that feeds the scope select and maps account
     # ids to display names.
     assert f'"id": "{acct.id}"' in resp.text
@@ -240,6 +242,77 @@ def test_restore_page_preview_pane_close_and_attachment_actions(client, db_sessi
     assert "Download attachment" in resp.text
     # Both results grids expand/split dynamically with the preview pane.
     assert resp.text.count("'has-preview': previewOpen") == 2
+
+
+def test_restore_page_folder_preset_multiselect(client, db_session, default_store):
+    """The 'A folder / subset' preset offers a checkbox list of source folders
+    (multi-select) with select-all/none affordances; the submit button stays
+    disabled until at least one folder is checked."""
+    create_user(db_session, "folderui", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "folderui", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    assert "ws-folder-list" in resp.text
+    assert 'x-model="selectedFolders"' in resp.text
+    assert "selectAllFolders(true)" in resp.text
+    assert "selectAllFolders(false)" in resp.text
+    # Submit gating on the checked array.
+    assert "!selectedFolders.length" in resp.text
+    # The old single-folder select is gone.
+    assert 'x-model="selectedFolder"' not in resp.text
+
+
+def test_restore_page_unified_destination_panels(client, db_session, default_store):
+    """Folder + full presets share the destination panel partial (rest* state);
+    the push panel carries the same pattern on push* state. All three offer
+    the Custom folder mode: free-text input (source of truth) + a picker of
+    the destination's existing folders that fills it."""
+    create_user(db_session, "destui", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "destui", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    # The partial renders once per preset (folder + full).
+    assert resp.text.count('class="ws-dest-panel"') == 2
+    assert resp.text.count('x-model="restDestMode"') == 4  # 2 radios x 2 includes
+    assert resp.text.count('x-model="restFolderMode"') == 6  # 3 radios x 2 includes
+    assert resp.text.count('x-model="restCustomFolder"') == 2
+    # Push panel: third folder radio + its own custom input.
+    assert 'x-model="pushCustomFolder"' in resp.text
+    # Custom radio present in all three panels (2 partial includes + push).
+    assert resp.text.count('value="custom"') == 3
+    # Existing-folders pickers fill the input (input stays editable).
+    assert "pickRestFolder($event)" in resp.text
+    assert "pickPushFolder($event)" in resp.text
+    # The sidebar Destination select is gone — destination lives in the panels.
+    assert 'x-model="destinationId"' not in resp.text
+
+
+def test_workspace_js_restore_confirms_share_reassurance(client):
+    """Every restore entry point confirms first, closing with the shared
+    non-destructive reassurance line (frozen copy); the staging Empty confirm
+    keeps its own destructive wording (that one DOES delete staged copies)."""
+    resp = client.get("/static/js/restore_workspace.js")
+    assert resp.status_code == 200
+    js = resp.text
+    assert (
+        "Restores never delete anything: existing messages are kept "
+        "and duplicates are skipped." in js
+    )
+    # All four restore ops gate on a confirm BEFORE their first request.
+    for method in [
+        "async restoreSelected()",
+        "async pushStaging()",
+        "async restoreFolder()",
+        "async restoreFull()",
+    ]:
+        body = js[js.index(method) :]
+        assert "confirm(" in body[: body.index("await fetch")], method
+        assert "RESTORE_REASSURANCE" in body[: body.index("await fetch")], method
+    assert "Staged copies are removed" in js  # Empty's destructive confirm, unchanged
 
 
 def test_workspace_js_attachment_preset_chip_second(client):

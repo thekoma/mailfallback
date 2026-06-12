@@ -11,6 +11,12 @@ const ATT_EXT_GROUPS = {
 };
 const ATT_MIN_SIZE_BYTES = 1048576;  // the "> 1 MB" size chip
 
+// Shared confirm() reassurance — every restore entry point leads with an
+// op-specific line and closes with this EXACT copy (frozen contract, see
+// test_workspace_js_restore_confirms_share_reassurance). The staging Empty
+// confirm intentionally does NOT use it: that one deletes staged copies.
+const RESTORE_REASSURANCE = 'Restores never delete anything: existing messages are kept and duplicates are skipped.';
+
 function restoreWorkspace() {
   return {
     // === State ===
@@ -24,7 +30,6 @@ function restoreWorkspace() {
 
     // Inputs
     accountId: '',
-    destinationId: '',
     rangeStart: null,           // Date object — managed by flatpickr
     rangeEnd: null,             // Date object — managed by flatpickr
     snapshotDates: [],          // Array of YYYY-MM-DD strings
@@ -38,7 +43,16 @@ function restoreWorkspace() {
     includeAll: false,          // admin-only: audited cross-user scope escalation
     deepSearch: false,
     partial: false,
-    selectedFolder: '',
+    selectedFolders: [],        // folder-preset multi-select (full IMAP names)
+
+    // Unified destination panel — folder + full presets (one shared state
+    // set: only one panel is visible at a time, and both answer "where do
+    // restored messages go", like the sidebar select they replaced).
+    restDestMode: 'back',       // 'back' (into the source mailbox) | 'other'
+    restDestOtherId: '',
+    restFolderMode: 'original', // 'original' | 'restored' | 'custom'
+    restCustomFolder: '',
+    _destFolderCache: {},       // account id -> mailboxes list (lazy, per panel pickers)
 
     // Async/UI state
     searching: false,
@@ -80,7 +94,8 @@ function restoreWorkspace() {
     pushPanelOpen: false,
     pushDestination: 'origin',  // 'origin' | 'override' (the API gets an account id)
     pushOverrideId: '',
-    pushFolderMode: 'original', // 'original' | 'restored'
+    pushFolderMode: 'original', // 'original' | 'restored' | 'custom'
+    pushCustomFolder: '',
     pushing: false,             // guards against overlapping pushes
     _stagingTimers: [],         // post-push delayed refreshes — cleared on re-push
 
@@ -106,6 +121,21 @@ function restoreWorkspace() {
     get previewIsAttachment() {
       return !!(this.previewRef && this.previewRef.part_index !== undefined);
     },
+    // Destination pickers: the single account whose existing folders the
+    // custom-folder picker lists. A push to origin targets MANY accounts,
+    // so its picker only renders in override mode (template x-show).
+    get restPickerAccountId() {
+      return this.restDestMode === 'other' ? this.restDestOtherId : this.accountId;
+    },
+    get pushPickerAccountId() {
+      return this.pushDestination === 'override' ? this.pushOverrideId : '';
+    },
+    get restPickerFolders() {
+      return this._destFolderCache[this.restPickerAccountId] || [];
+    },
+    get pushPickerFolders() {
+      return this._destFolderCache[this.pushPickerAccountId] || [];
+    },
     get rangeStartIso() {
       if (!this.rangeStart) return null;
       const d = new Date(this.rangeStart);
@@ -121,11 +151,15 @@ function restoreWorkspace() {
 
     // === Lifecycle ===
     init() {
-      // Pick first mailbox
+      // Pick first mailbox. The "Another mailbox" select lives inside x-if
+      // templates (not in the DOM yet), but it renders the SAME Jinja option
+      // list as the sidebar Mailbox select — seed it from there so the
+      // select never displays an option its model doesn't hold.
       const sel = document.querySelector('[x-model="accountId"]');
-      if (sel && sel.options.length > 0) this.accountId = sel.options[0].value;
-      const destSel = document.querySelector('[x-model="destinationId"]');
-      if (destSel && destSel.options.length > 0) this.destinationId = destSel.options[0].value;
+      if (sel && sel.options.length > 0) {
+        this.accountId = sel.options[0].value;
+        this.restDestOtherId = sel.options[0].value;
+      }
 
       // Account names for result badges + scope options (data islands) and
       // webmail link target. The all-accounts island only exists for admins.
@@ -318,6 +352,57 @@ function restoreWorkspace() {
       // Source mailbox for the folder/full presets — search results live in
       // the single-mail preset and follow scopeAccountId instead.
       if (this.preset === 'folder') this.loadFolders();
+      // "Back into <source>" destination follows the source: refresh the
+      // custom-folder picker if it is open on the source account.
+      this.ensureRestFolders();
+    },
+
+    // === Unified destination panel (folder + full presets, push panel) ===
+    todayStamp() {
+      // UTC — matches the server-side Restored/<date> stamp on staging pushes.
+      return new Date().toISOString().slice(0, 10);
+    },
+    async ensureDestFolders(accountId) {
+      // Lazy per-account cache for the "pick from existing folders" selects.
+      if (!accountId || this._destFolderCache[accountId]) return;
+      try {
+        const resp = await fetch(`/api/accounts/${accountId}/mailboxes`);
+        if (resp.ok) this._destFolderCache[accountId] = await resp.json();
+      } catch (e) { /* picker stays empty — the text input still works */ }
+    },
+    ensureRestFolders() {
+      if (this.restFolderMode === 'custom') this.ensureDestFolders(this.restPickerAccountId);
+    },
+    ensurePushFolders() {
+      if (this.pushFolderMode === 'custom') this.ensureDestFolders(this.pushPickerAccountId);
+    },
+    pickRestFolder(event) {
+      // The text input is the source of truth — picking fills it (still
+      // editable), then the select snaps back to its placeholder.
+      if (event.target.value) this.restCustomFolder = event.target.value;
+      event.target.value = '';
+    },
+    pickPushFolder(event) {
+      if (event.target.value) this.pushCustomFolder = event.target.value;
+      event.target.value = '';
+    },
+    selectAllFolders(checked) {
+      this.selectedFolders = checked ? this.folders.map(f => f.full_name || f.name) : [];
+    },
+    _restTargetId() {
+      return this.restDestMode === 'other' ? this.restDestOtherId : this.accountId;
+    },
+    _restFolderMapping() {
+      // Anything but "original" is a destination root the worker nests
+      // everything under — including our dated Restored/ and typed paths.
+      if (this.restFolderMode === 'restored') return 'Restored/' + this.todayStamp();
+      if (this.restFolderMode === 'custom') return this.restCustomFolder.trim();
+      return 'original';
+    },
+    _restDestPhrase(target) {
+      return target === this.accountId
+        ? 'back into the same mailbox'
+        : `into "${this.accountName(target)}"`;
     },
 
     onScopeChange() {
@@ -577,6 +662,9 @@ function restoreWorkspace() {
       // Message-Ids to live IMAP UIDs, then submit one selection-mode restore
       // job per account with source == target.
       if (this.selected.length === 0) return;
+      const n = this.selected.length;
+      const where = n === 1 ? 'its origin mailbox' : 'their origin mailboxes';
+      if (!confirm(`Restore ${n} selected message${n === 1 ? '' : 's'} to ${where}?\n\n${RESTORE_REASSURANCE}`)) return;
       this.restoring = true;
       this.refreshIcons();
       try {
@@ -750,17 +838,31 @@ function restoreWorkspace() {
     },
     async pushStaging() {
       if (this.pushing) return;  // overlapping pushes would double-submit
+      const dest = this.pushDestination === 'origin' ? 'origin' : this.pushOverrideId;
+      if (!dest) {
+        this.stagingStatus = 'Pick a destination mailbox';
+        return;
+      }
+      const customFolder = this.pushFolderMode === 'custom' ? this.pushCustomFolder.trim() : null;
+      if (this.pushFolderMode === 'custom' && !customFolder) {
+        this.stagingStatus = 'Enter a destination folder';  // button disabled too — belt and braces
+        return;
+      }
+      const n = this.staging.count;
+      const where = dest === 'origin'
+        ? (n === 1 ? 'its origin mailbox' : 'their origin mailboxes')
+        : `"${this.accountName(dest)}"`;
+      if (!confirm(`Push ${n} staged message${n === 1 ? '' : 's'} to ${where}?\n\n${RESTORE_REASSURANCE}`)) return;
       this.pushing = true;
       try {
-        const dest = this.pushDestination === 'origin' ? 'origin' : this.pushOverrideId;
-        if (!dest) {
-          this.stagingStatus = 'Pick a destination mailbox';
-          return;
-        }
         const resp = await fetch('/api/restore/staging/push', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({destination: dest, folder_mode: this.pushFolderMode}),
+          body: JSON.stringify({
+            destination: dest,
+            folder_mode: this.pushFolderMode,
+            custom_folder: customFolder,
+          }),
         });
         if (!resp.ok) {
           this.stagingStatus = `Push failed: ${resp.status}`;
@@ -797,17 +899,27 @@ function restoreWorkspace() {
     async loadFolders() {
       if (!this.accountId) return;
       this.folders = [];
+      this.selectedFolders = [];  // stale picks must not survive a reload
       try {
         const resp = await fetch(`/api/accounts/${this.accountId}/mailboxes`);
         if (!resp.ok) return;
         this.folders = await resp.json();
+        // The source list doubles as the destination picker cache for
+        // restores back into the same mailbox.
+        this._destFolderCache[this.accountId] = this.folders;
       } catch (e) {
         // ignore
       }
     },
 
     async restoreFolder() {
-      if (!this.selectedFolder) return;
+      if (!this.selectedFolders.length) return;
+      const target = this._restTargetId();
+      const mapping = this._restFolderMapping();
+      if (!target || !mapping) return;  // custom mode with empty path — button disabled too
+      const n = this.selectedFolders.length;
+      const first = `Restore ${n} folder${n === 1 ? '' : 's'} from "${this.accountName(this.accountId)}" ${this._restDestPhrase(target)}?`;
+      if (!confirm(`${first}\n\n${RESTORE_REASSURANCE}`)) return;
       this.restoring = true;
       this.refreshIcons();
       try {
@@ -816,9 +928,10 @@ function restoreWorkspace() {
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             source_account_id: this.accountId,
-            target_account_id: this.destinationId,
+            target_account_id: target,
             restore_mode: 'folder',
-            selected_folders: [this.selectedFolder],
+            selected_folders: this.selectedFolders,
+            folder_mapping: mapping,
           }),
         });
         if (resp.ok) {
@@ -833,7 +946,11 @@ function restoreWorkspace() {
     },
 
     async restoreFull() {
-      if (!confirm('Full restore copies the entire mailbox. Continue?')) return;
+      const target = this._restTargetId();
+      const mapping = this._restFolderMapping();
+      if (!target || !mapping) return;  // custom mode with empty path — button disabled too
+      const first = `Restore the whole mailbox "${this.accountName(this.accountId)}" ${this._restDestPhrase(target)}?`;
+      if (!confirm(`${first}\n\n${RESTORE_REASSURANCE}`)) return;
       this.restoring = true;
       this.refreshIcons();
       try {
@@ -842,8 +959,9 @@ function restoreWorkspace() {
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             source_account_id: this.accountId,
-            target_account_id: this.destinationId,
+            target_account_id: target,
             restore_mode: 'full',
+            folder_mapping: mapping,
           }),
         });
         if (resp.ok) {

@@ -2462,6 +2462,78 @@ body.page-restore-workspace .content { padding-bottom: 5rem; }
 .ws-callout strong { display: block; margin-bottom: .25rem; color: var(--ws-text); }
 .ws-callout p { margin: 0; color: var(--ws-text-muted); font-size: .85rem; }
 
+/* Folder multi-select — scrollable checkbox list with a small toolbar. */
+.ws-folder-toolbar {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  margin-bottom: .4rem;
+}
+.ws-folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: .15rem;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--ws-input-bg);
+  border: 1px solid var(--ws-border);
+  border-radius: .35rem;
+  padding: .4rem .6rem;
+}
+.ws-folder-list .ws-inline { margin-right: 0; }
+.ws-folder-flow .ws-field { max-width: 480px; }
+
+/* Unified destination panel (folder + full presets) — same grouping rhythm
+   as the staging push panel. */
+.ws-dest-panel {
+  display: flex;
+  flex-direction: column;
+  gap: .8rem;
+  width: 100%;
+  max-width: 480px;
+  background: var(--ws-card);
+  border: 1px solid var(--ws-border);
+  border-radius: .5rem;
+  padding: .8rem 1rem;
+}
+.ws-dest-group { display: flex; flex-direction: column; gap: .3rem; }
+.ws-dest-group .ws-inline { margin-right: 0; }
+/* The "Another mailbox" select sits inside an inline radio label — compact,
+   not Pico's (or .ws-folder-flow's) full-width block select. */
+.ws-dest-panel select {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  padding: .3rem .5rem;
+  font-size: .85rem;
+  background: var(--ws-input-bg);
+  border: 1px solid var(--ws-border);
+  border-radius: .35rem;
+  color: var(--ws-text);
+  margin: 0;
+}
+
+/* Custom-folder input + existing-folders picker (dest panel + push panel). */
+.ws-custom-folder {
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+  margin-left: 1.35rem;  /* aligns under the radio label text */
+}
+.ws-custom-folder input[type="text"],
+.ws-custom-folder select {
+  width: 100%;
+  max-width: none;
+  padding: .35rem .5rem;
+  font-size: .85rem;
+  background: var(--ws-input-bg);
+  border: 1px solid var(--ws-border);
+  border-radius: .35rem;
+  color: var(--ws-text);
+  margin: 0;
+}
+
 .spin {
   animation: ws-spin 1s linear infinite;
 }
