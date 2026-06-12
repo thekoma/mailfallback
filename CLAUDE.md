@@ -40,9 +40,11 @@ src/mailfallback/
 │   ├── user_service.py       # User CRUD + auth
 │   ├── group_service.py      # Group CRUD + SSO sync
 │   ├── sync_service.py       # Job queue (create/get/list)
-│   ├── sync_worker.py        # Execute mbsync subprocess
+│   ├── sync_worker.py        # Execute mbsync subprocess + byte sampler/ledger + crash sweep
+│   ├── sync_failures.py      # Classify failed syncs: throttled/transient vs real errors
+│   ├── sync_budget.py        # Daily budget resolution + progress/ETA + backoff math
 │   ├── mbsync_config.py      # Generate .mbsyncrc files
-│   ├── scheduler.py          # APScheduler periodic sync
+│   ├── scheduler.py          # APScheduler periodic sync + pause gate/expiry tick
 │   ├── store_service.py      # Mail store management + path derivation + orphan detection
 │   ├── stats_service.py      # Per-account stats from Dovecot doveadm API
 │   ├── dovecot_manager.py    # Dovecot HTTP API (reload, mailbox stats)
@@ -95,8 +97,9 @@ docker compose exec mailfallback uv run alembic upgrade head
 - **Admin check**: `user.role.value != "admin"` -> redirect to `/`; in service layer compare against `UserRole.admin` enum directly
 - **Field allowlists**: Update functions use `_UPDATABLE_*_FIELDS` sets to restrict which columns can be changed (see `account_service.py`, `user_service.py`, `store_service.py`)
 - **Inline styles**: All CSS in `static/css/style.css`, use classes not inline styles
-- **JavaScript**: All JS in `static/js/app.js`, no inline `<script>` blocks
+- **JavaScript**: All JS in `static/js/` (`core.js` + per-page files like `account-detail.js`, `restore_workspace.js`), no inline `<script>` blocks
 - **Icons**: Lucide via CDN, use classes `icon-sm/md/lg/xl icon-inline`
+- **Sync failure classification**: throttled/transient/budget_paused are self-recovering pauses, never error states (`sync_failures.py` + `sync_budget.py`); only `error` is red in the UI
 - **New columns with NOT NULL**: Always add `server_default` in migrations
 - **Sidebar active state**: `request.url.path` checked in `base.html` to add `class="active"` on current nav link
 - **Login page isolation**: `body.login-page` class hides sidebar and centers content when `user` is not set
@@ -127,6 +130,7 @@ Uses **UUID-based paths** with **LAYOUT=fs** and **SubFolders Verbatim**. Folder
 - **User <-> Account**: Many-to-many via `account_owners` join table — supports multiple owners per account and multiple accounts per user
 - **Group**: Owner (User FK) + members (many-to-many `group_members`) + accounts (many-to-many `group_accounts`). `sso_sync` flag auto-syncs membership from OIDC group claims
 - **Account -> SyncJob**: One-to-many with cascade delete
+- **Sync budget (migration 021)**: Account carries the daily traffic ledger (`traffic_date` + `bytes_synced_today`, UTC day), `daily_sync_budget_mb` (NULL = provider default, 0 = unlimited), the scheduler pause gate (`sync_paused_until` + `pause_reason` ∈ budget|throttle|transient), and initial-sync markers (`initial_sync_completed_at` + `initial_sync_total_messages`). `SyncJob.failure_kind` is a plain string: throttled|budget_paused|transient|interrupted|error — only `error` is a red UI state, the rest self-recover
 - **StoreMigration**: Per-account or per-user-home migration. `account_id` set = maildir migration, `user_id` set = dovecot-home migration. Status phases (pending/copying/verifying/cleaning/completed/failed), crash recovery on startup
 - **Store deletion**: Blocked when accounts or user homes still on the store — must drain first via `get_store_contents()`
 - **Orphan detection**: `store_service.detect_orphans()` finds UUID directories on disk not matching any account in the database
