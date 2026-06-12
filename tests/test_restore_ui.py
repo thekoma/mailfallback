@@ -472,9 +472,11 @@ def test_workspace_css_responsive_grid_and_preview_overlay(client):
     assert "max-height: 80vh" in block
     assert "overflow-y: auto" in block
     assert "z-index: 70" in block
-    # Staging-bar lift twin (same constant as .ws-action-bar.has-staging).
-    assert ".ws-preview.has-staging { bottom: 4.5rem; }" in css
-    assert ".ws-action-bar.has-staging { bottom: 4.5rem; }" in css
+    # Staging-bar lift twins — derived from the bar's REAL measured height
+    # (--ws-staging-h; the bar wraps at narrow widths, a fixed constant let
+    # it cover the lifted elements).
+    assert ".ws-preview.has-staging { bottom: calc(var(--ws-staging-h, 4rem) + .5rem); }" in css
+    assert ".ws-action-bar.has-staging { bottom: calc(var(--ws-staging-h, 4rem) + .5rem); }" in css
     # Medium widths: results may shrink, preview keeps a usable minimum.
     assert "grid-template-columns: minmax(0, 1.1fr) minmax(280px, 1fr);" in css
     # SOURCE ORDER pin: the responsive overrides share specificity (0,2,0)
@@ -492,6 +494,35 @@ def test_workspace_css_responsive_grid_and_preview_overlay(client):
     # Clickable attachment rows: Pico paints ANY [role=button] (tag-agnostic
     # attribute selector) — the neutralizer must exist (.ws-result-body lesson).
     assert '.ws-att-table tbody tr[role="button"]' in css
+
+
+def test_workspace_staging_height_var_drives_bottom_offsets(client):
+    """Every bottom offset that must clear the docked staging bar derives from
+    --ws-staging-h — the bar's ResizeObserver-measured height. At <=768px the
+    bar flex-wraps to 2+ rows, so the old 4.5rem/64px constants lied exactly
+    when it mattered: the fixed bar covered the sticky selection bar. JS owns
+    the var (0px while hidden); CSS consumes it at every dependent site."""
+    js = client.get("/static/js/restore_workspace.js").text
+    assert "ResizeObserver" in js
+    assert "'--ws-staging-h'" in js
+    # Explicit 0px mirror on the exists flip: RO across display:none is not
+    # guaranteed in every engine, and the bar's x-transition delays
+    # display:none past $nextTick on leave.
+    assert "$watch('staging.exists'" in js
+
+    css = client.get("/static/css/style.css").text
+    # Action-bar lift + mobile preview-sheet lift + push-panel anchor.
+    assert css.count("calc(var(--ws-staging-h, 4rem) + .5rem)") == 3
+    # Content padding keeps its own breathing-room offset on the same var.
+    assert "padding-bottom: calc(var(--ws-staging-h, 4rem) + 1.5rem)" in css
+    # The stale magic constants are gone.
+    assert "bottom: 4.5rem" not in css
+    assert "bottom: 64px" not in css
+    # The selection bar layers below the staging bar (50) so partial overlaps
+    # during transitions stack predictably.
+    action_bar = css[css.index(".ws-action-bar {") :]
+    action_bar = action_bar[: action_bar.index("}")]
+    assert "z-index: 40" in action_bar
 
 
 def test_workspace_js_restore_confirms_share_reassurance(client):
