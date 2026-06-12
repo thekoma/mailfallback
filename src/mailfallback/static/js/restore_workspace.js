@@ -1,8 +1,22 @@
+// Attachment type-filter groups — chip id → extensions (lowercase, no dot,
+// the index's documented `ext` contract). No "Other" chip: the search API
+// only supports ext IN-lists, and a chip that can't filter would lie
+// (copy-must-match-behavior).
+const ATT_EXT_GROUPS = {
+  pdf: ['pdf'],
+  doc: ['doc', 'docx', 'odt', 'rtf', 'txt'],
+  sheet: ['xls', 'xlsx', 'ods', 'csv'],
+  image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'svg'],
+  archive: ['zip', 'rar', '7z', 'tar', 'gz'],
+};
+const ATT_MIN_SIZE_BYTES = 1048576;  // the "> 1 MB" size chip
+
 function restoreWorkspace() {
   return {
     // === State ===
     presets: [
       {id: 'single-mail', label: 'A single mail', icon: 'mail'},
+      {id: 'attachment', label: 'An attachment', icon: 'paperclip'},
       {id: 'folder', label: 'A folder / subset', icon: 'folder'},
       {id: 'full', label: 'The whole mailbox', icon: 'alert-triangle'},
     ],
@@ -34,6 +48,23 @@ function restoreWorkspace() {
     statusText: '',
     restoring: false,
 
+    // Attachment preset state
+    attGroupDefs: [
+      {id: 'pdf', label: 'PDF'},
+      {id: 'doc', label: 'Documents'},
+      {id: 'sheet', label: 'Sheets'},
+      {id: 'image', label: 'Images'},
+      {id: 'archive', label: 'Archives'},
+    ],
+    attGroups: [],              // selected type-group ids (multi-select)
+    attMinSize: null,           // null | ATT_MIN_SIZE_BYTES
+    attIncludeContent: false,   // default ON when Tika is on (init reads the data attr)
+    attResults: [],
+    attTotal: 0,
+    attSearching: false,
+    attSearched: false,
+    _attSeq: 0,                 // monotonic seq — stale search responses are dropped
+
     // Preview pane state
     preview: null,
     previewRef: null,           // the result row behind the open preview — staging adds need its ids
@@ -63,6 +94,11 @@ function restoreWorkspace() {
     fullStatus: '',
 
     // === Computed ===
+    // The shared search row's submit button spinner — each search preset
+    // owns its busy flag.
+    get anySearching() {
+      return this.preset === 'attachment' ? this.attSearching : this.searching;
+    },
     get rangeStartIso() {
       if (!this.rangeStart) return null;
       const d = new Date(this.rangeStart);
@@ -90,6 +126,9 @@ function restoreWorkspace() {
       this.accountsAll = this._parseIsland('ws-accounts-all-data');
       this.accounts = this.accountsAccessible;
       this.webmailUrl = (this.$el && this.$el.dataset.webmailUrl) || '';
+      // Content search defaults ON exactly when its toggle exists (the
+      // template gates both on the same tika_enabled flag).
+      this.attIncludeContent = !!(this.$el && this.$el.dataset.tikaEnabled);
       // Pre-pick a push-override destination so the select isn't empty when
       // the user switches the destination radio to "override".
       if (this.accounts.length) this.pushOverrideId = this.accounts[0].id;
@@ -257,6 +296,7 @@ function restoreWorkspace() {
       this.preview = null;
       this.previewRef = null;
       this.previewOpen = false;
+      this._clearAttState();
       this.refreshIcons();
       if (id === 'folder') this.loadFolders();
     },
@@ -277,6 +317,7 @@ function restoreWorkspace() {
       this.preview = null;
       this.previewRef = null;
       this.previewOpen = false;
+      this._clearAttState();
       this.fetchSnapshotDates();
     },
 
@@ -292,6 +333,12 @@ function restoreWorkspace() {
         this.pushOverrideId = this.accounts.length ? this.accounts[0].id : '';
       }
       this.onScopeChange();
+    },
+
+    submitSearch() {
+      // The shared search row serves two presets — route by the active one.
+      if (this.preset === 'attachment') return this.runAttachmentSearch();
+      return this.runSearch();
     },
 
     async runSearch() {
@@ -350,6 +397,143 @@ function restoreWorkspace() {
       } finally {
         this.searching = false;
         this.refreshIcons();
+      }
+    },
+
+    // === Attachment search ===
+    _clearAttState() {
+      this._attSeq++;  // drop in-flight responses
+      this.attResults = [];
+      this.attTotal = 0;
+      this.attSearching = false;
+      this.attSearched = false;
+    },
+    toggleAttGroup(id) {
+      this.attGroups = this.attGroups.includes(id)
+        ? this.attGroups.filter(g => g !== id)
+        : [...this.attGroups, id];
+      this.onAttFilterChange();
+    },
+    toggleAttMinSize() {
+      this.attMinSize = this.attMinSize === null ? ATT_MIN_SIZE_BYTES : null;
+      this.onAttFilterChange();
+    },
+    onAttFilterChange() {
+      // Live filters: visible results must never go stale relative to the
+      // chips — re-run once a search happened (the seq guard handles races).
+      if (this.attSearched) this.runAttachmentSearch();
+    },
+    attKey(a) {
+      return a.account_id + ':' + a.message_id_hash + ':' + a.part_index;
+    },
+    attDownloadUrl(a) {
+      return `/api/restore/attachments/${a.account_id}/${a.message_id_hash}/${a.part_index}/download`
+        + (this.includeAll ? '?include_all=true' : '');
+    },
+    attIcon(ext) {
+      const e = (ext || '').toLowerCase();
+      if (ATT_EXT_GROUPS.sheet.includes(e)) return 'file-spreadsheet';
+      if (ATT_EXT_GROUPS.image.includes(e)) return 'image';
+      if (ATT_EXT_GROUPS.archive.includes(e)) return 'archive';
+      return 'file-text';
+    },
+    _attNameSplit(a) {
+      // "report.pdf" → ["report", ".pdf"] — the extension renders accented.
+      const name = a.filename || '(unnamed)';
+      const ext = (a.ext || '').toLowerCase();
+      if (ext && name.toLowerCase().endsWith('.' + ext)) {
+        const cut = name.length - ext.length - 1;
+        return [name.slice(0, cut), name.slice(cut)];
+      }
+      return [name, ''];
+    },
+    attNameBase(a) { return this._attNameSplit(a)[0]; },
+    attNameExt(a) { return this._attNameSplit(a)[1]; },
+    attMeta(a) {
+      return [a.from_addr || '?', a.folder_path || ''].filter(Boolean).join(' · ');
+    },
+    attSnippetParts(snippet) {
+      // XSS contract: ts_headline output is HOSTILE text extracted from mail
+      // attachments, carrying [[[/]]] match markers. Split it into segments
+      // the template renders as TEXT nodes (x-text) — never x-html.
+      if (!snippet) return [];
+      const segs = [];
+      let rest = snippet;
+      while (rest) {
+        const open = rest.indexOf('[[[');
+        if (open === -1) {
+          segs.push({mark: false, text: rest});
+          break;
+        }
+        if (open > 0) segs.push({mark: false, text: rest.slice(0, open)});
+        rest = rest.slice(open + 3);
+        const close = rest.indexOf(']]]');
+        if (close === -1) {
+          // Unbalanced marker — render the remainder unhighlighted.
+          segs.push({mark: false, text: rest});
+          break;
+        }
+        segs.push({mark: true, text: rest.slice(0, close)});
+        rest = rest.slice(close + 3);
+      }
+      return segs.filter(s => s.text);
+    },
+    async runAttachmentSearch() {
+      const hasFilters = this.attGroups.length > 0 || this.attMinSize !== null;
+      if (!this.query.trim() && !hasFilters) {
+        // Nothing to ask for — also clears stale results when the last
+        // filter is toggled off with an empty query.
+        this._clearAttState();
+        this.statusText = '';
+        return;
+      }
+      const seq = ++this._attSeq;
+      this.attSearching = true;
+      this.attSearched = true;
+      this.statusText = 'Searching…';
+      this.attResults = [];
+      this.attTotal = 0;
+      this.preview = null;
+      this.previewRef = null;
+      this.previewOpen = false;
+      this.refreshIcons();
+      try {
+        const exts = this.attGroups.length
+          ? this.attGroups.flatMap(g => ATT_EXT_GROUPS[g] || [])
+          : null;
+        const resp = await fetch('/api/restore/attachments/search', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            query: this.query,
+            account_ids: this.scopeAccountId ? [this.scopeAccountId] : null,
+            include_all: this.includeAll,
+            exts,
+            min_size: this.attMinSize,
+            include_content: this.attIncludeContent,
+            page: 1,
+            page_size: 100,
+          }),
+        });
+        if (!resp.ok) {
+          if (seq === this._attSeq) this.statusText = `Search failed: ${resp.status}`;
+          return;
+        }
+        const body = await resp.json();
+        if (seq !== this._attSeq) return;
+        this.attResults = body.results || [];
+        this.attTotal = body.total || 0;
+        // Honest counts: what's visible vs what matched (page_size cap).
+        const shown = this.attResults.length;
+        this.statusText = `${shown} attachment${shown === 1 ? '' : 's'}`
+          + (this.attTotal > shown ? ` of ${this.attTotal}` : '');
+      } catch (e) {
+        if (seq === this._attSeq) this.statusText = `Search error: ${e.message}`;
+      } finally {
+        if (seq === this._attSeq) {
+          this.attSearching = false;
+          this.refreshIcons();
+        }
       }
     },
 

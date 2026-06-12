@@ -136,8 +136,10 @@ def test_restore_page_renders_staging_ui(client, db_session, default_store):
     assert 'x-model="pushFolderMode"' in resp.text
     assert 'value="original"' in resp.text
     assert 'value="restored"' in resp.text
-    # Add-to-staging entry points: preview pane + selection action bar.
-    assert resp.text.count("Add to staging") == 2
+    # Add-to-staging entry points: the shared preview pane partial (included
+    # once per search preset: single-mail + attachment), the selection action
+    # bar, and the attachment table's per-row button.
+    assert resp.text.count("Add to staging") == 4
     assert "addToStaging([previewRef])" in resp.text
     assert "addSelectedToStaging()" in resp.text
     # Bar actions.
@@ -183,6 +185,85 @@ def test_restore_staging_bar_webmail_link_when_enabled(
     assert resp.status_code == 200
     assert "http://localhost:8001?_task=mail&amp;_mbox=Staging" in resp.text
     assert "Open in webmail" in resp.text
+
+
+def test_restore_page_renders_attachment_preset(client, db_session, default_store):
+    """The 'An attachment' preset ships its panel: type/size filter chips,
+    results table with download links and XSS-safe snippet rendering, and
+    per-row Preview / Add-to-staging actions wired to the shared plumbing."""
+    create_user(db_session, "attui", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "attui", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    # Panel template + filter chips + results table markup.
+    assert "preset === 'attachment'" in resp.text
+    assert "ws-fchip" in resp.text
+    assert "ws-att-table" in resp.text
+    # Filename is a real anchor to the download endpoint (native download).
+    assert "attDownloadUrl(a)" in resp.text
+    # Snippet renders via the marker-split contract — text nodes only,
+    # NEVER x-html (ts_headline output is hostile attachment text).
+    assert "attSnippetParts(a.content_snippet)" in resp.text
+    assert "ws-snip-mark" in resp.text
+    assert "x-html" not in resp.text
+    # Row actions delegate to the existing preview/staging methods.
+    assert "openPreview(a)" in resp.text
+    assert "addToStaging([a])" in resp.text
+    # Shared search row routes by preset (message vs attachment search).
+    assert "submitSearch()" in resp.text
+    # Empty state copy.
+    assert "No attachments match" in resp.text
+
+
+def test_workspace_js_attachment_preset_chip_second(client):
+    """The 'An attachment' chip sits SECOND in the presets array (frozen
+    visual contract) with the paperclip icon."""
+    resp = client.get("/static/js/restore_workspace.js")
+    assert resp.status_code == 200
+    js = resp.text
+    assert "'An attachment'" in js
+    assert "paperclip" in js
+    single = js.index("id: 'single-mail'")
+    attachment = js.index("id: 'attachment'")
+    folder = js.index("id: 'folder'")
+    assert single < attachment < folder
+
+
+def test_restore_page_content_toggle_absent_without_tika(client, db_session, default_store):
+    """Tika off (the test default) → no 'Search inside attachments' toggle
+    (copy-must-match-behavior) and the data attribute reads falsy so the JS
+    state stays include_content=False."""
+    create_user(db_session, "attnotika", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "attnotika", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    assert "Search inside attachments" not in resp.text
+    assert 'x-model="attIncludeContent"' not in resp.text
+    assert 'data-tika-enabled=""' in resp.text
+
+
+def test_restore_page_content_toggle_present_with_tika(
+    client, db_session, default_store, monkeypatch
+):
+    """Tika on → the content toggle renders (default ON via the data
+    attribute the JS init reads)."""
+    from mailfallback.config import settings
+
+    monkeypatch.setattr(settings, "tika_enabled", True)
+    create_user(db_session, "atttika", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "atttika", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    assert "Search inside attachments" in resp.text
+    assert "text extracted via Tika" in resp.text
+    assert 'x-model="attIncludeContent"' in resp.text
+    assert 'data-tika-enabled="1"' in resp.text
 
 
 def _setup_separator_test(db_session, default_store, client):

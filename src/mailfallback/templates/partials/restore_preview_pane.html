@@ -1,0 +1,41 @@
+{# Message preview pane — shared by the single-mail and attachment presets.
+   Included once inside each preset's x-if template (only one preset renders
+   at a time, so the Alpine preview state never paints twice). All fields
+   render via x-text — never x-html (message content is hostile input). #}
+<div class="ws-preview" x-show="previewOpen" x-transition>
+  <h4 class="ws-field-label">Preview</h4>
+  <template x-if="previewLoading"><p class="text-muted text-small">Loading…</p></template>
+  <template x-if="!previewLoading && preview">
+    <div>
+      <div class="ws-preview-subject" x-text="preview.subject || '(no subject)'"></div>
+      <p class="ws-preview-kv">
+        <strong>From</strong> <span x-text="preview.from_addr || '?'"></span>
+        <strong>To</strong> <span x-text="(preview.to_addrs || []).join(', ') || '—'"></span><br>
+        <strong>Date</strong> <span x-text="preview.date_sent ? preview.date_sent.slice(0,16).replace('T',' ') : '—'"></span>
+        <strong>Folder</strong> <span x-text="preview.folder_path"></span>
+        <strong>Source</strong> <span x-text="preview.source"></span>
+      </p>
+      <div class="ws-preview-body" x-text="preview.body_snippet || '(no text)'"></div>
+      <div class="ws-preview-atts" x-show="preview.attachments && preview.attachments.length">
+        <span class="ws-field-label">Attachments</span>
+        <template x-for="(a, ai) in preview.attachments" :key="ai">
+          <span class="ws-att-chip"><span x-text="a.filename"></span><span class="text-muted" x-text="' · ' + fmtSize(a.size_bytes)"></span></span>
+        </template>
+      </div>
+      <div class="ws-preview-actions">
+        <button class="ws-btn-primary" x-show="previewRef"
+                @click="addToStaging([previewRef])">
+          <i data-lucide="inbox" class="icon-sm icon-inline"></i> Add to staging
+        </button>
+        {% if webmail_enabled and webmail_url %}
+        <a class="ws-btn-ghost ws-preview-webmail" :href="webmailUrl"
+           target="_blank" rel="noopener"
+           x-show="preview.alive_in_live">Open webmail</a>
+        {% endif %}
+      </div>
+    </div>
+  </template>
+  <template x-if="!previewLoading && !preview">
+    <p class="text-muted text-small">Preview unavailable for this message.</p>
+  </template>
+</div>

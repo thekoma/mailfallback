@@ -133,6 +133,10 @@ def restore_page(request: Request, db: Session = Depends(get_db)):
             "recoveries": recoveries,
             "calendar_days": CALENDAR_DAYS,
             "settings": settings,
+            # Gates the attachment preset's "Search inside attachments"
+            # toggle — rendered only when content search can actually work
+            # (copy-must-match-behavior).
+            "tika_enabled": settings.tika_enabled,
         },
     )
 

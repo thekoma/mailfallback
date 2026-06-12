@@ -1,4 +1,6 @@
-<div x-data="restoreWorkspace()" x-init="init()" class="ws-root" data-webmail-url="{{ webmail_url }}">
+<div x-data="restoreWorkspace()" x-init="init()" class="ws-root"
+     data-webmail-url="{{ webmail_url }}"
+     data-tika-enabled="{{ '1' if tika_enabled else '' }}">
   {# Data island (data, not code): account id → name/email for the Alpine component.
      Accessible accounts only (ownership OR groups) — the search privacy default. #}
   <script type="application/json" id="ws-accounts-data">{{ accounts_json | safe }}</script>
@@ -28,8 +30,11 @@
     </template>
   </div>
 
-  <div class="ws-grid">
-    <aside class="ws-sidebar">
+  {# The attachment preset is search-row-driven only — no sidebar fields
+     apply, so the whole column collapses (x-show, not x-if: the flatpickr
+     instance inside must stay alive across preset switches). #}
+  <div class="ws-grid" :class="{'ws-grid-nosidebar': preset === 'attachment'}">
+    <aside class="ws-sidebar" x-show="preset !== 'attachment'">
       {# Single-mail searches across accounts via the scope select in the search
          row; the source mailbox only matters for the folder/full presets. #}
       <label class="ws-field" x-show="preset !== 'single-mail'">
@@ -70,35 +75,45 @@
     </aside>
 
     <main class="ws-panel">
+      {# Shared search row — drives the message search (single-mail) AND the
+         attachment search; the submit routes by preset via submitSearch().
+         It sits OUTSIDE the preset x-if templates so both presets share the
+         scope select, the audited admin toggle and the query input without
+         duplicated controls (x-show keeps the input state alive across
+         preset switches). #}
+      <div class="ws-search ws-search-shared"
+           x-show="preset === 'single-mail' || preset === 'attachment'">
+        <form @submit.prevent="submitSearch()" class="ws-search-row">
+          {# Options render from the active dataset (accessible vs all) via
+             Alpine so the admin toggle swap re-renders them. #}
+          <select x-model="scopeAccountId" class="ws-scope" @change="onScopeChange()">
+            <option value="" x-text="'All mailboxes (' + accounts.length + ')'"></option>
+            <template x-for="a in accounts" :key="a.id">
+              <option :value="a.id" x-text="a.name + ' (' + (a.email || '—') + ')'"></option>
+            </template>
+          </select>
+          {% if user.role.value == "admin" %}
+          <label class="ws-inline ws-admin-toggle">
+            <input type="checkbox" role="switch" x-model="includeAll" @change="onIncludeAllChange()">
+            All users' mailboxes <span class="text-muted text-xsmall">— audited</span>
+          </label>
+          {% endif %}
+          <input type="text" x-model="query" autocomplete="off"
+                 :placeholder="preset === 'attachment' ? 'Search attachments…' : 'Search subject, sender…'">
+          <button type="submit" class="ws-btn-primary" :disabled="anySearching">
+            <template x-if="!anySearching">
+              <span><i data-lucide="search" class="icon-sm icon-inline"></i> Search</span>
+            </template>
+            <template x-if="anySearching">
+              <span><i data-lucide="loader" class="icon-sm icon-inline spin"></i> Searching…</span>
+            </template>
+          </button>
+        </form>
+      </div>
+
       {# Single-mail / search-first preset #}
       <template x-if="preset === 'single-mail'">
         <div class="ws-search">
-          <form @submit.prevent="runSearch()" class="ws-search-row">
-            {# Options render from the active dataset (accessible vs all) via
-               Alpine so the admin toggle swap re-renders them. #}
-            <select x-model="scopeAccountId" class="ws-scope" @change="onScopeChange()">
-              <option value="" x-text="'All mailboxes (' + accounts.length + ')'"></option>
-              <template x-for="a in accounts" :key="a.id">
-                <option :value="a.id" x-text="a.name + ' (' + (a.email || '—') + ')'"></option>
-              </template>
-            </select>
-            {% if user.role.value == "admin" %}
-            <label class="ws-inline ws-admin-toggle">
-              <input type="checkbox" role="switch" x-model="includeAll" @change="onIncludeAllChange()">
-              All users' mailboxes <span class="text-muted text-xsmall">— audited</span>
-            </label>
-            {% endif %}
-            <input type="text" x-model="query" placeholder="Search subject, sender…" autocomplete="off">
-            <button type="submit" class="ws-btn-primary" :disabled="searching">
-              <template x-if="!searching">
-                <span><i data-lucide="search" class="icon-sm icon-inline"></i> Search</span>
-              </template>
-              <template x-if="searching">
-                <span><i data-lucide="loader" class="icon-sm icon-inline spin"></i> Searching…</span>
-              </template>
-            </button>
-          </form>
-
           <label class="ws-inline ws-deep-toggle">
             <input type="checkbox" x-model="deepSearch">
             Deep search <span class="text-muted text-xsmall">— also search message bodies (active mail only, slower)</span>
@@ -173,43 +188,7 @@
               </div>
             </template>
 
-            <div class="ws-preview" x-show="previewOpen" x-transition>
-              <h4 class="ws-field-label">Preview</h4>
-              <template x-if="previewLoading"><p class="text-muted text-small">Loading…</p></template>
-              <template x-if="!previewLoading && preview">
-                <div>
-                  <div class="ws-preview-subject" x-text="preview.subject || '(no subject)'"></div>
-                  <p class="ws-preview-kv">
-                    <strong>From</strong> <span x-text="preview.from_addr || '?'"></span>
-                    <strong>To</strong> <span x-text="(preview.to_addrs || []).join(', ') || '—'"></span><br>
-                    <strong>Date</strong> <span x-text="preview.date_sent ? preview.date_sent.slice(0,16).replace('T',' ') : '—'"></span>
-                    <strong>Folder</strong> <span x-text="preview.folder_path"></span>
-                    <strong>Source</strong> <span x-text="preview.source"></span>
-                  </p>
-                  <div class="ws-preview-body" x-text="preview.body_snippet || '(no text)'"></div>
-                  <div class="ws-preview-atts" x-show="preview.attachments && preview.attachments.length">
-                    <span class="ws-field-label">Attachments</span>
-                    <template x-for="(a, ai) in preview.attachments" :key="ai">
-                      <span class="ws-att-chip"><span x-text="a.filename"></span><span class="text-muted" x-text="' · ' + fmtSize(a.size_bytes)"></span></span>
-                    </template>
-                  </div>
-                  <div class="ws-preview-actions">
-                    <button class="ws-btn-primary" x-show="previewRef"
-                            @click="addToStaging([previewRef])">
-                      <i data-lucide="inbox" class="icon-sm icon-inline"></i> Add to staging
-                    </button>
-                    {% if webmail_enabled and webmail_url %}
-                    <a class="ws-btn-ghost ws-preview-webmail" :href="webmailUrl"
-                       target="_blank" rel="noopener"
-                       x-show="preview.alive_in_live">Open webmail</a>
-                    {% endif %}
-                  </div>
-                </div>
-              </template>
-              <template x-if="!previewLoading && !preview">
-                <p class="text-muted text-small">Preview unavailable for this message.</p>
-              </template>
-            </div>
+            {% include "partials/restore_preview_pane.html" %}
           </div>
 
           <div class="ws-action-bar" :class="{'has-staging': staging.exists}"
@@ -238,6 +217,123 @@
                 <span x-text="restoring ? 'Restoring…' : 'Restore selected →'"></span>
               </button>
             </div>
+          </div>
+        </div>
+      </template>
+
+      {# Attachment preset — name/type/size search over the local index,
+         plus content search when Tika is enabled. Driven by the shared
+         search row above; chips refine, rows download/preview/stage. #}
+      <template x-if="preset === 'attachment'">
+        <div class="ws-att-flow">
+          <div class="ws-att-filters">
+            <span class="ws-att-filters-label">Type</span>
+            <template x-for="g in attGroupDefs" :key="g.id">
+              <button type="button" class="ws-fchip"
+                      :class="{'is-on': attGroups.includes(g.id)}"
+                      @click="toggleAttGroup(g.id)" x-text="g.label"></button>
+            </template>
+            <span class="ws-att-filters-label">Size</span>
+            <button type="button" class="ws-fchip"
+                    :class="{'is-on': attMinSize !== null}"
+                    @click="toggleAttMinSize()">&gt; 1 MB</button>
+          </div>
+
+          <div class="ws-att-content-row">
+            {% if tika_enabled %}
+            <label class="ws-inline ws-att-content-toggle">
+              <input type="checkbox" x-model="attIncludeContent" @change="onAttFilterChange()">
+              Search inside attachments <span class="text-muted text-xsmall">— text extracted via Tika</span>
+            </label>
+            {% endif %}
+            <p class="ws-status text-muted text-xsmall" x-text="statusText" x-show="statusText"></p>
+          </div>
+
+          {# Loading skeletons #}
+          <template x-if="attSearching && attResults.length === 0">
+            <div class="ws-results">
+              <template x-for="i in 3" :key="i">
+                <div class="ws-skeleton">
+                  <div class="ws-skeleton-line w-60"></div>
+                  <div class="ws-skeleton-line w-40"></div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          {# Empty state #}
+          <template x-if="!attSearching && attSearched && attResults.length === 0">
+            <div class="ws-empty">
+              <i data-lucide="paperclip" class="icon-xl"></i>
+              <p>No attachments match. Try different terms or filters.</p>
+            </div>
+          </template>
+
+          {# Results table + the shared preview pane: full-width table until
+             a preview opens, then the two split like the single-mail grid. #}
+          <div class="ws-att-grid" :class="{'has-preview': previewOpen}">
+            <template x-if="attResults.length > 0">
+              <div class="ws-att-card">
+                <table class="ws-att-table">
+                  <thead>
+                    <tr>
+                      <th class="ws-att-ticon-cell"></th>
+                      <th>Attachment</th>
+                      <th>Message</th>
+                      <th>Size</th>
+                      <th>Date</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="a in attResults" :key="attKey(a)">
+                      <tr>
+                        <td class="ws-att-ticon-cell">
+                          <i :data-lucide="attIcon(a.ext)" class="icon-md ws-att-ticon"></i>
+                        </td>
+                        <td class="ws-att-main">
+                          {# Real anchor → native browser download (the
+                             endpoint sets Content-Disposition: attachment). #}
+                          <a :href="attDownloadUrl(a)" class="ws-att-name"
+                             :title="'Download ' + (a.filename || 'attachment')">
+                            <span x-text="attNameBase(a)"></span><span class="ws-att-ext" x-text="attNameExt(a)"></span>
+                          </a>
+                          {# XSS contract: the snippet is hostile extracted
+                             text with [[[/]]] match markers — split into
+                             segments, render each as a TEXT node. No x-html. #}
+                          <div class="ws-att-snippet text-xsmall" x-show="a.content_snippet">
+                            <template x-for="(seg, si) in attSnippetParts(a.content_snippet)" :key="si">
+                              <span :class="seg.mark ? 'ws-snip-mark' : ''" x-text="seg.text"></span>
+                            </template>
+                          </div>
+                        </td>
+                        <td class="ws-att-msg">
+                          <div class="ws-att-msgsub">
+                            <span class="ws-att-msgsub-text" x-text="a.subject || '(no subject)'"></span>
+                            <span class="ws-badge ws-badge-acct" x-text="accountName(a.account_id)"></span>
+                          </div>
+                          <div class="ws-att-msgmeta">
+                            <span x-text="attMeta(a)"></span>
+                            <span class="ws-badge ws-badge-live" x-show="a.alive_in_live">live</span>
+                            <span class="ws-badge ws-badge-snap" x-show="a.snapshots && a.snapshots.length" x-text="'snap ×' + a.snapshots.length"></span>
+                            <span class="ws-badge ws-badge-gone"
+                                  x-show="!a.alive_in_live && !(a.snapshots && a.snapshots.length)"
+                                  title="No longer in live mail and not in any snapshot">gone</span>
+                          </div>
+                        </td>
+                        <td class="ws-att-size" x-text="fmtSize(a.size_bytes)"></td>
+                        <td class="ws-att-date" x-text="a.date_sent ? a.date_sent.slice(0, 10) : '—'"></td>
+                        <td class="ws-att-actions">
+                          <button type="button" class="ws-btn-ghost ws-btn-sm" @click="openPreview(a)">Preview</button>
+                          <button type="button" class="ws-btn-ghost ws-btn-sm" @click="addToStaging([a])">Add to staging</button>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+            {% include "partials/restore_preview_pane.html" %}
           </div>
         </div>
       </template>
