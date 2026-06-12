@@ -3,7 +3,20 @@
    at a time, so the Alpine preview state never paints twice). All fields
    render via x-text — never x-html (message content is hostile input). #}
 <div class="ws-preview" x-show="previewOpen" x-transition>
-  <h4 class="ws-field-label">Preview</h4>
+  <div class="ws-preview-head">
+    <h4 class="ws-field-label">Preview</h4>
+    <button type="button" class="ws-preview-close" @click="closePreview()"
+            title="Close preview" aria-label="Close preview">
+      <i data-lucide="x" class="icon-sm"></i>
+    </button>
+  </div>
+  {# Attachment context: sibling attachments of the SAME message preview the
+     same content — without this line (and the table-row highlight) clicking
+     another row looks like nothing happened. #}
+  <p class="ws-preview-attsel text-xsmall" x-show="previewIsAttachment">
+    <i data-lucide="paperclip" class="icon-sm icon-inline"></i>
+    <span x-text="previewRef ? (previewRef.filename || '(unnamed)') : ''"></span><span class="text-muted" x-text="previewRef && previewRef.size_bytes != null ? ' · ' + fmtSize(previewRef.size_bytes) : ''"></span>
+  </p>
   <template x-if="previewLoading"><p class="text-muted text-small">Loading…</p></template>
   <template x-if="!previewLoading && preview">
     <div>
@@ -27,10 +40,18 @@
                 @click="addToStaging([previewRef])">
           <i data-lucide="inbox" class="icon-sm icon-inline"></i> Add to staging
         </button>
+        {# Attachment context: native download of the selected attachment
+           replaces the webmail link (noise there — webmail is an optional
+           add-on and the user came for the file). #}
+        <a class="ws-btn-primary ws-preview-download"
+           x-show="previewIsAttachment"
+           :href="previewIsAttachment ? attDownloadUrl(previewRef) : null">
+          <i data-lucide="download" class="icon-sm icon-inline"></i> Download attachment
+        </a>
         {% if webmail_enabled and webmail_url %}
         <a class="ws-btn-ghost ws-preview-webmail" :href="webmailUrl"
            target="_blank" rel="noopener"
-           x-show="preview.alive_in_live">Open webmail</a>
+           x-show="preview.alive_in_live && !previewIsAttachment">Open webmail</a>
         {% endif %}
       </div>
     </div>

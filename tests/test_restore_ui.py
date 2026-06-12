@@ -146,7 +146,7 @@ def test_restore_page_renders_staging_ui(client, db_session, default_store):
     assert "emptyStaging()" in resp.text
     assert "pushStaging()" in resp.text
     # Staging feedback slot lives in the bar — statusText only renders inside
-    # the single-mail preset, the bar works in every preset.
+    # the two search presets, the bar works in every preset.
     assert 'x-text="stagingStatus"' in resp.text
     # No pre-Alpine flash: bar + panel are cloaked until Alpine boots.
     assert resp.text.count("x-cloak") >= 2
@@ -215,6 +215,31 @@ def test_restore_page_renders_attachment_preset(client, db_session, default_stor
     assert "submitSearch()" in resp.text
     # Empty state copy.
     assert "No attachments match" in resp.text
+
+
+def test_restore_page_preview_pane_close_and_attachment_actions(client, db_session, default_store):
+    """The shared preview pane carries an explicit close button, shows which
+    attachment it was opened from (selected line + table-row highlight), and
+    swaps 'Open webmail' for a 'Download attachment' anchor in the attachment
+    context. Both results grids stay full-width until a preview opens."""
+    create_user(db_session, "pvui", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "pvui", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    # Close affordance (real button, in both included copies of the partial).
+    assert resp.text.count("ws-preview-close") == 2
+    assert "closePreview()" in resp.text
+    # Attachment-context feedback: selected-attachment line + row highlight.
+    assert "ws-preview-attsel" in resp.text
+    assert "previewIsAttachment" in resp.text
+    assert "attIsSelected(a)" in resp.text
+    # Attachment-context action: native download of the selected attachment.
+    assert "attDownloadUrl(previewRef)" in resp.text
+    assert "Download attachment" in resp.text
+    # Both results grids expand/split dynamically with the preview pane.
+    assert resp.text.count("'has-preview': previewOpen") == 2
 
 
 def test_workspace_js_attachment_preset_chip_second(client):

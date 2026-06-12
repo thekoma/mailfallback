@@ -100,6 +100,12 @@ function restoreWorkspace() {
     get anySearching() {
       return this.preset === 'attachment' ? this.attSearching : this.searching;
     },
+    // The open preview came from an attachment hit (vs a message row) —
+    // drives the pane's selected-attachment line, the Download action and
+    // the webmail link swap.
+    get previewIsAttachment() {
+      return !!(this.previewRef && this.previewRef.part_index !== undefined);
+    },
     get rangeStartIso() {
       if (!this.rangeStart) return null;
       const d = new Date(this.rangeStart);
@@ -278,6 +284,15 @@ function restoreWorkspace() {
         }
       }
     },
+    closePreview() {
+      // Bump the seq so an in-flight openPreview fetch can't reopen the pane
+      // (its guarded writes and finally all no-op on a stale seq).
+      this._previewSeq++;
+      this.previewOpen = false;
+      this.preview = null;
+      this.previewRef = null;
+      this.previewLoading = false;
+    },
 
     // === Actions ===
     applyPreset(id) {
@@ -436,6 +451,10 @@ function restoreWorkspace() {
     },
     attKey(a) {
       return a.account_id + ':' + a.message_id_hash + ':' + a.part_index;
+    },
+    attIsSelected(a) {
+      // The table row behind the open preview pane.
+      return this.previewIsAttachment && this.attKey(this.previewRef) === this.attKey(a);
     },
     attDownloadUrl(a) {
       return `/api/restore/attachments/${a.account_id}/${a.message_id_hash}/${a.part_index}/download`
