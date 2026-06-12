@@ -270,12 +270,48 @@ function restoreWorkspace() {
       if (this.accounts.length) this.pushOverrideId = this.accounts[0].id;
 
       this._initCalendar();
+      this._initStagingHeightVar();
       this.refreshIcons();
 
       // No default range: timePreset starts at 'all' — searches run unfiltered
       // until the user narrows them (the old silent 7-day default hid hits).
       this.fetchSnapshotDates();
       this.refreshStaging();
+    },
+
+    _initStagingHeightVar() {
+      // ONE source of truth for every bottom offset that must clear the
+      // docked staging bar (sticky action bar, mobile preview sheet, push
+      // panel, content padding): the bar WRAPS at narrow widths
+      // (flex-wrap ≤768px) so any fixed 4.5rem-style constant lies exactly
+      // when the bar grows past one row — it covered the selection bar.
+      const bar = document.querySelector('.ws-staging-bar');
+      const root = document.documentElement;
+      if (!bar) {
+        root.style.setProperty('--ws-staging-h', '0px');
+        return;
+      }
+      const update = () => {
+        // offsetHeight is 0 while x-show keeps the bar display:none.
+        root.style.setProperty('--ws-staging-h', Math.ceil(bar.offsetHeight) + 'px');
+      };
+      // Observe once at init — the element is always in the DOM (x-show
+      // only toggles display) and the observer tracks wrap/resize growth.
+      if (window.ResizeObserver) {
+        new ResizeObserver(update).observe(bar);
+      }
+      // Not every engine fires RO across display:none flips (and the bar's
+      // x-transition delays display:none past $nextTick on leave) — mirror
+      // the exists flag explicitly: 0px the moment the bar starts leaving,
+      // re-measure once it is shown again.
+      this.$watch('staging.exists', exists => {
+        if (!exists) {
+          root.style.setProperty('--ws-staging-h', '0px');
+        } else {
+          this.$nextTick(update);
+        }
+      });
+      update();
     },
 
     _parseIsland(id) {

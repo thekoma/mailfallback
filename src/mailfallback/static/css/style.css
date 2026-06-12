@@ -2183,10 +2183,11 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
     z-index: 70;
     box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.35);
   }
-  /* Keep the docked staging bar reachable under the sheet — same lift
-     constant as .ws-action-bar.has-staging. */
+  /* Keep the docked staging bar reachable under the sheet — same VAR as
+     .ws-action-bar.has-staging (the bar's real measured height; it wraps
+     to 2+ rows exactly at this breakpoint). */
   .ws-results-grid.has-preview .ws-preview.has-staging,
-  .ws-att-grid.has-preview .ws-preview.has-staging { bottom: 4.5rem; }
+  .ws-att-grid.has-preview .ws-preview.has-staging { bottom: calc(var(--ws-staging-h, 4rem) + .5rem); }
 }
 
 /* Action bar */
@@ -2203,6 +2204,9 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   font-size: .85rem;
   position: sticky;
   bottom: 1rem;
+  /* Above content, below the staging bar (50) — partial overlaps during
+     transitions must layer predictably. */
+  z-index: 40;
   box-shadow: 0 8px 24px rgba(0,0,0,0.2);
 }
 .ws-action-buttons { display: flex; align-items: center; gap: .5rem; }
@@ -2252,7 +2256,9 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 .ws-push-panel {
   position: fixed;
   right: 2rem;
-  bottom: 64px;   /* clears the staging bar */
+  /* Clears the staging bar — its real measured height, not a constant
+     (the panel only opens while the bar exists, so the var is live). */
+  bottom: calc(var(--ws-staging-h, 4rem) + .5rem);
   z-index: 51;
   width: 380px;
   background: var(--ws-card);
@@ -2291,9 +2297,13 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 }
 .ws-preview-actions .ws-preview-webmail { margin-top: 0; }
 
-/* Keep page content (and the sticky selection bar) clear of the fixed bar. */
-body.page-restore-workspace .content { padding-bottom: 5rem; }
-.ws-action-bar.has-staging { bottom: 4.5rem; }
+/* Keep page content (and the sticky selection bar) clear of the fixed bar.
+   --ws-staging-h is the bar's REAL measured height (ResizeObserver in
+   restore_workspace.js, 0px while hidden): at narrow widths the bar WRAPS
+   to 2+ rows, so any fixed constant lies exactly when it matters. The 4rem
+   fallback covers pre-Alpine paint. */
+body.page-restore-workspace .content { padding-bottom: calc(var(--ws-staging-h, 4rem) + 1.5rem); }
+.ws-action-bar.has-staging { bottom: calc(var(--ws-staging-h, 4rem) + .5rem); }
 
 @media (max-width: 768px) {
   .ws-staging-bar { left: 0; flex-wrap: wrap; gap: .5rem; padding: .6rem 1rem; }
