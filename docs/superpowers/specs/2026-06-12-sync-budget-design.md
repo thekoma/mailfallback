@@ -53,25 +53,36 @@ Verified against the official man page, the NEWS changelog, and the live wire
 
 ## Design
 
-### 1. Throttle classification (sync_worker)
+### 1. Failure classification (sync_worker)
 
 Signature table per provider matched against the mbsync log tail:
 
 - Gmail: `[OVERQUOTA]`, `Too many simultaneous connections`
 - Microsoft: M365 throttling responses (`Request is throttled`, server-busy
   BYE variants)
+- **Transient network**: `Connection reset`, `unexpected EOF`, `Broken pipe`,
+  connect/data timeouts — a dropped connection is not an error and not a
+  throttle: it gets a SHORT backoff (2 min, ×2, cap 30 min).
 - Generic: extensible list, first match wins.
 
 New nullable column `sync_jobs.failure_kind` (`throttled` | `budget_paused` |
-`error`) — no JobStatus enum surgery. A throttled/budget-paused job is **not**
-an error in any UI surface.
+`transient` | `interrupted` | `error`) — no JobStatus enum surgery. Only
+`error` is an error in UI surfaces; everything else is a self-recovering
+state.
 
 ### 2. Byte meter
 
 Sampler thread during the run (joins the existing live-log machinery): walks
-the account maildir every ~30 s summing `st_size` of files with mtime ≥ run
-start. Feeds both the live progress (msgs + bytes) and the budget enforcer.
+the account maildir every ~30 s. One pass yields **cumulative on-disk message
+count and bytes** (totals, not deltas — restart-proof by construction) plus
+the per-run delta (files with mtime ≥ run start). Feeds the live progress
+(msgs + bytes), the budget enforcer, and the progress/ETA math (§7).
 Depends on `CopyArrivalDate no` (see toolbox).
+
+**Crash-safe ledger**: the sampler flushes `bytes_synced_today` and the
+progress counters to the DB at every tick — a container death never forgets
+today's quota spend (resuming with an empty ledger would burn the provider
+quota twice).
 
 ### 3. Traffic ledger
 
@@ -107,17 +118,39 @@ New columns `accounts.sync_paused_until` (timestamptz) + `accounts.pause_reason`
 - Scheduler skips accounts with `sync_paused_until > now()`.
 - Manual "Sync now" overrides the pause with warning copy (it may burn quota).
 
-### 7. Initial-sync state
+### 7. Initial-sync state, progress % and ETA
 
 `accounts.initial_sync_completed_at` (timestamptz, NULL = never completed a
 clean full pass). Set when a sync run completes with exit 0 and no
 budget/throttle interruption. Drives:
 
-- UI chip: `Initial sync · 12.4k msg · 1.9/2.0 GB oggi · riprende 02:00`
 - `PipelineDepth 1` in the generated mbsync config while NULL.
 - Priority pass while NULL: invocation 1 = `channel:INBOX`, invocation 2 =
   full channel (single job, two sequential subprocesses; the budget/throttle
   machinery spans both).
+
+**Denominator (total)**: at initial-sync (re)start, an upstream STATUS pass —
+direct IMAP via the existing `connect_imap` + XOAUTH2 machinery (NOT mbsync):
+LIST the folders matching the channel patterns, `STATUS (MESSAGES)` each, sum
+into `accounts.initial_sync_total_messages`. Cost: one cheap command per
+folder, a few KB — negligible quota. Refreshed at every resume (the mailbox
+grows meanwhile), so the % self-corrects across days.
+
+**Numerator (done)**: cumulative on-disk message count from the sampler walk
+(§2). Label duplication counts the same on both sides of the fraction
+(folder-message units), so the % stays honest for Gmail.
+
+**ETA — two regimes, shown as one honest estimate**:
+
+- Within today's budget window: rate-based (EMA of msgs/sec this run).
+- Across days (the dominant term): `remaining_bytes ≈ remaining_msgs ×
+  avg_bytes_per_msg` (observed: done_bytes/done_msgs), `days ≈
+  remaining_bytes / daily_budget` → "≈ 3 giorni (limite 2 GB/giorno)".
+  No budget (unlimited) → rate-based only.
+
+**UI**: progress bar + `Initial sync — 38% (46.2k/121k msg) · ETA ≈ 3g ·
+1.9/2.0 GB oggi · riprende 02:00` in the account detail; compact chip
+(`Initial sync 38%`) on the accounts table row and dashboard.
 
 ### 8. UI
 
@@ -128,20 +161,41 @@ budget/throttle interruption. Drives:
 - Account detail: budget override field (admin/owner edit form), with
   provider-default shown as placeholder.
 
-### 9. Migration
+### 9. Crash recovery (container death, restart-safety)
+
+Resumability is a hard requirement: a container death or connection drop must
+never cost hours. Layered guarantees:
+
+- **mbsync layer (native, verified)**: per-message commit + per-folder
+  `SyncState` journal living inside the maildir volume — survives anything;
+  at most the in-flight message is re-fetched.
+- **Ledger layer**: `bytes_synced_today` flushed every sampler tick (§2) —
+  the budget never double-spends after a crash.
+- **Job layer**: startup sweep in the app lifespan (same pattern as the
+  StoreMigration crash recovery already there): any `sync_jobs` row still
+  `running` whose process no longer exists → close it as `failure_kind =
+  interrupted`, reset the account from `syncing`, and — if its initial sync
+  is incomplete and the ledger has budget headroom — enqueue an immediate
+  resume; otherwise schedule per §6.
+- **Progress layer**: numerator and denominator both live in the DB
+  (`initial_sync_total_messages`) or on disk (sampler totals) — the % and ETA
+  survive restarts with zero recomputation beyond one sampler walk.
+
+### 10. Migration
 
 `021` (stacked on the restore chain's 020 — keeps alembic linear; this branch
 forks from feat/restore-attachments-view for that reason). All new columns
 nullable or defaulted: `accounts.traffic_date`, `accounts.bytes_synced_today`
 (server_default '0'), `accounts.daily_sync_budget_mb`,
 `accounts.sync_paused_until`, `accounts.pause_reason`,
-`accounts.initial_sync_completed_at`, `sync_jobs.failure_kind`.
+`accounts.initial_sync_completed_at`, `accounts.initial_sync_total_messages`,
+`sync_jobs.failure_kind`.
 
 Backfill: existing accounts with at least one successful sync get
 `initial_sync_completed_at = last_sync_at` (so only genuinely-new accounts
 enter the initial-sync regime).
 
-### 10. Testing
+### 11. Testing
 
 - Classifier: signature table units (Gmail OVERQUOTA from the real log,
   M365 strings, no-match → error).
