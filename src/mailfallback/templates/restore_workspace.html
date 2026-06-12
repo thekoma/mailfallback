@@ -144,10 +144,12 @@
             </div>
           </template>
 
-          {# Results + preview pane — two-column grid. The row is a div (not a
-             label): clicking the body opens the preview, only the checkbox
-             itself toggles selection. #}
-          <div class="ws-results-grid">
+          {# Results + preview pane — full-width results until a preview
+             opens, then a two-column split (same dynamic treatment as the
+             attachment grid). The row is a div (not a label): clicking the
+             body opens the preview, only the checkbox itself toggles
+             selection. #}
+          <div class="ws-results-grid" :class="{'has-preview': previewOpen}">
             <template x-if="results.length > 0">
               <div class="ws-results">
                 <template x-for="r in results" :key="selKey(r)">
@@ -287,7 +289,10 @@
                   </thead>
                   <tbody>
                     <template x-for="a in attResults" :key="attKey(a)">
-                      <tr>
+                      {# Row highlight: the attachment behind the open
+                         preview — siblings of one message preview identical
+                         content, so the selection must be visible here. #}
+                      <tr :class="{'is-selected': attIsSelected(a)}">
                         <td class="ws-att-ticon-cell">
                           <i :data-lucide="attIcon(a.ext)" class="icon-md ws-att-ticon"></i>
                         </td>

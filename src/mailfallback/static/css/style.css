@@ -1786,6 +1786,10 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   background: #ef4444;
   box-shadow: 0 4px 12px rgba(248, 113, 113, 0.3);
 }
+/* Anchors can wear the primary dress too (the preview pane's Download
+   attachment link) — kill Pico's link underline. */
+.ws-root a.ws-btn-primary,
+.ws-root a.ws-btn-primary:hover { text-decoration: none; }
 
 /* Folder / full-mailbox flows — same vertical rhythm as the search pane,
    and workspace-styled controls instead of Pico defaults. */
@@ -2039,13 +2043,37 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 }
 
 /* === Workspace: cross-account results + preview pane === */
-.ws-results-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 1rem; align-items: start; }
+/* Full-width results until a preview opens, then a two-column split — the
+   same dynamic treatment as .ws-att-grid. */
+.ws-results-grid { display: grid; grid-template-columns: 1fr; gap: 1rem; align-items: start; }
+.ws-results-grid.has-preview { grid-template-columns: 1.1fr 1fr; }
 .ws-badge-acct { background: var(--mfb-badge-syncing-bg); color: var(--mfb-badge-syncing-color); border: 1px solid var(--mfb-badge-syncing-border); }
 .ws-badge-gone { background: transparent; color: var(--ws-text-dim); border: 1px solid var(--ws-border); }
 .ws-att-mark { color: var(--ws-text-muted); }
 .ws-atts { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-top: 0.25rem; }
 .ws-att-chip { background: var(--ws-input-bg); border: 1px solid var(--ws-border); border-radius: 6px; padding: 0 0.5rem; font-size: 0.72rem; color: var(--ws-text-muted); white-space: nowrap; }
 .ws-preview { background: var(--ws-card); border: 1px solid var(--ws-border); border-radius: 10px; padding: 0.6rem 1rem 1rem; position: sticky; top: 1rem; }
+/* Pane header: title + the × close button on one line. */
+.ws-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.35rem; }
+.ws-preview-head .ws-field-label { margin: 0; }
+.ws-root .ws-preview-close {
+  background: none;
+  border: none;
+  padding: 0.15rem;
+  margin: 0;
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--ws-text-muted);
+  cursor: pointer;
+  border-radius: 0.35rem;
+  transition: all .15s;
+  box-shadow: none;
+}
+.ws-root .ws-preview-close:hover { color: var(--ws-text); background: var(--ws-card-hover); }
+/* Attachment context: which attachment of the message is selected. */
+.ws-preview-attsel { display: block; margin: 0 0 0.5rem; color: var(--ws-text); font-weight: 500; }
+.ws-preview-attsel i, .ws-preview-attsel svg { color: var(--ws-text-muted); }
 .ws-preview-subject { font-weight: 650; margin-bottom: 0.3rem; }
 .ws-preview-kv { font-size: 0.8rem; color: var(--ws-text-muted); line-height: 1.5; }
 .ws-preview-kv strong { color: var(--ws-text); font-weight: 600; margin-right: 0.2rem; }
@@ -2112,7 +2140,7 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   text-decoration: none;
 }
 @media (max-width: 768px) {
-  .ws-results-grid { grid-template-columns: 1fr; }
+  .ws-results-grid.has-preview { grid-template-columns: 1fr; }
   .ws-preview { position: static; }
 }
 
@@ -2343,6 +2371,11 @@ body.page-restore-workspace .content { padding-bottom: 5rem; }
 }
 .ws-att-table tbody tr:last-child td { border-bottom: none; }
 .ws-att-table tbody tr:hover td { background: var(--ws-card-hover); }
+/* The row behind the open preview pane — mirrors .ws-result.is-selected
+   (cyan-soft fill + cyan left accent). After :hover so it wins the cascade
+   at equal specificity. */
+.ws-att-table tbody tr.is-selected td { background: var(--ws-cyan-soft); }
+.ws-att-table tbody tr.is-selected td:first-child { box-shadow: inset 3px 0 0 var(--ws-cyan); }
 
 .ws-att-ticon-cell { width: 2.25rem; padding-right: 0 !important; }
 .ws-att-ticon { color: var(--ws-text-dim); }
