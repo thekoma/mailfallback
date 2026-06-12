@@ -187,3 +187,73 @@ def test_test_connection_failure(client, db_session, default_store):
     data = resp.json()
     assert data["ok"] is False
     assert "Connection refused" in data["message"]
+
+
+# ---------------------------------------------------------------------------
+# Manual override of self-recovering pauses (sync-budget Task 7, spec §6)
+# ---------------------------------------------------------------------------
+
+BUDGET_WARNING = (
+    "Manual sync may exhaust the provider's daily quota; "
+    "other IMAP clients for this mailbox could be affected."
+)
+
+
+def _paused_account(db_session, default_store, reason):
+    from datetime import UTC, datetime, timedelta
+
+    account = create_account(
+        db_session, "Paused", "imap.gmail.com", 993, "app_password", store=default_store
+    )
+    account.sync_paused_until = datetime.now(UTC) + timedelta(hours=6)
+    account.pause_reason = reason
+    db_session.commit()
+    return account
+
+
+def test_manual_sync_on_budget_pause_warns_and_clears(client, db_session, default_store):
+    """Manual sync overrides a budget pause: columns clear, the job starts,
+    and the response carries the EXACT quota warning copy."""
+    user = create_user(db_session, "user1", "pass", UserRole.user, store_id=default_store.id)
+    account = _paused_account(db_session, default_store, "budget")
+    assign_owner(db_session, account.id, user.id)
+
+    _login(client, "user1", "pass")
+    resp = client.post(f"/api/sync/{account.id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "pending"
+    assert body["warning"] == BUDGET_WARNING
+    db_session.refresh(account)
+    assert account.sync_paused_until is None
+    assert account.pause_reason is None
+
+
+def test_manual_sync_on_throttle_pause_clears_without_warning(client, db_session, default_store):
+    user = create_user(db_session, "user1", "pass", UserRole.user, store_id=default_store.id)
+    account = _paused_account(db_session, default_store, "throttle")
+    assign_owner(db_session, account.id, user.id)
+
+    _login(client, "user1", "pass")
+    resp = client.post(f"/api/sync/{account.id}")
+
+    assert resp.status_code == 200
+    assert "warning" not in resp.json()
+    db_session.refresh(account)
+    assert account.sync_paused_until is None
+    assert account.pause_reason is None
+
+
+def test_manual_sync_unpaused_has_no_warning(client, db_session, default_store):
+    user = create_user(db_session, "user1", "pass", UserRole.user, store_id=default_store.id)
+    account = create_account(
+        db_session, "Plain", "imap.gmail.com", 993, "app_password", store=default_store
+    )
+    assign_owner(db_session, account.id, user.id)
+
+    _login(client, "user1", "pass")
+    resp = client.post(f"/api/sync/{account.id}")
+
+    assert resp.status_code == 200
+    assert "warning" not in resp.json()

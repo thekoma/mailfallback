@@ -60,10 +60,15 @@ def trigger_sync_all(
             continue
         if account.sync_state.value == "syncing":
             continue
+        # Manual bulk sync overrides pauses too — a triggered account must
+        # not keep a stale pause while its job runs (review-F2 class).
+        account.sync_paused_until = None
+        account.pause_reason = None
         job = sync_service.create_sync_job(db, account.id, source="manual")
         if job:
             submit_sync_job(job.id)
             triggered += 1
+    db.commit()
     return {"ok": True, "triggered": triggered}
 
 
@@ -88,6 +93,20 @@ def trigger_sync(
         if owner.migrating:
             raise HTTPException(status_code=409, detail="Sync blocked: user migration in progress")
 
+    # Manual sync overrides any self-recovering pause (sync-budget spec §6):
+    # the pause gates the PERIODIC path only. Overriding a budget pause may
+    # re-burn the provider's daily quota — warn, but obey the user.
+    warning = None
+    if account.sync_paused_until is not None or account.pause_reason is not None:
+        if account.pause_reason == "budget":
+            warning = (
+                "Manual sync may exhaust the provider's daily quota; "
+                "other IMAP clients for this mailbox could be affected."
+            )
+        account.sync_paused_until = None
+        account.pause_reason = None
+        db.commit()
+
     job = sync_service.create_sync_job(db, account_id, source="manual")
     if not job:
         raise HTTPException(status_code=409, detail="Sync already pending or running")
@@ -102,7 +121,10 @@ def trigger_sync(
         resource_name=account.email_address,
         ip_address=request.client.host if request.client else None,
     )
-    return {"job_id": job.id, "status": job.status.value}
+    payload = {"job_id": job.id, "status": job.status.value}
+    if warning:
+        payload["warning"] = warning
+    return payload
 
 
 @router.get("/jobs/{job_id}")
