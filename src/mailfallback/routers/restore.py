@@ -64,6 +64,38 @@ def _sanitize_imap_string(value: str) -> str:
     return re.sub(r'["\\\x00-\x1f]', "", value)
 
 
+CUSTOM_FOLDER_MAX_LEN = 200
+
+
+def _validate_custom_folder(value: str | None, field: str = "custom_folder") -> str:
+    """Hygiene for user-named destination folders (staging push custom mode,
+    non-"original" folder_mapping). The string lands verbatim inside a quoted
+    IMAP atom and becomes an on-disk Maildir path, so anything the
+    _sanitize_imap_string class would strip is rejected outright, along with
+    traversal/empty segments and leading/trailing separators. Returns the
+    stripped path."""
+    folder = (value or "").strip()
+    if not folder:
+        raise HTTPException(status_code=400, detail=f"{field} must not be empty")
+    if len(folder) > CUSTOM_FOLDER_MAX_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field} too long (max {CUSTOM_FOLDER_MAX_LEN} characters)",
+        )
+    if _sanitize_imap_string(folder) != folder:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field} contains quotes, backslashes or control characters",
+        )
+    # Leading/trailing "/" produce empty segments — one rule covers them too.
+    if any(not seg.strip() or seg in (".", "..") for seg in folder.split("/")):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field} has empty or relative path segments",
+        )
+    return folder
+
+
 # ---------------------------------------------------------------------------
 # Staging area endpoints — MUST register before GET /{job_id}, or FastAPI
 # resolves "/staging" as a job id (routes match in registration order).
@@ -156,7 +188,8 @@ def api_staging_empty(
 
 class StagingPushRequest(BaseModel):
     destination: str = "origin"  # "origin" | account id
-    folder_mode: str = "original"  # "original" | "restored"
+    folder_mode: str = "original"  # "original" | "restored" | "custom"
+    custom_folder: str | None = None  # required (and validated) when folder_mode == "custom"
 
 
 @router.post("/staging/push")
@@ -171,22 +204,32 @@ def api_staging_push(
     Targets that cannot take a job right now (busy, no credentials, …) come
     back in skipped_targets; their messages stay staged for a later push.
     """
-    if req.folder_mode not in ("original", "restored"):
+    if req.folder_mode not in ("original", "restored", "custom"):
         raise HTTPException(status_code=400, detail="Invalid folder_mode")
+    custom_folder = (
+        _validate_custom_folder(req.custom_folder) if req.folder_mode == "custom" else None
+    )
     if req.destination != "origin" and not account_service.get_account(db, req.destination, user):
         raise HTTPException(status_code=404, detail="Destination account not found")
-    result = staging_service.push(db, user, req.destination, req.folder_mode)
+    result = staging_service.push(
+        db, user, req.destination, req.folder_mode, custom_folder=custom_folder
+    )
+    details = {
+        "jobs": result["job_ids"],
+        "destination": req.destination,
+        "folder_mode": req.folder_mode,
+        "skipped_targets": result["skipped_targets"],
+    }
+    if custom_folder is not None:
+        # Forensics: WHICH folder the custom push targeted — only present in
+        # custom mode (no None noise in the other modes' audit rows).
+        details["custom_folder"] = custom_folder
     log_action(
         db,
         user=user,
         action="staging.push",
         resource_type="staging",
-        details={
-            "jobs": result["job_ids"],
-            "destination": req.destination,
-            "folder_mode": req.folder_mode,
-            "skipped_targets": result["skipped_targets"],
-        },
+        details=details,
         ip_address=request.client.host if request.client else None,
     )
     return result
@@ -419,6 +462,12 @@ def create_restore(
         # Push manifests must be server-built (staging_service.push reconciles
         # first and scopes filenames); a client-supplied one is refused.
         raise HTTPException(status_code=400, detail="Use /api/restore/staging/push")
+    # Any non-"original" mapping is a custom destination root the worker nests
+    # everything under (including the workspace's "Restored/<date>" and typed
+    # Custom paths) — same hygiene as the staging push custom folder.
+    folder_mapping = body.folder_mapping
+    if folder_mapping != "original":
+        folder_mapping = _validate_custom_folder(folder_mapping, field="folder_mapping")
     source = account_service.get_account(db, body.source_account_id, user)
     if not source:
         raise HTTPException(status_code=404, detail="Source account not found")
@@ -433,7 +482,7 @@ def create_restore(
         target_account_id=body.target_account_id,
         restore_mode=body.restore_mode,
         requested_by=user.id,
-        folder_mapping=body.folder_mapping,
+        folder_mapping=folder_mapping,
         skip_duplicates=body.skip_duplicates,
         selected_folders=body.selected_folders,
         selected_uids=body.selected_uids,
