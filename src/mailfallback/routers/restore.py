@@ -255,6 +255,10 @@ class AttachmentSearchRequest(BaseModel):
     min_size: int | None = None
     max_size: int | None = None
     include_content: bool = False
+    # Time-chip range — filters on the containing message's date_sent
+    # (NULL-tolerant, same semantics as the message search).
+    range_start: datetime | None = None
+    range_end: datetime | None = None
     # page=0 would compile to a negative OFFSET (PG errors out at runtime).
     page: int = Field(1, ge=1)
     page_size: int = Field(50, ge=1, le=200)
@@ -297,6 +301,8 @@ def api_attachments_search(
         min_size=req.min_size,
         max_size=req.max_size,
         include_content=req.include_content,
+        range_start=req.range_start,
+        range_end=req.range_end,
         page=req.page,
         page_size=req.page_size,
     )

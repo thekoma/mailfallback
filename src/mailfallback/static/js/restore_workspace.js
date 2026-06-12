@@ -30,8 +30,22 @@ function restoreWorkspace() {
 
     // Inputs
     accountId: '',
-    rangeStart: null,           // Date object — managed by flatpickr
-    rangeEnd: null,             // Date object — managed by flatpickr
+    // Time chips — exactly one active; All time is the DEFAULT (no hidden
+    // 7-day trap). 'custom' is only ever set by Apply in the popover.
+    timePreset: 'all',          // '7d'|'30d'|'90d'|'1y'|'all'|'custom'
+    timeChips: [
+      {id: '7d', label: '7d'},
+      {id: '30d', label: '30d'},
+      {id: '90d', label: '90d'},
+      {id: '1y', label: '1y'},
+      {id: 'all', label: 'All time'},
+    ],
+    customLabel: '',            // compact chip label ("4–12 Jun") once applied
+    customPopoverOpen: false,
+    rangeStart: null,           // Date object — flatpickr's PENDING custom pick
+    rangeEnd: null,             // Date object — pending too (see customStart)
+    customStart: null,          // COMMITTED pair — Apply copies the pending
+    customEnd: null,            // pick here; searches/label only ever read these
     snapshotDates: [],          // Array of YYYY-MM-DD strings
     _datesSeq: 0,               // monotonic seq — stale snapshot-dates responses are dropped
     _fp: null,                  // flatpickr instance
@@ -143,17 +157,90 @@ function restoreWorkspace() {
     get pushPickerFolders() {
       return this._destFolderCache[this.pushPickerAccountId] || [];
     },
-    get rangeStartIso() {
-      if (!this.rangeStart) return null;
-      const d = new Date(this.rangeStart);
-      d.setHours(0, 0, 0, 0);
-      return d.toISOString();
+    // === Time range ===
+    // One source of truth for what BOTH searches send: the active chip.
+    // 'all' → null/null (no date filter); fixed chips → now-N days with an
+    // open end; 'custom' → the applied flatpickr pair as whole days.
+    currentRange() {
+      if (this.timePreset === 'custom' && this.customStart) {
+        // COMMITTED pair only — a pick left un-applied in the popover must
+        // never silently change what a re-search sends (the chip label and
+        // the query stay in lockstep).
+        const s = new Date(this.customStart);
+        s.setHours(0, 0, 0, 0);
+        const e = new Date(this.customEnd || this.customStart);
+        e.setHours(23, 59, 59, 999);
+        return {start: s.toISOString(), end: e.toISOString()};
+      }
+      const days = {'7d': 7, '30d': 30, '90d': 90, '1y': 365}[this.timePreset];
+      if (!days) return {start: null, end: null};  // 'all' (or empty custom)
+      const s = new Date();
+      s.setDate(s.getDate() - days);
+      s.setHours(0, 0, 0, 0);
+      return {start: s.toISOString(), end: null};
     },
-    get rangeEndIso() {
-      if (!this.rangeEnd) return null;
-      const d = new Date(this.rangeEnd);
-      d.setHours(23, 59, 59, 999);
-      return d.toISOString();
+    setTimePreset(id) {
+      this.customPopoverOpen = false;
+      if (this.timePreset === id) return;
+      if (this.timePreset === 'custom') {
+        // Leaving custom: drop the applied pick so the chip reverts to
+        // "Custom…" and a later re-open starts clean.
+        this._resetCustom();
+      }
+      this.timePreset = id;
+      this._requeryActive();
+    },
+    applyCustomRange() {
+      if (!this.rangeStart) return;  // nothing picked yet — Apply is a no-op
+      this.customStart = this.rangeStart;
+      this.customEnd = this.rangeEnd || this.rangeStart;
+      this.customLabel = this._fmtRangeLabel(this.customStart, this.customEnd);
+      this.timePreset = 'custom';
+      this.customPopoverOpen = false;
+      this._requeryActive();
+    },
+    clearCustomRange() {
+      const wasCustom = this.timePreset === 'custom';
+      this._resetCustom();
+      this.customPopoverOpen = false;
+      if (wasCustom) {
+        this.timePreset = 'all';  // Clear reverts to All time
+        this._requeryActive();
+      }
+    },
+    _resetCustom() {
+      this.customLabel = '';
+      this.customStart = null;
+      this.customEnd = null;
+      this.rangeStart = null;
+      this.rangeEnd = null;
+      if (this._fp) this._fp.clear(false);
+    },
+    _fmtRangeLabel(start, end) {
+      // Compact chip label: "12 Jun" / "4–12 Jun" / "28 May – 3 Jun";
+      // cross-year ranges spell the years out.
+      const M = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const s = new Date(start);
+      const e = new Date(end);
+      const sm = M[s.getMonth()];
+      const em = M[e.getMonth()];
+      if (s.getFullYear() !== e.getFullYear()) {
+        return `${s.getDate()} ${sm} ${s.getFullYear()} – ${e.getDate()} ${em} ${e.getFullYear()}`;
+      }
+      if (s.getMonth() !== e.getMonth()) return `${s.getDate()} ${sm} – ${e.getDate()} ${em}`;
+      if (s.getDate() === e.getDate()) return `${s.getDate()} ${sm}`;
+      return `${s.getDate()}–${e.getDate()} ${sm}`;
+    },
+    _requeryActive() {
+      // Chip switches must never leave visible results stale relative to the
+      // active time range — same re-query pattern as the attachment filter
+      // chips (the _msgSeq/_attSeq guards drop racing responses).
+      if (this.preset === 'attachment') {
+        if (this.attSearched) this.runAttachmentSearch();
+      } else if (this.searched) {
+        this.runSearch();
+      }
     },
 
     // === Lifecycle ===
@@ -184,15 +271,8 @@ function restoreWorkspace() {
       this._initCalendar();
       this.refreshIcons();
 
-      // Default range: last 7 days. Set state DIRECTLY (don't rely on
-      // flatpickr's onChange firing during init — it doesn't always).
-      const end = new Date();
-      const start = new Date();
-      start.setDate(start.getDate() - 7);
-      this.rangeStart = start;
-      this.rangeEnd = end;
-      if (this._fp) this._fp.setDate([start, end], false);
-
+      // No default range: timePreset starts at 'all' — searches run unfiltered
+      // until the user narrows them (the old silent 7-day default hid hits).
       this.fetchSnapshotDates();
       this.refreshStaging();
     },
@@ -217,11 +297,12 @@ function restoreWorkspace() {
         dateFormat: 'Y-m-d',
         maxDate: 'today',
         onChange(selectedDates) {
-          if (selectedDates.length === 2) {
+          // PENDING custom selection only — Apply commits it. One date counts
+          // as a single-day range until the second click widens it.
+          if (selectedDates.length >= 1) {
             self.rangeStart = selectedDates[0];
-            self.rangeEnd = selectedDates[1];
+            self.rangeEnd = selectedDates.length === 2 ? selectedDates[1] : selectedDates[0];
           }
-          // selectedDates.length === 1 — mid-range selection, wait for second click
         },
         onDayCreate(dObj, dStr, fp, dayElem) {
           const d = dayElem.dateObj;
@@ -337,14 +418,10 @@ function restoreWorkspace() {
 
     // === Actions ===
     applyPreset(id) {
+      // The time chips are SHARED state between the two search presets —
+      // switching preset keeps the active range, it only closes the popover.
       this.preset = id;
-      const days = {'single-mail': 7, 'folder': 30, 'full': 90}[id] || 7;
-      const end = new Date();
-      const start = new Date();
-      start.setDate(start.getDate() - days);
-      this.rangeStart = start;
-      this.rangeEnd = end;
-      if (this._fp) this._fp.setDate([start, end], false);
+      this.customPopoverOpen = false;
       this._clearMsgState();
       this._clearAttState();
       this.statusText = '';
@@ -496,14 +573,15 @@ function restoreWorkspace() {
       this.previewOpen = false;
       this.refreshIcons();
       try {
+        const range = this.currentRange();
         const resp = await fetch('/api/restore/search', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             query: this.query,
             account_ids: this.scopeAccountId ? [this.scopeAccountId] : null,
-            range_start: this.rangeStartIso,
-            range_end: this.rangeEndIso,
+            range_start: range.start,
+            range_end: range.end,
             include_deleted: this.includeSnapshots,
             deep: this.deepSearch,
             include_all: this.includeAll,
@@ -656,6 +734,7 @@ function restoreWorkspace() {
         const exts = this.attGroups.length
           ? this.attGroups.flatMap(g => ATT_EXT_GROUPS[g] || [])
           : null;
+        const range = this.currentRange();
         const resp = await fetch('/api/restore/attachments/search', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
@@ -666,6 +745,8 @@ function restoreWorkspace() {
             exts,
             min_size: this.attMinSize,
             include_content: this.attIncludeContent,
+            range_start: range.start,
+            range_end: range.end,
             page: 1,
             page_size: 100,
           }),

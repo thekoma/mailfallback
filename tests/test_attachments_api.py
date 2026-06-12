@@ -230,6 +230,31 @@ def test_search_filters_pass_through(client, db_session, default_store, tmp_path
     assert hit.status_code == 200 and hit.json()["total"] == 1
 
 
+def test_search_range_passes_through(client, db_session, default_store, tmp_path):
+    """range_start/range_end reach the service. The fixture message is dated
+    2026-06-11 (see _msg): a range around that date hits, a range ending
+    before it misses. Null-date tolerance is pinned at the service layer."""
+    owner = _mk_user(db_session, default_store, "mario")
+    _mk_account_with_attachment(db_session, default_store, tmp_path, owner=owner)
+    _login(client, "mario")
+
+    hit = client.post(
+        SEARCH_URL,
+        json={
+            "query": "fattura",
+            "range_start": "2026-06-01T00:00:00Z",
+            "range_end": "2026-06-30T23:59:59Z",
+        },
+    )
+    miss = client.post(
+        SEARCH_URL,
+        json={"query": "fattura", "range_end": "2020-01-01T00:00:00Z"},
+    )
+
+    assert hit.status_code == 200 and hit.json()["total"] == 1
+    assert miss.status_code == 200 and miss.json()["total"] == 0
+
+
 def test_search_garbage_types_422(client, db_session, default_store):
     _mk_user(db_session, default_store, "mario")
     _login(client, "mario")

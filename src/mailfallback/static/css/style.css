@@ -1716,7 +1716,6 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   flex-direction: column;
   gap: .65rem;
 }
-.ws-search .ws-deep-toggle { margin: 0; }
 .ws-search .ws-status { margin: 0; }
 
 /* Search row */
@@ -2255,13 +2254,13 @@ body.page-restore-workspace .content { padding-bottom: 5rem; }
   .ws-push-panel { right: .5rem; left: .5rem; width: auto; }
 }
 
-/* === Attachment preset === */
+/* === Search presets: shared rows + attachment table === */
 
 /* The shared search row sits outside the preset templates; .ws-search gives
    it the pane styling, this adds the rhythm gap the flex column used to. */
 .ws-search-shared { margin-bottom: .65rem; }
 
-/* No sidebar fields apply to the attachment preset — full-width panel. */
+/* The two search presets are search-row-driven — full-width panel. */
 .ws-grid.ws-grid-nosidebar { grid-template-columns: 1fr; }
 
 /* Same vertical rhythm as the single-mail search pane. */
@@ -2272,13 +2271,69 @@ body.page-restore-workspace .content { padding-bottom: 5rem; }
 }
 .ws-att-flow .ws-status { margin: 0; }
 
-/* Filter chips row — Type group toggles + the size chip. */
-.ws-att-filters {
+/* Compact control row under the search row — WHEN chips + per-preset
+   toggles in ONE wrapping line, status count pushed to the right edge. */
+.ws-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: .4rem;
+  margin-bottom: .65rem;
 }
+.ws-controls .ws-inline { margin-right: 0; font-size: .8rem; }
+.ws-controls .ws-status { margin: 0 0 0 auto; }
+.ws-ctrl-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .4rem;
+  margin-left: .75rem;
+}
+
+/* Custom… popover — anchored under its chip, same card recipe as
+   .ws-push-panel, hosting the always-alive inline flatpickr. */
+.ws-when-custom { position: relative; display: inline-flex; }
+.ws-when-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  width: 300px;
+  max-width: calc(100vw - 2rem);
+  background: var(--ws-card);
+  border: 1px solid var(--ws-border);
+  border-radius: 10px;
+  padding: .75rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+/* The popover IS the card — drop the inner chrome the sidebar wrap needed. */
+.ws-when-popover .ws-calendar-wrap {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+.ws-when-popover-foot {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin-top: .5rem;
+}
+.ws-when-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  margin: 0 auto 0 0;  /* hint left, Clear/Apply pushed right */
+}
+.ws-when-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ws-cyan);
+  box-shadow: 0 0 4px rgba(56, 189, 248, 0.6);
+}
+.ws-root .ws-btn-primary.ws-btn-sm { padding: .3rem .7rem; font-size: .75rem; }
+
 .ws-att-filters-label {
   font-size: .7rem;
   text-transform: uppercase;
@@ -2315,15 +2370,6 @@ body.page-restore-workspace .content { padding-bottom: 5rem; }
   color: var(--ws-cyan);
 }
 
-/* Content toggle + status share one line (status right-aligns). */
-.ws-att-content-row {
-  display: flex;
-  align-items: center;
-  gap: .75rem;
-  flex-wrap: wrap;
-  min-height: 1.2rem;
-}
-.ws-att-content-row .ws-status { margin-left: auto; }
 .ws-att-content-toggle { margin: 0; }
 
 /* Results table — full width until the preview opens, then split like the

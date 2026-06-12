@@ -215,6 +215,8 @@ def _build_attachment_query(
     min_size: int | None,
     max_size: int | None,
     dialect_name: str,
+    range_start: datetime | None = None,
+    range_end: datetime | None = None,
 ) -> Query:
     """Build the attachment search query: explicit columns, JOIN to messages.
 
@@ -301,6 +303,17 @@ def _build_attachment_query(
         q = q.filter(MailIndexAttachment.size_bytes >= min_size)
     if max_size is not None:
         q = q.filter(MailIndexAttachment.size_bytes <= max_size)
+    # Date range on the JOINED message — NULL date_sent is "unknown date" and
+    # stays in the result set for any range (the search_messages semantics:
+    # a message whose Date: header didn't parse must not disappear).
+    if range_start:
+        q = q.filter(
+            (MailIndexMessage.date_sent >= range_start) | MailIndexMessage.date_sent.is_(None)
+        )
+    if range_end:
+        q = q.filter(
+            (MailIndexMessage.date_sent <= range_end) | MailIndexMessage.date_sent.is_(None)
+        )
 
     return q.order_by(
         MailIndexMessage.date_sent.desc().nullslast(),
@@ -319,11 +332,16 @@ def search_attachments(
     min_size: int | None = None,
     max_size: int | None = None,
     include_content: bool = False,
+    range_start: datetime | None = None,
+    range_end: datetime | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> dict[str, Any]:
     """Search attachment rows by filename — and by extracted content when
     `include_content` is set AND Tika is enabled (otherwise filename-only).
+
+    `range_start`/`range_end` filter on the containing message's date_sent,
+    NULL-tolerant like `search_messages` (unknown dates kept in any range).
 
     Scope rules are identical to `search_messages`: accessible accounts
     (ownership OR groups) for everyone; `include_all=True` widens an ADMIN's
@@ -354,6 +372,8 @@ def search_attachments(
         min_size=min_size,
         max_size=max_size,
         dialect_name=db.bind.dialect.name,
+        range_start=range_start,
+        range_end=range_end,
     )
     total = q.count()
     rows = q.offset((page - 1) * page_size).limit(page_size).all()
