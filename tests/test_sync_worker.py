@@ -1,18 +1,33 @@
 # tests/test_sync_worker.py
+import os
+import threading
+import time
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from mailfallback.db import Base
 from mailfallback.models import Account, JobStatus, MailStore, SyncJob, SyncState
+from mailfallback.services import sync_worker
 from mailfallback.services.sync_worker import execute_sync_job
 
 
-def make_session():
+def _make_engine(shared: bool = False):
+    """In-memory engine; shared=True makes it usable from the sampler thread
+    (StaticPool single connection, check_same_thread off)."""
     from sqlalchemy import event
 
-    engine = create_engine("sqlite:///:memory:")
+    kwargs = {}
+    if shared:
+        kwargs = {
+            "connect_args": {"check_same_thread": False},
+            "poolclass": StaticPool,
+        }
+    engine = create_engine("sqlite:///:memory:", **kwargs)
 
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(dbapi_conn, connection_record):
@@ -23,7 +38,29 @@ def make_session():
         cursor.close()
 
     Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine)()
+    return engine
+
+
+def make_session():
+    return sessionmaker(bind=_make_engine())()
+
+
+def make_shared_session():
+    """(session, factory) on ONE engine visible across threads — the sampler
+    opens its own sessions on the same database as the test's."""
+    engine = _make_engine(shared=True)
+    factory = sessionmaker(bind=engine)
+    return factory(), factory
+
+
+@pytest.fixture(autouse=True)
+def _isolated_sampler_sessions(monkeypatch):
+    """execute_sync_job spawns a sampler thread that opens its OWN sessions
+    via sync_worker.SessionLocal — point that at a throwaway in-memory DB so
+    unit tests never reach for the real database_url (host 'db' does not
+    exist here). Sampler-specific tests re-patch with a shared factory."""
+    engine = _make_engine(shared=True)
+    monkeypatch.setattr(sync_worker, "SessionLocal", sessionmaker(bind=engine))
 
 
 def _make_store(session):
@@ -277,3 +314,205 @@ def test_sync_blocked_unauthenticated():
     execute_sync_job(db, "job-1")
 
     assert job.log == "Sync blocked: account not authenticated"
+
+
+# ---------------------------------------------------------------------------
+# Byte meter / sampler thread + ledger (Task 4)
+# ---------------------------------------------------------------------------
+
+
+def _write(path, size, mtime=None):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(b"x" * size)
+    if mtime is not None:
+        os.utime(path, (mtime, mtime))
+
+
+def _mk_maildir_account_and_job(session, tmp_path, **account_kw):
+    store = _make_store(session)
+    account = Account(
+        name="Meter",
+        imap_host="imap.test.com",
+        maildir_path=str(tmp_path / "maildir"),
+        store_id=store.id,
+        **account_kw,
+    )
+    session.add(account)
+    session.commit()
+    job = SyncJob(account_id=account.id, source="test", status=JobStatus.running)
+    session.add(job)
+    session.commit()
+    return account, job
+
+
+def test_sample_maildir_counts_and_run_delta(tmp_path):
+    """Cumulative totals count every message file under cur/new; the run
+    delta counts only files written since run start (mtime — depends on
+    CopyArrivalDate no). tmp/, dotfiles, dovecot metadata and nested
+    .dovecot-home trees never count."""
+    root = tmp_path / "maildir"
+    old_ts = time.time() - 3600
+    _write(str(root / "INBOX" / "cur" / "100.old:2,S"), 100, mtime=old_ts)
+    _write(str(root / "INBOX" / "new" / "200.fresh"), 200)
+    _write(str(root / "Sent" / "cur" / "300.fresh:2,S"), 300)
+    # Never counted:
+    _write(str(root / "INBOX" / "tmp" / "999.partial"), 999)
+    _write(str(root / "INBOX" / "cur" / "dovecot.index.cache"), 50)
+    _write(str(root / "INBOX" / "cur" / ".hidden"), 50)
+    _write(str(root / "INBOX" / "dovecot-uidlist"), 50)  # folder root, not cur/new
+    _write(str(root / ".dovecot-home" / "u" / "cur" / "1.msg"), 5000)
+
+    since = time.time() - 60
+    total_msgs, total_bytes, run_msgs, run_bytes = sync_worker._sample_maildir(str(root), since)
+
+    assert (total_msgs, total_bytes) == (3, 600)
+    assert (run_msgs, run_bytes) == (2, 500)
+
+
+def test_sample_maildir_missing_path_is_zero(tmp_path):
+    out = sync_worker._sample_maildir(str(tmp_path / "nope"), time.time())
+    assert out == (0, 0, 0, 0)
+
+
+def test_sampler_tick_advances_ledger_and_live_progress(tmp_path, monkeypatch):
+    """Each tick books only the NEW run bytes into the daily ledger
+    (max(0, run - last watermark)) with its OWN session, and publishes
+    last-known progress (pct/eta from the STATUS denominator)."""
+    session, factory = make_shared_session()
+    monkeypatch.setattr(sync_worker, "SessionLocal", factory)
+    account, job = _mk_maildir_account_and_job(session, tmp_path, initial_sync_total_messages=4)
+    run_start = time.time() - 60
+    _write(str(tmp_path / "maildir" / "INBOX" / "cur" / "1.msg"), 1000)
+
+    state = sync_worker._new_sampler_state(run_start)
+    sync_worker._sampler_tick(job.id, account.id, account.maildir_path, state)
+    session.refresh(account)
+    assert account.bytes_synced_today == 1000
+    assert account.traffic_date == datetime.now(UTC).date()
+
+    # Growth: only the delta is booked, not the cumulative run bytes again.
+    _write(str(tmp_path / "maildir" / "INBOX" / "cur" / "2.msg"), 500)
+    sync_worker._sampler_tick(job.id, account.id, account.maildir_path, state)
+    session.refresh(account)
+    assert account.bytes_synced_today == 1500
+
+    prog = sync_worker._live_progress[job.id]
+    assert prog["account_id"] == account.id
+    assert prog["done_msgs"] == 2
+    assert prog["done_bytes"] == 1500
+    assert prog["bytes_today"] == 1500
+    assert prog["pct"] == 50.0  # 2 of 4 (STATUS denominator)
+    assert "eta" in prog and "rate_msgs_per_s" in prog
+    # Idempotent without growth: watermark math books nothing.
+    sync_worker._sampler_tick(job.id, account.id, account.maildir_path, state)
+    session.refresh(account)
+    assert account.bytes_synced_today == 1500
+    sync_worker._live_progress.pop(job.id, None)
+
+
+def test_sampler_tick_utc_rollover_resets_ledger(tmp_path, monkeypatch):
+    """A tick on a new UTC day resets the ledger before booking — yesterday's
+    spend never bleeds into today's budget."""
+    session, factory = make_shared_session()
+    monkeypatch.setattr(sync_worker, "SessionLocal", factory)
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    account.traffic_date = (datetime.now(UTC) - timedelta(days=1)).date()
+    account.bytes_synced_today = 999_999
+    session.commit()
+    run_start = time.time() - 60
+    _write(str(tmp_path / "maildir" / "INBOX" / "cur" / "1.msg"), 700)
+
+    state = sync_worker._new_sampler_state(run_start)
+    sync_worker._sampler_tick(job.id, account.id, account.maildir_path, state)
+
+    session.refresh(account)
+    assert account.traffic_date == datetime.now(UTC).date()
+    assert account.bytes_synced_today == 700  # reset, then today's delta only
+    sync_worker._live_progress.pop(job.id, None)
+
+
+def test_sampler_budget_crossing_stops_job_once(tmp_path, monkeypatch):
+    """Crossing the daily budget records the marker for the worker and stops
+    the job through the existing graceful-stop path — exactly once."""
+    session, factory = make_shared_session()
+    monkeypatch.setattr(sync_worker, "SessionLocal", factory)
+    stops = []
+    monkeypatch.setattr(sync_worker, "stop_sync_job", lambda job_id: stops.append(job_id))
+    account, job = _mk_maildir_account_and_job(session, tmp_path, daily_sync_budget_mb=1)
+    run_start = time.time() - 60
+    _write(str(tmp_path / "maildir" / "INBOX" / "cur" / "big.msg"), 2 * 1024 * 1024)
+
+    state = sync_worker._new_sampler_state(run_start)
+    sync_worker._sampler_tick(job.id, account.id, account.maildir_path, state)
+
+    assert job.id in sync_worker._budget_stops
+    assert stops == [job.id]
+    # The ledger row was committed BEFORE the stop (crash-safe).
+    session.refresh(account)
+    assert account.bytes_synced_today == 2 * 1024 * 1024
+    # A second tick must not stop again (marker guard).
+    sync_worker._sampler_tick(job.id, account.id, account.maildir_path, state)
+    assert stops == [job.id]
+    sync_worker._budget_stops.discard(job.id)
+    sync_worker._live_progress.pop(job.id, None)
+
+
+def test_worker_runs_sampler_with_own_sessions_and_keeps_progress(tmp_path, monkeypatch):
+    """execute_sync_job starts the sampler thread around the subprocess: the
+    thread opens sessions via sync_worker.SessionLocal ONLY (never the
+    worker's session), the final flush books the run's bytes, and the
+    last-known progress entry SURVIVES job end (the UI reads it briefly)."""
+    session, factory = make_shared_session()
+    factory_calls = []
+
+    def counting_factory():
+        factory_calls.append(threading.current_thread().name)
+        return factory()
+
+    monkeypatch.setattr(sync_worker, "SessionLocal", counting_factory)
+    monkeypatch.setattr(sync_worker, "SAMPLE_INTERVAL", 0.01)
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    job.status = JobStatus.pending
+    session.commit()
+
+    def slow_stdout():
+        yield "syncing\n"
+        # The "download" lands MID-RUN (mtime >= run start) — pre-run files
+        # are deliberately not booked as run bytes.
+        _write(str(tmp_path / "maildir" / "INBOX" / "cur" / "1.msg"), 1234)
+        time.sleep(0.05)  # give the loop at least one interval tick
+        yield "done\n"
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = slow_stdout()
+    mock_proc.returncode = 0
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"),
+    ):
+        execute_sync_job(session, job.id)
+
+    # Own-session discipline: every factory call came from the sampler thread.
+    assert factory_calls, "sampler never opened a session"
+    assert all(name.startswith("sync-sampler") for name in factory_calls)
+    # Final flush booked the run bytes exactly once (watermark math).
+    session.refresh(account)
+    assert account.bytes_synced_today == 1234
+    # Last-known progress survives job end...
+    assert job.id in sync_worker._live_progress
+    # ...and dies when the NEXT job for the same account starts.
+    job2 = SyncJob(account_id=account.id, source="test")
+    session.add(job2)
+    session.commit()
+    mock_proc2 = MagicMock()
+    mock_proc2.stdout = iter(["ok\n"])
+    mock_proc2.returncode = 0
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc2),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"),
+    ):
+        execute_sync_job(session, job2.id)
+    assert job.id not in sync_worker._live_progress
+    assert job2.id in sync_worker._live_progress
+    sync_worker._live_progress.pop(job2.id, None)
