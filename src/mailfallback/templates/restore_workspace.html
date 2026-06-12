@@ -116,17 +116,22 @@
                 <span class="ws-when-dot"></span> = snapshot day
               </span>
               <button type="button" class="ws-btn-ghost ws-btn-sm" @click="clearCustomRange()">Clear</button>
-              <button type="button" class="ws-btn-primary ws-btn-sm" @click="applyCustomRange()">Apply</button>
+              {# Disabled until a pick exists — the JS guard alone would make
+                 Apply a silent no-op. #}
+              <button type="button" class="ws-btn-primary ws-btn-sm"
+                      :disabled="!rangeStart" @click="applyCustomRange()">Apply</button>
             </div>
           </div>
         </div>
 
+        {# Source/deep toggles re-run the active search like the chips do —
+           live controls beside live chips (no-op until a search ran). #}
         <span class="ws-ctrl-group" x-show="preset === 'single-mail'">
-          <label class="ws-inline"><input type="checkbox" x-model="includeLive"> Live</label>
-          <label class="ws-inline"><input type="checkbox" x-model="includeSnapshots"> Snapshots</label>
+          <label class="ws-inline"><input type="checkbox" x-model="includeLive" @change="_requeryActive()"> Live</label>
+          <label class="ws-inline"><input type="checkbox" x-model="includeSnapshots" @change="_requeryActive()"> Snapshots</label>
           <label class="ws-inline ws-deep-toggle"
                  title="Also searches message bodies — active mail only, slower">
-            <input type="checkbox" x-model="deepSearch"> Deep search
+            <input type="checkbox" x-model="deepSearch" @change="_requeryActive()"> Deep search
           </label>
         </span>
 

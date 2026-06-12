@@ -233,9 +233,10 @@ function restoreWorkspace() {
       return `${s.getDate()}–${e.getDate()} ${sm}`;
     },
     _requeryActive() {
-      // Chip switches must never leave visible results stale relative to the
-      // active time range — same re-query pattern as the attachment filter
-      // chips (the _msgSeq/_attSeq guards drop racing responses).
+      // Chip and source-toggle switches must never leave visible results
+      // stale relative to the controls — same re-query pattern as the
+      // attachment filter chips (the _msgSeq/_attSeq guards drop racing
+      // responses); a no-op until a search ran.
       if (this.preset === 'attachment') {
         if (this.attSearched) this.runAttachmentSearch();
       } else if (this.searched) {
@@ -557,7 +558,14 @@ function restoreWorkspace() {
     },
 
     async runSearch() {
-      if (!this.query.trim()) return;
+      if (!this.query.trim()) {
+        // Nothing to ask for — also clears stale results when a chip or
+        // source toggle re-queries after the query box was emptied (the
+        // attachment guard's mirror).
+        this._clearMsgState();
+        this.statusText = '';
+        return;
+      }
       // Seq guard: a slow (deep) search left in flight must not bleed its
       // late response into the shared statusText or repopulate results that
       // a preset/scope switch already cleared — mirror the _attSeq pattern.
