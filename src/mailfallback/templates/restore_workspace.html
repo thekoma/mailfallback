@@ -354,9 +354,11 @@
          user's unification ask): message-level selection feeding Add to
          staging and Restore selected. In the attachment preset the count
          is MESSAGES (sibling attachment rows share one key). Lives outside
-         the preset x-if templates; x-cloak stops the pre-Alpine flash. #}
+         the preset x-if templates; x-cloak stops the pre-Alpine flash.
+         actionBarVisible is a JS getter — the --ws-action-h dock tracker
+         watches the SAME predicate, so the measured slot follows render. #}
       <div class="ws-action-bar" :class="{'has-staging': staging.exists}"
-           x-show="(preset === 'single-mail' || preset === 'attachment') && selectableCount > 0"
+           x-show="actionBarVisible"
            x-transition x-cloak>
         <label class="ws-inline">
           <input type="checkbox"

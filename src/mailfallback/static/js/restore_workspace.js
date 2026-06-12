@@ -270,7 +270,7 @@ function restoreWorkspace() {
       if (this.accounts.length) this.pushOverrideId = this.accounts[0].id;
 
       this._initCalendar();
-      this._initStagingHeightVar();
+      this._initDockHeightVars();
       this.refreshIcons();
 
       // No default range: timePreset starts at 'all' — searches run unfiltered
@@ -279,39 +279,44 @@ function restoreWorkspace() {
       this.refreshStaging();
     },
 
-    _initStagingHeightVar() {
-      // ONE source of truth for every bottom offset that must clear the
-      // docked staging bar (sticky action bar, mobile preview sheet, push
-      // panel, content padding): the bar WRAPS at narrow widths
-      // (flex-wrap ≤768px) so any fixed 4.5rem-style constant lies exactly
-      // when the bar grows past one row — it covered the selection bar.
-      const bar = document.querySelector('.ws-staging-bar');
+    _initDockHeightVars() {
+      // The bottom dock STACKS on measured slots, not magic constants: both
+      // bars wrap/grow at narrow widths, so every dependent offset (action
+      // bar above staging bar, preview sheet above both, content padding)
+      // derives from these vars in CSS. The z ladder only breaks ties for
+      // transient surfaces — see the dock comment in style.css.
+      this._trackHeightVar(
+        document.querySelector('.ws-staging-bar'), '--ws-staging-h', 'staging.exists');
+      this._trackHeightVar(
+        document.querySelector('.ws-action-bar'), '--ws-action-h', 'actionBarVisible');
+    },
+
+    _trackHeightVar(el, varName, visibleProp) {
+      // Mirror el's REAL height into a :root CSS var. visibleProp is the
+      // reactive property/getter behind the element's x-show.
       const root = document.documentElement;
-      if (!bar) {
-        root.style.setProperty('--ws-staging-h', '0px');
+      const set = px => root.style.setProperty(varName, px + 'px');
+      if (!el) {
+        set(0);
         return;
       }
-      const update = () => {
-        // offsetHeight is 0 while x-show keeps the bar display:none.
-        root.style.setProperty('--ws-staging-h', Math.ceil(bar.offsetHeight) + 'px');
-      };
+      // offsetHeight reads 0 while x-show keeps the element display:none.
+      const measure = () => set(Math.ceil(el.offsetHeight));
       // Observe once at init — the element is always in the DOM (x-show
       // only toggles display) and the observer tracks wrap/resize growth.
       if (window.ResizeObserver) {
-        new ResizeObserver(update).observe(bar);
+        new ResizeObserver(measure).observe(el);
       }
-      // Not every engine fires RO across display:none flips (and the bar's
-      // x-transition delays display:none past $nextTick on leave) — mirror
-      // the exists flag explicitly: 0px the moment the bar starts leaving,
-      // re-measure once it is shown again.
-      this.$watch('staging.exists', exists => {
-        if (!exists) {
-          root.style.setProperty('--ws-staging-h', '0px');
-        } else {
-          this.$nextTick(update);
-        }
+      // Belt and braces: not every engine fires RO across display:none
+      // flips, and x-transition delays display:none past $nextTick on
+      // leave — so write an explicit 0px the moment the predicate flips
+      // false (NEVER re-measure through the leave transition: it would
+      // read the still-visible height) and re-measure once shown again.
+      this.$watch(visibleProp, shown => {
+        if (!shown) set(0);
+        else this.$nextTick(measure);
       });
-      update();
+      measure();
     },
 
     _parseIsland(id) {
@@ -436,6 +441,13 @@ function restoreWorkspace() {
     get selectableCount() {
       // What "select all" would select — MESSAGES, not rows.
       return new Set(this._activeRows().map(r => this.selKey(r))).size;
+    },
+    get actionBarVisible() {
+      // Single source of truth: the bar's x-show AND its --ws-action-h
+      // height tracker both watch this getter, so the measured dock slot
+      // can never disagree with what is actually rendered.
+      return (this.preset === 'single-mail' || this.preset === 'attachment')
+        && this.selectableCount > 0;
     },
     isPreviewing(r) {
       // The row behind the open preview pane (message-level marker).
