@@ -210,8 +210,12 @@ def test_restore_page_renders_attachment_preset(client, db_session, default_stor
     assert "attSnippetParts(a.content_snippet)" in resp.text
     assert "ws-snip-mark" in resp.text
     assert "x-html" not in resp.text
-    # Row actions delegate to the existing preview/staging methods.
+    # Row actions delegate to the existing preview/staging methods. The
+    # button says "Preview email" — bare "Preview" in an attachment list
+    # reads as previewing the FILE.
     assert "openPreview(a)" in resp.text
+    assert ">Preview email</button>" in resp.text
+    assert ">Preview</button>" not in resp.text
     assert "addToStaging([a])" in resp.text
     # Shared search row routes by preset (message vs attachment search).
     assert "submitSearch()" in resp.text
@@ -240,6 +244,14 @@ def test_restore_page_preview_pane_close_and_attachment_actions(client, db_sessi
     # Attachment-context action: native download of the selected attachment.
     assert "attDownloadUrl(previewRef)" in resp.text
     assert "Download attachment" in resp.text
+    # The pane's attachment chips are real download anchors (both included
+    # copies), built from previewRef ids + the payload's part_index — so
+    # attachments are downloadable from the message-preview context too.
+    assert resp.text.count('<a class="ws-att-chip" title="Download"') == 2
+    assert (
+        "attachmentDownloadUrl(previewRef.account_id, previewRef.message_id_hash, a.part_index)"
+        in resp.text
+    )
     # Both results grids expand/split dynamically with the preview pane.
     assert resp.text.count("'has-preview': previewOpen") == 2
 
@@ -284,9 +296,21 @@ def test_restore_page_unified_destination_panels(client, db_session, default_sto
     assert 'x-model="pushCustomFolder"' in resp.text
     # Custom radio present in all three panels (2 partial includes + push).
     assert resp.text.count('value="custom"') == 3
-    # Existing-folders pickers fill the input (input stays editable).
-    assert "pickRestFolder($event)" in resp.text
-    assert "pickPushFolder($event)" in resp.text
+    # Existing-folders pickers fill the input (input stays editable) and KEEP
+    # their selection via their own model (no snap-back-to-placeholder).
+    assert "pickRestFolder()" in resp.text
+    assert "pickPushFolder()" in resp.text
+    assert resp.text.count('x-model="restPickedFolder"') == 2
+    assert 'x-model="pushPickedFolder"' in resp.text
+    # Picker FIRST ("Existing folders"), typed path second — in every panel.
+    assert resp.text.count("Existing folders") == 3
+    assert resp.text.count("or type a new path (created if missing)") == 3
+    assert resp.text.index("Existing folders") < resp.text.index(
+        "or type a new path (created if missing)"
+    )
+    # The fill pulses the input as visible confirmation.
+    assert "'ws-input-pulse': restFolderPulse" in resp.text
+    assert "'ws-input-pulse': pushFolderPulse" in resp.text
     # The sidebar Destination select is gone — destination lives in the panels.
     assert 'x-model="destinationId"' not in resp.text
 

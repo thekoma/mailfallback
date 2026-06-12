@@ -67,7 +67,12 @@ class TestPreviewLive:
         assert "body text" in out["body_snippet"]
         assert out["from_addr"] == "sender@example.com"
         assert out["to_addrs"] == ["dest@example.com"]
-        assert out["attachments"] == [{"filename": "f.pdf", "ext": "pdf", "size_bytes": 4}]
+        # part_index drives the pane's per-chip download URLs. 2 by the
+        # indexer's frozen convention: ALL non-multipart leaves count in walk
+        # order, and the text/plain body is leaf 1.
+        assert out["attachments"] == [
+            {"filename": "f.pdf", "ext": "pdf", "size_bytes": 4, "part_index": 2}
+        ]
 
     def test_live_preview_inbox_subdirectory_layout(self, db_session, default_store, tmp_path):
         # Production layout (mbsync `Inbox {path}/INBOX`): INBOX is a real

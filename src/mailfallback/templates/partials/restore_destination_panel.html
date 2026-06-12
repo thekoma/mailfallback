@@ -38,17 +38,25 @@
       <input type="radio" value="custom" x-model="restFolderMode" @change="ensureRestFolders()">
       Custom folder
     </label>
-    {# The text input is the source of truth — created if missing; the picker
-       fills it from the destination's existing folders, then snaps back. #}
+    {# Picker first and it KEEPS the picked option selected (x-model) —
+       picking copies into the text input below, which stays the source of
+       truth (freely editable) and pulses to confirm the write landed. #}
     <div class="ws-custom-folder" x-show="restFolderMode === 'custom'">
-      <input type="text" x-model="restCustomFolder" maxlength="200"
-             placeholder="Folder or folder/subfolder — created if missing">
-      <select @change="pickRestFolder($event)">
-        <option value="">Pick from existing folders…</option>
-        <template x-for="f in restPickerFolders" :key="f.full_name || f.name">
-          <option :value="f.name" x-text="f.name"></option>
-        </template>
-      </select>
+      <label class="ws-custom-pick">
+        <span class="ws-custom-sublabel">Existing folders</span>
+        <select x-model="restPickedFolder" @change="pickRestFolder()">
+          <option value="">Pick a folder…</option>
+          <template x-for="f in restPickerFolders" :key="f.full_name || f.name">
+            <option :value="f.name" x-text="f.name"></option>
+          </template>
+        </select>
+      </label>
+      <label class="ws-custom-pick">
+        <span class="ws-custom-sublabel">or type a new path (created if missing)</span>
+        <input type="text" x-model="restCustomFolder" maxlength="200"
+               :class="{'ws-input-pulse': restFolderPulse}"
+               placeholder="Folder or folder/subfolder">
+      </label>
     </div>
   </div>
 </div>

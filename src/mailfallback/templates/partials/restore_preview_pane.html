@@ -31,8 +31,16 @@
       <div class="ws-preview-body" x-text="preview.body_snippet || '(no text)'"></div>
       <div class="ws-preview-atts" x-show="preview.attachments && preview.attachments.length">
         <span class="ws-field-label">Attachments</span>
+        {# Real download links (same endpoint as the attachment table):
+           part_index rides in the preview payload, ids come from previewRef.
+           Works in both preview contexts — message rows and attachment rows. #}
         <template x-for="(a, ai) in preview.attachments" :key="ai">
-          <span class="ws-att-chip"><span x-text="a.filename"></span><span class="text-muted" x-text="' · ' + fmtSize(a.size_bytes)"></span></span>
+          <a class="ws-att-chip" title="Download"
+             :href="(previewRef && a.part_index != null)
+                    ? attachmentDownloadUrl(previewRef.account_id, previewRef.message_id_hash, a.part_index)
+                    : null">
+            <span x-text="a.filename"></span><span class="text-muted" x-text="' · ' + fmtSize(a.size_bytes)"></span>
+          </a>
         </template>
       </div>
       <div class="ws-preview-actions">
