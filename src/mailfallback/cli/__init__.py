@@ -27,6 +27,11 @@ def app() -> int:
         "backfill-attachments", help="Parse attachments for index rows that pre-date them"
     )
     p_backfill_atts.add_argument("account_id")
+    p_backfill_atts.add_argument(
+        "--content-only",
+        action="store_true",
+        help="Extract Tika text into rows with NULL content_text (requires tika_enabled)",
+    )
 
     args = parser.parse_args()
     if args.cmd == "index":
