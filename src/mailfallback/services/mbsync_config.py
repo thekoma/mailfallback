@@ -6,6 +6,39 @@ def _sanitize_value(value: str) -> str:
     return re.sub(r"[\n\r\x00-\x1f]", "", str(value)).strip()
 
 
+def channel_name(account_name: str) -> str:
+    """The Channel name generate_mbsyncrc derives from the account name.
+
+    Exported for the sync worker's priority pass (`mbsync <channel>:INBOX`)
+    — it must target EXACTLY the channel the generated config declares.
+    """
+    return _sanitize_value(account_name).lower().replace(" ", "_")
+
+
+# Tokens of a Patterns string: optionally negated, optionally quoted.
+_PATTERN_TOKEN_RE = re.compile(r'!?"[^"]*"|[^\s"]+')
+
+
+def excluded_folder_names(patterns: str) -> list[str]:
+    """The !-negations of a channel Patterns string, unquoted.
+
+    Exported for the worker's upstream STATUS pass: the initial-sync
+    progress denominator must count only folders mbsync will actually
+    sync. Handles quoted (!"[Gmail]/All Mail") and bare (!Spam) negations;
+    glob negations are returned verbatim (callers match with fnmatch).
+    """
+    excluded: list[str] = []
+    for token in _PATTERN_TOKEN_RE.findall(patterns or ""):
+        if not token.startswith("!"):
+            continue
+        name = token[1:]
+        if len(name) >= 2 and name.startswith('"') and name.endswith('"'):
+            name = name[1:-1]
+        if name:
+            excluded.append(name)
+    return excluded
+
+
 def generate_mbsyncrc(
     account_name: str,
     imap_host: str,
@@ -29,7 +62,7 @@ def generate_mbsyncrc(
         password = _sanitize_value(password)
     if token_command:
         token_command = _sanitize_value(token_command)
-    safe_name = account_name.lower().replace(" ", "_")
+    safe_name = channel_name(account_name)  # single source with the worker
     lines = []
 
     lines.append(f"IMAPAccount {safe_name}")
