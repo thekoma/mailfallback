@@ -322,7 +322,10 @@
                         <td class="ws-att-size" x-text="fmtSize(a.size_bytes)"></td>
                         <td class="ws-att-date" x-text="a.date_sent ? a.date_sent.slice(0, 10) : '—'"></td>
                         <td class="ws-att-actions">
-                          <button type="button" class="ws-btn-ghost ws-btn-sm" @click="openPreview(a)">Preview</button>
+                          {# "Preview email", not bare "Preview": in an
+                             attachment list that would read as previewing
+                             the FILE — the pane previews its message. #}
+                          <button type="button" class="ws-btn-ghost ws-btn-sm" @click="openPreview(a)">Preview email</button>
                           <button type="button" class="ws-btn-ghost ws-btn-sm" @click="addToStaging([a])">Add to staging</button>
                         </td>
                       </tr>
@@ -459,17 +462,27 @@
         <input type="radio" value="custom" x-model="pushFolderMode" @change="ensurePushFolders()">
         Custom folder
       </label>
-      {# Input is the source of truth; the picker (override mode only — an
-         origin push has no single destination account to list) fills it. #}
+      {# Same control as the destination panel partial: picker first (kept
+         selected after picking; override mode only — an origin push has no
+         single destination account to list), text input second as the
+         editable source of truth, pulsed when a pick fills it. #}
       <div class="ws-custom-folder" x-show="pushFolderMode === 'custom'">
-        <input type="text" x-model="pushCustomFolder" maxlength="200"
-               placeholder="Folder or folder/subfolder — created if missing">
-        <select x-show="pushDestination === 'override'" @change="pickPushFolder($event)">
-          <option value="">Pick from existing folders…</option>
-          <template x-for="f in pushPickerFolders" :key="f.full_name || f.name">
-            <option :value="f.name" x-text="f.name"></option>
-          </template>
-        </select>
+        <label class="ws-custom-pick" x-show="pushDestination === 'override'">
+          <span class="ws-custom-sublabel">Existing folders</span>
+          <select x-model="pushPickedFolder" @change="pickPushFolder()">
+            <option value="">Pick a folder…</option>
+            <template x-for="f in pushPickerFolders" :key="f.full_name || f.name">
+              <option :value="f.name" x-text="f.name"></option>
+            </template>
+          </select>
+        </label>
+        <label class="ws-custom-pick">
+          <span class="ws-custom-sublabel" x-show="pushDestination === 'override'">or type a new path (created if missing)</span>
+          <span class="ws-custom-sublabel" x-show="pushDestination !== 'override'">Type a path (created if missing)</span>
+          <input type="text" x-model="pushCustomFolder" maxlength="200"
+                 :class="{'ws-input-pulse': pushFolderPulse}"
+                 placeholder="Folder or folder/subfolder">
+        </label>
       </div>
     </div>
     <button class="ws-btn-primary"

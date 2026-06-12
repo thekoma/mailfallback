@@ -52,7 +52,11 @@ function restoreWorkspace() {
     restDestOtherId: '',
     restFolderMode: 'original', // 'original' | 'restored' | 'custom'
     restCustomFolder: '',
+    restPickedFolder: '',       // the picker's own selection — KEPT visible after a pick
+    restFolderPulse: false,     // input highlight while a pick lands
+    _restPickerLastId: '',      // picker account tracking — a dest change resets the pick
     _destFolderCache: {},       // account id -> mailboxes list (lazy, per panel pickers)
+    _pulseTimers: {},           // per-panel pulse timeouts (restart-safe)
 
     // Async/UI state
     searching: false,
@@ -96,6 +100,9 @@ function restoreWorkspace() {
     pushOverrideId: '',
     pushFolderMode: 'original', // 'original' | 'restored' | 'custom'
     pushCustomFolder: '',
+    pushPickedFolder: '',       // picker selection (kept after pick, see rest*)
+    pushFolderPulse: false,
+    _pushPickerLastId: '',
     pushing: false,             // guards against overlapping pushes
     _stagingTimers: [],         // post-push delayed refreshes — cleared on re-push
 
@@ -371,20 +378,47 @@ function restoreWorkspace() {
       } catch (e) { /* picker stays empty — the text input still works */ }
     },
     ensureRestFolders() {
-      if (this.restFolderMode === 'custom') this.ensureDestFolders(this.restPickerAccountId);
+      if (this.restFolderMode !== 'custom') return;
+      // A destination change swaps the folder list — a kept pick from the
+      // old account would leave the select displaying nothing (or a folder
+      // the new destination doesn't have). The typed input stays untouched.
+      if (this._restPickerLastId !== this.restPickerAccountId) {
+        this._restPickerLastId = this.restPickerAccountId;
+        this.restPickedFolder = '';
+      }
+      this.ensureDestFolders(this.restPickerAccountId);
     },
     ensurePushFolders() {
-      if (this.pushFolderMode === 'custom') this.ensureDestFolders(this.pushPickerAccountId);
+      if (this.pushFolderMode !== 'custom') return;
+      if (this._pushPickerLastId !== this.pushPickerAccountId) {
+        this._pushPickerLastId = this.pushPickerAccountId;
+        this.pushPickedFolder = '';
+      }
+      this.ensureDestFolders(this.pushPickerAccountId);
     },
-    pickRestFolder(event) {
-      // The text input is the source of truth — picking fills it (still
-      // editable), then the select snaps back to its placeholder.
-      if (event.target.value) this.restCustomFolder = event.target.value;
-      event.target.value = '';
+    pickRestFolder() {
+      // The picker KEEPS its selection (x-model) — picking copies into the
+      // text input, which stays the source of truth (freely editable); the
+      // pulse is the visible confirmation that the copy landed.
+      if (!this.restPickedFolder) return;
+      this.restCustomFolder = this.restPickedFolder;
+      this._pulseInput('rest');
     },
-    pickPushFolder(event) {
-      if (event.target.value) this.pushCustomFolder = event.target.value;
-      event.target.value = '';
+    pickPushFolder() {
+      if (!this.pushPickedFolder) return;
+      this.pushCustomFolder = this.pushPickedFolder;
+      this._pulseInput('push');
+    },
+    _pulseInput(which) {
+      // Restart-safe: drop the class, re-add next tick (a re-pick re-fires
+      // the CSS highlight), auto-remove after ~600ms.
+      const flag = which + 'FolderPulse';
+      this[flag] = false;
+      clearTimeout(this._pulseTimers[which]);
+      this.$nextTick(() => {
+        this[flag] = true;
+        this._pulseTimers[which] = setTimeout(() => { this[flag] = false; }, 600);
+      });
     },
     selectAllFolders(checked) {
       this.selectedFolders = checked ? this.folders.map(f => f.full_name || f.name) : [];
@@ -541,9 +575,14 @@ function restoreWorkspace() {
       // The table row behind the open preview pane.
       return this.previewIsAttachment && this.attKey(this.previewRef) === this.attKey(a);
     },
-    attDownloadUrl(a) {
-      return `/api/restore/attachments/${a.account_id}/${a.message_id_hash}/${a.part_index}/download`
+    attachmentDownloadUrl(accountId, hashHex, partIndex) {
+      // Shared by the attachment table rows AND the preview pane's chips
+      // (there the ids come from previewRef, part_index from the payload).
+      return `/api/restore/attachments/${accountId}/${hashHex}/${partIndex}/download`
         + (this.includeAll ? '?include_all=true' : '');
+    },
+    attDownloadUrl(a) {
+      return this.attachmentDownloadUrl(a.account_id, a.message_id_hash, a.part_index);
     },
     attIcon(ext) {
       const e = (ext || '').toLowerCase();
