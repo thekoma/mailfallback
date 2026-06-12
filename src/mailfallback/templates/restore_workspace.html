@@ -310,15 +310,28 @@
                     <template x-for="a in attResults" :key="attKey(a)">
                       {# Row highlight: the attachment behind the open
                          preview — siblings of one message preview identical
-                         content, so the selection must be visible here. #}
-                      <tr :class="{'is-selected': attIsSelected(a)}">
+                         content, so the selection must be visible here.
+                         The whole row is the preview gesture (same as
+                         .ws-result-body, keyboard parity included); the
+                         download anchor and the actions cell stop
+                         propagation so their own actions don't ALSO swap
+                         the preview. #}
+                      {# .self on the key handlers: a bubbled Enter/Space from
+                         the inner buttons/anchor must keep its native
+                         activation — Alpine wraps .self OUTSIDE .prevent, so
+                         the guard short-circuits before preventDefault. #}
+                      <tr :class="{'is-selected': attIsSelected(a)}"
+                          @click="openPreview(a)"
+                          tabindex="0" role="button"
+                          @keydown.enter.prevent.self="openPreview(a)"
+                          @keydown.space.prevent.self="openPreview(a)">
                         <td class="ws-att-ticon-cell">
                           <i :data-lucide="attIcon(a.ext)" class="icon-md ws-att-ticon"></i>
                         </td>
                         <td class="ws-att-main">
                           {# Real anchor → native browser download (the
                              endpoint sets Content-Disposition: attachment). #}
-                          <a :href="attDownloadUrl(a)" class="ws-att-name"
+                          <a :href="attDownloadUrl(a)" class="ws-att-name" @click.stop
                              :title="'Download ' + (a.filename || 'attachment')">
                             <span x-text="attNameBase(a)"></span><span class="ws-att-ext" x-text="attNameExt(a)"></span>
                           </a>
@@ -347,7 +360,7 @@
                         </td>
                         <td class="ws-att-size" x-text="fmtSize(a.size_bytes)"></td>
                         <td class="ws-att-date" x-text="a.date_sent ? a.date_sent.slice(0, 10) : '—'"></td>
-                        <td class="ws-att-actions">
+                        <td class="ws-att-actions" @click.stop>
                           {# "Preview email", not bare "Preview": in an
                              attachment list that would read as previewing
                              the FILE — the pane previews its message. #}

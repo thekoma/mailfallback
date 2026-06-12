@@ -2465,6 +2465,30 @@ body.page-restore-workspace .content { padding-bottom: 5rem; }
 }
 .ws-att-table tbody tr:last-child td { border-bottom: none; }
 .ws-att-table tbody tr:hover td { background: var(--ws-card-hover); }
+/* The whole row is the preview gesture (click + Enter/Space). Pico paints
+   ANY [role="button"] as a primary button (tag-agnostic attribute selector:
+   background, border — which renders in the collapse model — and centered
+   text), so neutralize like .ws-result-body[role="button"]. The hover
+   affordance stays on the td rules above. */
+.ws-att-table tbody tr[role="button"] {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  text-align: left;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  box-shadow: none;
+  cursor: pointer;
+}
+/* Inset outline: the card wrapper clips (overflow-x: auto), an outset ring
+   would be cut off at the row edges. */
+.ws-att-table tbody tr[role="button"]:focus-visible {
+  outline: 2px solid var(--ws-cyan);
+  outline-offset: -2px;
+}
 /* The row behind the open preview pane — mirrors .ws-result.is-selected
    (cyan-soft fill + cyan left accent). After :hover so it wins the cascade
    at equal specificity. */

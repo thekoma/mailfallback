@@ -187,6 +187,10 @@ def test_restore_staging_bar_webmail_link_when_enabled(
     assert resp.status_code == 200
     assert "http://localhost:8001?_task=mail&amp;_mbox=Staging" in resp.text
     assert "Open in webmail" in resp.text
+    # The pane's webmail ghost keeps x-show — ghost buttons carry no
+    # !important display, so x-show works there (measured; the primary-class
+    # actions are the ones that need x-if).
+    assert 'x-show="preview.alive_in_live && !previewIsAttachment"' in resp.text
 
 
 def test_restore_page_renders_attachment_preset(client, db_session, default_store):
@@ -217,6 +221,21 @@ def test_restore_page_renders_attachment_preset(client, db_session, default_stor
     assert ">Preview email</button>" in resp.text
     assert ">Preview</button>" not in resp.text
     assert "addToStaging([a])" in resp.text
+    # Whole-row preview gesture, same as .ws-result-body: click anywhere on
+    # the row opens/changes the preview, with keyboard parity. The download
+    # anchor and the actions cell stop propagation so downloading or staging
+    # never ALSO swaps the preview. The key handlers carry .self: a bubbled
+    # Enter/Space from the inner buttons/anchor must keep its native
+    # activation (Alpine wraps .self outside .prevent).
+    tr_at = resp.text.index("<tr :class=\"{'is-selected': attIsSelected(a)}\"")
+    tr_tag = resp.text[tr_at : resp.text.index(">", tr_at)]
+    assert '@click="openPreview(a)"' in tr_tag
+    assert 'tabindex="0"' in tr_tag
+    assert 'role="button"' in tr_tag
+    assert '@keydown.enter.prevent.self="openPreview(a)"' in tr_tag
+    assert '@keydown.space.prevent.self="openPreview(a)"' in tr_tag
+    assert resp.text.count("@click.stop") == 2  # download anchor + actions cell
+    assert '<td class="ws-att-actions" @click.stop>' in resp.text
     # Shared search row routes by preset (message vs attachment search).
     assert "submitSearch()" in resp.text
     # Empty state copy.
@@ -244,6 +263,16 @@ def test_restore_page_preview_pane_close_and_attachment_actions(client, db_sessi
     # Attachment-context action: native download of the selected attachment.
     assert "attDownloadUrl(previewRef)" in resp.text
     assert "Download attachment" in resp.text
+    # Primary-class pane actions are x-if, NOT x-show: the anti-Pico
+    # `display: inline-flex !important` on ws-btn-primary beats x-show's
+    # inline display:none — message previews kept showing the Download
+    # anchor. Both pane copies; the staging button is the same failure class.
+    assert resp.text.count('x-if="previewIsAttachment"') == 2
+    assert resp.text.count('x-if="previewRef"') == 2
+    assert 'x-show="previewRef"' not in resp.text
+    anchor_at = resp.text.index('<a class="ws-btn-primary ws-preview-download"')
+    anchor_tag = resp.text[anchor_at : resp.text.index(">", anchor_at)]
+    assert "x-show" not in anchor_tag
     # The pane's attachment chips are real download anchors (both included
     # copies), built from previewRef ids + the payload's part_index — so
     # attachments are downloadable from the message-preview context too.
@@ -431,6 +460,9 @@ def test_workspace_css_responsive_grid_and_preview_overlay(client):
     assert "grid-template-columns: minmax(0, 1.1fr) minmax(280px, 1fr);" in css
     # The old stacked-pane escape hatch is gone (the overlay replaces it).
     assert ".ws-preview { position: static; }" not in css
+    # Clickable attachment rows: Pico paints ANY [role=button] (tag-agnostic
+    # attribute selector) — the neutralizer must exist (.ws-result-body lesson).
+    assert '.ws-att-table tbody tr[role="button"]' in css
 
 
 def test_workspace_js_restore_confirms_share_reassurance(client):
