@@ -9,7 +9,7 @@ from email.parser import BytesParser
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
@@ -206,8 +206,9 @@ class AttachmentSearchRequest(BaseModel):
     min_size: int | None = None
     max_size: int | None = None
     include_content: bool = False
-    page: int = 1
-    page_size: int = 50
+    # page=0 would compile to a negative OFFSET (PG errors out at runtime).
+    page: int = Field(1, ge=1)
+    page_size: int = Field(50, ge=1, le=200)
 
 
 @router.post("/attachments/search")
@@ -287,12 +288,13 @@ def api_attachment_download(
     re-walked counting ALL non-multipart leaves in walk order — the
     part_index contract with index_service._parse_attachments.
 
-    ALWAYS application/octet-stream: a hostile HTML/SVG attachment must
-    download, never execute on our origin. Every download is audited
+    ALWAYS application/octet-stream + nosniff: a hostile HTML/SVG attachment
+    must download, never execute on our origin. Every download is audited
     (attachment.download); the admin include_all escalation needs no second
-    row — the always-on row already names user and mailbox.
+    row — the always-on row carries an ``escalated`` flag when the bypass
+    actually fired.
     """
-    account, _escalated = _workspace_account_for_user(db, user, account_id, include_all)
+    account, escalated = _workspace_account_for_user(db, user, account_id, include_all)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
     try:
@@ -350,16 +352,19 @@ def api_attachment_download(
     if len(raw) >= cap:
         raise HTTPException(status_code=502, detail="attachment too large to extract")
 
-    msg = BytesParser(policy=policy.default).parsebytes(raw)
     part = None
-    leaf_index = 0
-    for candidate in msg.walk():
-        if candidate.get_content_maintype() == "multipart":
-            continue
-        leaf_index += 1
-        if leaf_index == part_index:
-            part = candidate
-            break
+    try:
+        msg = BytesParser(policy=policy.default).parsebytes(raw)
+        leaf_index = 0
+        for candidate in msg.walk():
+            if candidate.get_content_maintype() == "multipart":
+                continue
+            leaf_index += 1
+            if leaf_index == part_index:
+                part = candidate
+                break
+    except Exception:  # hostile MIME — same tolerance as _parse_attachments
+        part = None
     if part is None:
         # Belt and braces: immutable messages can't change MIME shape, but a
         # truncated/odd parse must 404, not 500.
@@ -371,6 +376,13 @@ def api_attachment_download(
     if payload is None:
         raise HTTPException(status_code=404, detail="Attachment part not decodable")
 
+    details = {
+        "message_id_hash": message_id_hash.hex(),
+        "part_index": part_index,
+        "source": source,
+    }
+    if escalated:
+        details["escalated"] = True
     log_action(
         db,
         user=user,
@@ -378,17 +390,16 @@ def api_attachment_download(
         resource_type="attachment",
         resource_id=account.id,
         resource_name=att.filename,
-        details={
-            "message_id_hash": message_id_hash.hex(),
-            "part_index": part_index,
-            "source": source,
-        },
+        details=details,
         ip_address=request.client.host if request.client else None,
     )
     return Response(
         content=payload,
         media_type="application/octet-stream",
-        headers={"Content-Disposition": _attachment_disposition(att.filename)},
+        headers={
+            "Content-Disposition": _attachment_disposition(att.filename),
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
@@ -1174,8 +1185,9 @@ class RestoreSearchRequest(BaseModel):
     snapshot_id: str | None = None
     deep: bool = False
     include_all: bool = False
-    page: int = 1
-    page_size: int = 50
+    # page=0 would compile to a negative OFFSET (PG errors out at runtime).
+    page: int = Field(1, ge=1)
+    page_size: int = Field(50, ge=1, le=200)
 
 
 @router.post("/search")
