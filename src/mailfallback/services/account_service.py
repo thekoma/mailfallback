@@ -135,6 +135,8 @@ _UPDATABLE_ACCOUNT_FIELDS = {
     "enabled",
     "suspended",
     "imap_user",
+    # NULL = provider default, 0 = unlimited, N = N MB/day (sync budget).
+    "daily_sync_budget_mb",
 }
 
 

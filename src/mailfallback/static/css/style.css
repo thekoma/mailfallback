@@ -289,6 +289,9 @@ body.login-page .content { margin-left: 0; max-width: 100%; display: flex; justi
 .badge-error { background: var(--mfb-badge-error-bg); color: var(--mfb-badge-error-color); border-color: var(--mfb-badge-error-border); }
 .badge-warning { background: var(--mfb-badge-warning-bg); color: var(--mfb-badge-warning-color); border-color: var(--mfb-badge-warning-border); }
 .badge-disabled { background: var(--mfb-badge-neutral-bg); color: var(--mfb-badge-neutral-color); border-color: var(--mfb-badge-neutral-border); }
+/* Self-recovering states (initial sync, budget/throttle pauses): the
+   syncing palette without implying activity — info tone, never red. */
+.badge-info { background: var(--mfb-badge-syncing-bg); color: var(--mfb-badge-syncing-color); border-color: var(--mfb-badge-syncing-border); }
 .badge-admin { background: var(--mfb-badge-syncing-bg); color: var(--mfb-badge-syncing-color); border-color: var(--mfb-badge-syncing-border); }
 .badge-user { background: var(--mfb-badge-neutral-bg); color: var(--mfb-badge-user-color); border-color: var(--mfb-badge-user-border); }
 .badge-role { background: transparent; border: 1px solid var(--pico-muted-border-color); color: var(--pico-color); }

@@ -162,6 +162,8 @@ def account_sync_panel(account_id: str, request: Request, db: Session = Depends(
             .first()
         )
 
+    from mailfallback.routers.ui import account_live_status
+
     response = templates.TemplateResponse(
         request=request,
         name="partials/sync_panel.html",
@@ -172,6 +174,7 @@ def account_sync_panel(account_id: str, request: Request, db: Session = Depends(
             "last_job": last_job,
             "migration": migration,
             "user": user,
+            "live": account_live_status(account),
         },
     )
     if not polling:
@@ -199,6 +202,13 @@ def _compute_hero_state(account, db):
         if account.last_sync_at is None:
             return "first-sync", snap, last_job
         return "syncing", snap, last_job
+
+    # Self-recovering pause (budget/throttle/transient): its own hero state —
+    # never the red error panel. The worker guarantees error => no pause
+    # (review F2), and a paused account is idle, so this sits safely after
+    # the syncing check. The expiry tick clears stale rows within a minute.
+    if account.pause_reason and account.sync_paused_until is not None:
+        return "sync-paused", snap, last_job
 
     if account.sync_state.value == "error":
         # A rejected refresh token leaves credentials in place, so
@@ -468,12 +478,22 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
 
     timeline_global, folder_timeline_data = _build_bento_timeline(jobs[:30])
 
+    from mailfallback.routers.ui import account_live_status
+    from mailfallback.services.sync_budget import PROVIDER_DAILY_BUDGET_MB
+
+    default_mb = PROVIDER_DAILY_BUDGET_MB.get(account.provider)
+    budget_placeholder = (
+        f"{default_mb} (provider default)" if default_mb else "Unlimited (provider default)"
+    )
+
     return templates.TemplateResponse(
         request=request,
         name="account_detail.html",
         context={
             "user": user,
             "account": account,
+            "live": account_live_status(account),
+            "budget_placeholder": budget_placeholder,
             "jobs": jobs,
             "folder_stats": folder_stats,
             "extra": extra,
@@ -557,6 +577,24 @@ async def account_edit_submit(account_id: str, request: Request, db: Session = D
                 updates[key] = val
         elif key in clearable_fields:
             updates[key] = ""
+
+    # Daily sync budget: empty -> NULL (provider default), 0 -> explicit
+    # unlimited, N -> N MB. Parsed outside the generic loop ("0" must
+    # persist, "" must CLEAR).
+    budget_raw = form.get("daily_sync_budget_mb")
+    if budget_raw is not None:
+        budget_raw = str(budget_raw).strip()
+        if budget_raw == "":
+            updates["daily_sync_budget_mb"] = None
+        else:
+            try:
+                parsed_budget = int(budget_raw)
+                if parsed_budget < 0:
+                    raise ValueError
+                updates["daily_sync_budget_mb"] = parsed_budget
+            except (ValueError, TypeError):
+                request.session["flash_error"] = "Invalid daily sync budget value"
+                return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
     account = get_account(db, account_id, user)
     if not account:

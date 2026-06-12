@@ -51,6 +51,7 @@
                 {% endif %}
             </td>
             <td>
+                {% set ls = live_status.get(account.id) if live_status else none %}
                 {% if not account.is_authenticated %}
                 <span class="badge badge-error"><i data-lucide="key-round" class="icon-sm"></i> Unauthenticated</span>
                 {% elif account.migrating %}
@@ -62,9 +63,18 @@
                 {% if account.suspended %}
                 <span class="badge badge-disabled"><i data-lucide="pause-circle" class="icon-sm"></i> Suspended</span>
                 {% elif account.sync_state.value == 'syncing' %}
+                {% if ls and ls.initial_sync %}
+                <span class="badge badge-info"><i data-lucide="loader" class="icon-sm spin"></i> Initial sync{% if ls.pct is not none %} {{ ls.pct | int }}%{% endif %}</span>
+                {% else %}
                 <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm"></i> syncing</span>
+                {% endif %}
                 {% elif account.sync_state.value == 'error' %}
                 <span class="badge badge-error"><i data-lucide="alert-circle" class="icon-sm"></i> error</span>
+                {% elif ls and ls.pause_reason %}
+                {# Self-recovering pause: info tone, never error-red. #}
+                <span class="badge badge-info" title="{{ ls.pause_tooltip }}"><i data-lucide="pause-circle" class="icon-sm"></i> Paused{% if ls.resume_hhmm %} · resumes {{ ls.resume_hhmm }}{% endif %}</span>
+                {% elif ls and ls.initial_sync and account.enabled %}
+                <span class="badge badge-info" title="First full sync incomplete"><i data-lucide="download" class="icon-sm"></i> Initial sync{% if ls.pct is not none %} {{ ls.pct | int }}%{% endif %}</span>
                 {% elif account.enabled %}
                 <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> idle</span>
                 {% endif %}
