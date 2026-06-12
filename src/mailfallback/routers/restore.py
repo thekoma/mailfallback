@@ -711,13 +711,27 @@ def list_mailboxes(
             return []
 
         mailboxes = []
+        seen: set[str] = set()
         for item in folder_data:
             if not item or item == b"":
                 continue
-            parsed = _parse_folder_name(item, namespace_prefix)
+            decoded = item.decode() if isinstance(item, bytes) else item
+            # Skip non-selectable folders (parent placeholders like
+            # "[Gmail]") — picking one as a restore destination fails
+            # upstream (mirrors _list_namespace_folders).
+            if "\\Noselect" in decoded:
+                continue
+            parsed = _parse_folder_name(decoded, namespace_prefix)
             if not parsed:
                 continue
             full_name, short_name = parsed
+            # Dovecot can LIST the same folder twice (byte-identical lines —
+            # stale dovecot.list.index, seen in the wild on an Outlook
+            # account). Duplicate names crash the UI's keyed x-for, which
+            # then renders ZERO picker options — dedupe, order-preserving.
+            if full_name in seen:
+                continue
+            seen.add(full_name)
             msg_count = 0
             st, st_data = conn.status(f'"{full_name}"', "(MESSAGES)")
             if st == "OK":
