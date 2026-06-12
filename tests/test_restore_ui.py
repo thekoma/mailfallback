@@ -254,6 +254,9 @@ def test_restore_page_preview_pane_close_and_attachment_actions(client, db_sessi
     )
     # Both results grids expand/split dynamically with the preview pane.
     assert resp.text.count("'has-preview': previewOpen") == 2
+    # Staging-lift binding: the action bar + both pane copies (the pane is a
+    # fixed bottom sheet at the phone breakpoint and must clear the bar).
+    assert resp.text.count("'has-staging': staging.exists") == 3
 
 
 def test_restore_page_folder_preset_multiselect(client, db_session, default_store):
@@ -394,6 +397,40 @@ def test_workspace_js_time_chips_default_all_time(client):
     # Snapshot dots wiring untouched: scope-driven fetch + stale-response guard.
     assert "fetchSnapshotDates()" in js
     assert "_datesSeq" in js
+
+
+def test_workspace_css_responsive_grid_and_preview_overlay(client):
+    """CSS anatomy pins for the responsive fixes. Grid items default to
+    min-width:auto — without min-width:0 the results column grows to
+    max-content (page-wide h-scroll, ellipsis never engages). At <=768px the
+    open preview is a fixed bottom-sheet overlay (stacked under 100 results it
+    sat ~9 screens below the clicked row), lifted above the docked staging bar
+    via the action bar's 4.5rem constant. Medium widths keep a preview floor."""
+    resp = client.get("/static/css/style.css")
+    assert resp.status_code == 200
+    css = resp.text
+    # Both split grids let their children shrink below max-content.
+    assert ".ws-results-grid > *,\n.ws-att-grid > * { min-width: 0; }" in css
+    # Bottom-sheet overlay: above staging bar (50), push panel (51) and the
+    # when-popover (60); scrollable, capped height, anchored to the bottom.
+    overlay_sel = (
+        ".ws-results-grid.has-preview .ws-preview,\n  .ws-att-grid.has-preview .ws-preview {"
+    )
+    assert overlay_sel in css
+    block = css[css.index(overlay_sel) :]
+    block = block[: block.index("}")]
+    assert "position: fixed" in block
+    assert "top: auto" in block  # overrides the desktop sticky top
+    assert "max-height: 80vh" in block
+    assert "overflow-y: auto" in block
+    assert "z-index: 70" in block
+    # Staging-bar lift twin (same constant as .ws-action-bar.has-staging).
+    assert ".ws-preview.has-staging { bottom: 4.5rem; }" in css
+    assert ".ws-action-bar.has-staging { bottom: 4.5rem; }" in css
+    # Medium widths: results may shrink, preview keeps a usable minimum.
+    assert "grid-template-columns: minmax(0, 1.1fr) minmax(280px, 1fr);" in css
+    # The old stacked-pane escape hatch is gone (the overlay replaces it).
+    assert ".ws-preview { position: static; }" not in css
 
 
 def test_workspace_js_restore_confirms_share_reassurance(client):

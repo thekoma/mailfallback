@@ -2046,6 +2046,13 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
    same dynamic treatment as .ws-att-grid. */
 .ws-results-grid { display: grid; grid-template-columns: 1fr; gap: 1rem; align-items: start; }
 .ws-results-grid.has-preview { grid-template-columns: 1.1fr 1fr; }
+/* Grid items default to min-width:auto, so the results column grows to
+   max-content (page-wide h-scroll) and the subject/meta ellipsis never
+   engages. Let every pane shrink; .ws-att-card needs this too so its
+   overflow-x:auto scrolls INSIDE the card instead of blowing out the page.
+   (.ws-grid is covered: its flexible child .ws-panel pins min-width: 0.) */
+.ws-results-grid > *,
+.ws-att-grid > * { min-width: 0; }
 .ws-badge-acct { background: var(--mfb-badge-syncing-bg); color: var(--mfb-badge-syncing-color); border: 1px solid var(--mfb-badge-syncing-border); }
 .ws-badge-gone { background: transparent; color: var(--ws-text-dim); border: 1px solid var(--ws-border); }
 .ws-att-mark { color: var(--ws-text-muted); }
@@ -2138,9 +2145,39 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   background: var(--ws-cyan-soft);
   text-decoration: none;
 }
+/* Medium widths: keep a usable preview floor and let the results column
+   actually shrink (pairs with the min-width:0 child rule above). */
+@media (min-width: 769px) and (max-width: 1100px) {
+  .ws-results-grid.has-preview,
+  .ws-att-grid.has-preview { grid-template-columns: minmax(0, 1.1fr) minmax(280px, 1fr); }
+}
+
+/* Phones/drawer breakpoint — BOTH grids (this block owns the att twin too).
+   Stacking the pane under the results would put it up to ~9 screens below
+   the clicked row (100 results), so the open preview becomes a fixed
+   bottom-sheet overlay instead: above the staging bar (50), push panel (51)
+   and when-popover (60); the existing × close is the dismiss affordance.
+   The single column stays — with the pane out of flow, a two-track template
+   would strand the results in a half-width first column. */
 @media (max-width: 768px) {
   .ws-results-grid.has-preview { grid-template-columns: 1fr; }
-  .ws-preview { position: static; }
+  .ws-att-grid.has-preview { grid-template-columns: 1fr; }
+  .ws-results-grid.has-preview .ws-preview,
+  .ws-att-grid.has-preview .ws-preview {
+    position: fixed;
+    left: .5rem;
+    right: .5rem;
+    bottom: .5rem;
+    top: auto;
+    max-height: 80vh;
+    overflow-y: auto;
+    z-index: 70;
+    box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.35);
+  }
+  /* Keep the docked staging bar reachable under the sheet — same lift
+     constant as .ws-action-bar.has-staging. */
+  .ws-results-grid.has-preview .ws-preview.has-staging,
+  .ws-att-grid.has-preview .ws-preview.has-staging { bottom: 4.5rem; }
 }
 
 /* Action bar */
@@ -2491,9 +2528,8 @@ body.page-restore-workspace .content { padding-bottom: 5rem; }
 /* Compact ghost variant for table-row actions. */
 .ws-root .ws-btn-ghost.ws-btn-sm { padding: .3rem .6rem; font-size: .75rem; }
 
-@media (max-width: 768px) {
-  .ws-att-grid.has-preview { grid-template-columns: 1fr; }
-}
+/* ≤768px responsive rules for .ws-att-grid live with the results-grid twin
+   in the bottom-sheet overlay block (cross-account results section). */
 
 /* Folder + Full preset specific */
 
