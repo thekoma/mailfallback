@@ -238,11 +238,18 @@ def test_search_garbage_types_422(client, db_session, default_store):
     bad_exts = client.post(SEARCH_URL, json={"exts": "pdf"})
     bad_page = client.post(SEARCH_URL, json={"page": "abc"})
     bad_size = client.post(SEARCH_URL, json={"min_size": {"gt": 1}})
+    # Bounds: page=0 would compile to a negative OFFSET (PG 500).
+    zero_page = client.post(SEARCH_URL, json={"page": 0})
+    zero_page_size = client.post(SEARCH_URL, json={"page_size": 0})
+    huge_page_size = client.post(SEARCH_URL, json={"page_size": 500})
 
     assert bad_query.status_code == 422
     assert bad_exts.status_code == 422
     assert bad_page.status_code == 422
     assert bad_size.status_code == 422
+    assert zero_page.status_code == 422
+    assert zero_page_size.status_code == 422
+    assert huge_page_size.status_code == 422
 
 
 def test_search_unauthenticated_401(client):
@@ -267,8 +274,10 @@ def test_download_owner_gets_exact_bytes_headers_and_audit(
 
     assert resp.status_code == 200, resp.text
     assert resp.content == PDF_BYTES
-    # ALWAYS octet-stream: hostile HTML/SVG must not execute on our origin.
+    # ALWAYS octet-stream: hostile HTML/SVG must not execute on our origin —
+    # and nosniff stops browsers from second-guessing the type.
     assert resp.headers["content-type"] == "application/octet-stream"
+    assert resp.headers["x-content-type-options"] == "nosniff"
     cd = resp.headers["content-disposition"]
     assert cd.startswith("attachment; ")
     assert 'filename="fattura-novit_.pdf"' in cd  # ASCII fallback: à -> _
@@ -283,6 +292,7 @@ def test_download_owner_gets_exact_bytes_headers_and_audit(
         "part_index": att.part_index,
         "source": "live",
     }
+    assert "escalated" not in entry.details  # owner download: no escalation flag
 
 
 def test_download_non_owner_404_without_audit(client, db_session, default_store, tmp_path):
@@ -317,7 +327,9 @@ def test_download_admin_needs_include_all_for_foreign_account(
     entry = db_session.query(AuditLog).filter_by(action="attachment.download").one()
     assert entry.username == "root"
     assert entry.details["source"] == "live"
-    # No second escalation row — the always-on download row IS the trail.
+    # Self-contained trail: the bypass is flagged on the row itself...
+    assert entry.details["escalated"] is True
+    # ...so no second escalation row is needed.
     actions = [a.action for a in db_session.query(AuditLog).all()]
     assert "restore.search_all" not in actions
     assert "restore.preview" not in actions
