@@ -396,7 +396,7 @@
     <span class="ws-staging-meta text-muted text-xsmall"
           x-text="fmtSize(staging.bytes_used) + ' · expires ' + fmtExpiry(staging.expires_at) + ' · quota ' + (staging.max_bytes ? fmtSize(staging.max_bytes) : '∞')"></span>
     {# Staging feedback lives here, not in statusText — that one only renders
-       inside the single-mail preset, while the bar works in every preset. #}
+       inside the two search presets, while the bar works in every preset. #}
     <span class="ws-staging-status text-xsmall"
           x-text="stagingStatus" x-show="stagingStatus" :title="stagingStatus"></span>
     <span class="ws-staging-grow"></span>

@@ -43,6 +43,7 @@ function restoreWorkspace() {
     // Async/UI state
     searching: false,
     searched: false,
+    _msgSeq: 0,                 // monotonic seq — stale search responses are dropped
     results: [],
     selected: [],               // selKey(r) strings — unique across accounts
     statusText: '',
@@ -75,7 +76,7 @@ function restoreWorkspace() {
     // Staging bar / push panel state
     staging: {exists: false, count: 0, bytes_used: 0, expires_at: null, max_bytes: 0},
     stagingStatus: '',          // staging feedback — rendered in the bar (statusText
-                                // only renders inside the single-mail preset)
+                                // only renders inside the two search presets)
     pushPanelOpen: false,
     pushDestination: 'origin',  // 'origin' | 'override' (the API gets an account id)
     pushOverrideId: '',
@@ -288,15 +289,12 @@ function restoreWorkspace() {
       this.rangeStart = start;
       this.rangeEnd = end;
       if (this._fp) this._fp.setDate([start, end], false);
-      this.results = [];
-      this.selected = [];
-      this.searched = false;
+      this._clearMsgState();
+      this._clearAttState();
       this.statusText = '';
-      this.partial = false;
       this.preview = null;
       this.previewRef = null;
       this.previewOpen = false;
-      this._clearAttState();
       this.refreshIcons();
       if (id === 'folder') this.loadFolders();
     },
@@ -309,15 +307,12 @@ function restoreWorkspace() {
 
     onScopeChange() {
       // New scope invalidates the current result set and the calendar dots.
-      this.results = [];
-      this.selected = [];
-      this.searched = false;
+      this._clearMsgState();
+      this._clearAttState();
       this.statusText = '';
-      this.partial = false;
       this.preview = null;
       this.previewRef = null;
       this.previewOpen = false;
-      this._clearAttState();
       this.fetchSnapshotDates();
     },
 
@@ -341,8 +336,21 @@ function restoreWorkspace() {
       return this.runSearch();
     },
 
+    _clearMsgState() {
+      this._msgSeq++;  // drop in-flight responses
+      this.results = [];
+      this.selected = [];
+      this.searching = false;
+      this.searched = false;
+      this.partial = false;
+    },
+
     async runSearch() {
       if (!this.query.trim()) return;
+      // Seq guard: a slow (deep) search left in flight must not bleed its
+      // late response into the shared statusText or repopulate results that
+      // a preset/scope switch already cleared — mirror the _attSeq pattern.
+      const seq = ++this._msgSeq;
       this.searching = true;
       this.searched = true;
       this.statusText = 'Searching…';
@@ -370,10 +378,11 @@ function restoreWorkspace() {
           }),
         });
         if (!resp.ok) {
-          this.statusText = `Search failed: ${resp.status}`;
+          if (seq === this._msgSeq) this.statusText = `Search failed: ${resp.status}`;
           return;
         }
         const body = await resp.json();
+        if (seq !== this._msgSeq) return;
         let results = body.results || [];
         // Source filters: the index API has no include_live param, so when
         // "Live" is unchecked we drop rows whose ONLY source is live mail
@@ -393,10 +402,12 @@ function restoreWorkspace() {
         this.statusText = `${shown} result${shown === 1 ? '' : 's'}`
           + (body.total > shown ? ` of ${body.total}` : '');
       } catch (e) {
-        this.statusText = `Search error: ${e.message}`;
+        if (seq === this._msgSeq) this.statusText = `Search error: ${e.message}`;
       } finally {
-        this.searching = false;
-        this.refreshIcons();
+        if (seq === this._msgSeq) {
+          this.searching = false;
+          this.refreshIcons();
+        }
       }
     },
 
@@ -432,10 +443,11 @@ function restoreWorkspace() {
     },
     attIcon(ext) {
       const e = (ext || '').toLowerCase();
+      if (ATT_EXT_GROUPS.pdf.includes(e) || ATT_EXT_GROUPS.doc.includes(e)) return 'file-text';
       if (ATT_EXT_GROUPS.sheet.includes(e)) return 'file-spreadsheet';
       if (ATT_EXT_GROUPS.image.includes(e)) return 'image';
       if (ATT_EXT_GROUPS.archive.includes(e)) return 'archive';
-      return 'file-text';
+      return 'file';  // unknown/other types — the generic document glyph
     },
     _attNameSplit(a) {
       // "report.pdf" → ["report", ".pdf"] — the extension renders accented.
@@ -654,8 +666,9 @@ function restoreWorkspace() {
       // Staging messages go to the bar — single slot, no duplication. But a
       // rejected FIRST add creates no area server-side (verified: the service
       // quota-checks before creating anything), so there is no bar to host
-      // the message — fall back to statusText, which IS rendered in the
-      // single-mail preset where add-to-staging lives.
+      // the message — fall back to statusText, which IS rendered in both
+      // search presets (single-mail + attachment), everywhere an
+      // add-to-staging entry point lives.
       if (this.staging.exists) this.stagingStatus = msg;
       else this.statusText = msg;
     },
