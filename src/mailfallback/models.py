@@ -9,6 +9,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -235,6 +236,19 @@ class Account(Base):
     unread_messages = Column(Integer, nullable=False, default=0)
     maildir_size_bytes = Column(Integer, nullable=False, default=0)
     folder_stats = Column(Text, nullable=True)
+    # Sync budget / initial-sync regime (migration 021). traffic_date +
+    # bytes_synced_today form the per-account daily byte ledger (UTC day,
+    # reset on rollover); daily_sync_budget_mb: NULL → provider default,
+    # 0 → unlimited. sync_paused_until + pause_reason gate the scheduler
+    # (self-recovering pauses — NOT errors). initial_sync_* mark the
+    # first-full-sync regime and feed the progress %/ETA UI.
+    traffic_date = Column(Date, nullable=True)
+    bytes_synced_today = Column(BigInteger, nullable=False, default=0, server_default=text("0"))
+    daily_sync_budget_mb = Column(Integer, nullable=True)
+    sync_paused_until = Column(DateTime(timezone=True), nullable=True)
+    pause_reason = Column(String, nullable=True)
+    initial_sync_completed_at = Column(DateTime(timezone=True), nullable=True)
+    initial_sync_total_messages = Column(Integer, nullable=True)
     store_id = Column(String, ForeignKey("mail_stores.id"), nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)
     suspended = Column(Boolean, nullable=False, default=False)
@@ -266,6 +280,10 @@ class SyncJob(Base):
     parsed_summary = Column(Text, nullable=True)
     mbsync_version = Column(String, nullable=True)
     signal = Column(String, nullable=True)
+    # Failure classification: throttled | budget_paused | transient |
+    # interrupted | error. A PLAIN string by design (spec) — new kinds must
+    # not need a migration.
+    failure_kind = Column(String, nullable=True)
 
     account = relationship("Account", back_populates="sync_jobs")
 
