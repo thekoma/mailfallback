@@ -12,15 +12,22 @@ Pure stdlib module (no app imports) — consumed by the sync worker.
 """
 
 # Network blips that a short backoff fixes. Prose — matched
-# case-insensitively. "timeout" also covers tails like
-# "Socket error: timeout" that never spell "timed out".
+# case-insensitively.
 TRANSIENT_SIGNATURES: tuple[str, ...] = (
     "Connection reset",
     "unexpected EOF",
     "Broken pipe",
+    # No static "timed out" string exists in the isync 1.5.1 binary — kept
+    # for OS-level strerror text (ETIMEDOUT → "Connection timed out") and
+    # the worker's own "Sync timed out after 3600 seconds" log line.
     "timed out",
-    "Connection timed out",
-    "timeout",
+    # ANCHORED (review): isync's real timeout messages are
+    # "Socket error on %s: timeout." and
+    # "Error: Cannot resolve server '%s': timeout." — both end in
+    # ": timeout". A bare "timeout" false-positives on benign content in
+    # full -Dm logs (a folder named "Timeouts" would classify a real
+    # failure as transient forever — endless short-backoff churn).
+    ": timeout",
 )
 
 # Provider-specific throttle tells, keyed by Account.provider. Bracketed

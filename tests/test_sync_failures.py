@@ -77,3 +77,34 @@ def test_unknown_junk_is_none():
 
 def test_empty_tail_is_none():
     assert classify_failure("", "google") is None
+
+
+def test_bare_timeout_word_is_not_transient():
+    """Review: the timeout signature is ANCHORED to isync's real messages
+    (": timeout"). Benign occurrences of the word in full -Dm logs — e.g. a
+    folder literally named "Timeouts" — must not turn a real failure into
+    an endlessly-retried transient."""
+    log = (
+        "Selecting far side box INBOX/Timeouts...\n"
+        "store path: /data/mailboxes/x/timeout-reports/\n"
+        "AUTHENTICATIONFAILED Invalid credentials (Failure)"
+    )
+    assert classify_failure(log, "google") is None
+
+
+def test_anchored_timeout_messages_still_match():
+    """Both real isync strings end in ': timeout' — extracted from the
+    binary in our image."""
+    assert classify_failure("Socket error on imap.gmail.com:993: timeout.", "google") == (
+        "transient"
+    )
+    assert classify_failure("Error: Cannot resolve server 'imap.x.y': timeout.", "other") == (
+        "transient"
+    )
+
+
+def test_microsoft_bracketed_and_prose_throttle():
+    """The microsoft-keyed table: bracketed [THROTTLED] (case-sensitive
+    token) and "server busy" prose (case-insensitive)."""
+    assert classify_failure("BYE [THROTTLED] Request rate too high", "microsoft") == "throttled"
+    assert classify_failure("HTTP 503: Server Busy, retry later", "microsoft") == "throttled"

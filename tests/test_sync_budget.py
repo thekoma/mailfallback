@@ -112,8 +112,9 @@ def test_eta_budget_bound_multi_day():
     headroom_today  = 2000*MIB - 1900*MIB = 100*MIB = 104_857_600
     full_days       = (3_072_000_000 - 104_857_600) / (2000*MIB)
                     = 2_967_142_400 / 2_097_152_000 ≈ 1.414846
-    seconds         = int(full_days * 86400) = 122_242
-    label           = "≈ 1d"  (round-half-up of 1.41 days)
+    seconds         = int(full_days * 86400) = 122_242  (budget-days only)
+    label           = "≈ 2d"  (ceil of 1.41 budget-days — wall-clock honest:
+                      the tail also waits out today's headroom + midnight)
     """
     out = _eta(
         done_msgs=10_000,
@@ -126,7 +127,7 @@ def test_eta_budget_bound_multi_day():
     full_days = (3_072_000_000 - 100 * MIB) / (2000 * MIB)
     assert out["days"] == full_days
     assert out["seconds"] == int(full_days * 86400) == 122_242
-    assert out["label"] == "≈ 1d"
+    assert out["label"] == "≈ 2d"
 
 
 def test_eta_within_headroom_uses_run_rate():
@@ -237,3 +238,33 @@ def test_next_transient_resume_doubles_and_caps(monkeypatch):
     assert next_transient_resume(NOW, 4) == NOW + timedelta(minutes=16)
     assert next_transient_resume(NOW, 5) == NOW + timedelta(minutes=30)  # 32 -> cap
     assert next_transient_resume(NOW, 0) == NOW + timedelta(minutes=2)
+
+
+def test_eta_budget_bound_small_overshoot_says_one_day():
+    """The N >= 1 floor binds: even a small tail beyond today's headroom
+    (full_days ≈ 0.3 -> ceil 1) reads "≈ 1d" — it waits for tomorrow's
+    budget, never "<1h". Derivation: done 500 msgs / 500 MiB (avg 1 MiB),
+    total 1000 -> remaining 500 MiB; budget 1000 MiB, used 800 MiB ->
+    headroom 200 MiB; tail 300 MiB -> full_days 0.3."""
+    out = _eta(
+        done_msgs=500,
+        total_msgs=1000,
+        done_bytes=500 * MIB,
+        bytes_today=800 * MIB,
+        budget_bytes=1000 * MIB,
+        run_rate_msgs_per_s=50.0,
+    )
+    assert out["days"] == 0.3
+    assert out["seconds"] == int(0.3 * 86400)
+    assert out["label"] == "≈ 1d"
+
+
+def test_backoff_huge_attempt_does_not_overflow(monkeypatch):
+    """Review regression: 2**(attempt-1) evaluated BEFORE min() and
+    overflowed timedelta at attempt 34 (throttle) / 41 (transient) — and a
+    day-long outage really produces attempt counts in the 40s. The exponent
+    is now capped before exponentiation; the result stays at the cap."""
+    _zero_jitter(monkeypatch)
+    assert next_throttle_resume(NOW, 50) == NOW + timedelta(hours=24)
+    assert next_transient_resume(NOW, 50) == NOW + timedelta(minutes=30)
+    assert next_throttle_resume(NOW, 10_000) == NOW + timedelta(hours=24)

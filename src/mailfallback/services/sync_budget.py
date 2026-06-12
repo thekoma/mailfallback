@@ -86,13 +86,17 @@ def estimate_eta(
         headroom_today = max(0, budget_bytes - bytes_today)
         if remaining_bytes > headroom_today:
             # Budget-bound: the tail beyond today's headroom costs whole
-            # budget-days. Label always in days here (N ≥ 1): even a small
-            # overshoot waits for tomorrow's budget — "<1h" would lie.
+            # budget-days. seconds/days measure BUDGET-DAYS only — they
+            # exclude the time to burn today's remaining headroom and the
+            # wait to the next UTC midnight; the UI consumes eta_label, the
+            # raw numbers are coarse by design. The label rounds UP (ceil,
+            # floor 1): even a small overshoot waits for tomorrow's budget,
+            # and 1.4 budget-days is closer to two wall-clock days than one.
             full_days = (remaining_bytes - headroom_today) / budget_bytes
             return {
                 "seconds": int(full_days * 86400),
                 "days": full_days,
-                "label": f"≈ {max(1, _round_half_up(full_days))}d",
+                "label": f"≈ {max(1, math.ceil(full_days))}d",
             }
         # Fits in today's headroom — the run rate is the constraint.
 
@@ -114,15 +118,22 @@ def next_budget_resume(now: datetime) -> datetime:
 
 def next_throttle_resume(now: datetime, attempt: int) -> datetime:
     """Exponential backoff for provider throttles: 4h x 2^(attempt-1),
-    capped at 24h, + 0-10 min jitter. attempt < 1 clamps to 1."""
+    capped at 24h, + 0-10 min jitter. attempt < 1 clamps to 1.
+
+    The exponent is capped BEFORE exponentiation (review): timedelta * 2**n
+    evaluates the power first, and a day-long outage really does produce
+    attempt counts in the 40s — 2**(attempt-1) overflowed timedelta at
+    attempt 34. 2**12 already lands far beyond the cap.
+    """
     attempt = max(1, attempt)
-    delay = min(timedelta(hours=4) * 2 ** (attempt - 1), timedelta(hours=24))
+    delay = min(timedelta(hours=4) * 2 ** min(attempt - 1, 12), timedelta(hours=24))
     return now + delay + timedelta(seconds=random.uniform(0, 600))  # noqa: S311
 
 
 def next_transient_resume(now: datetime, attempt: int) -> datetime:
     """Short backoff for network blips: 2min x 2^(attempt-1), capped at
-    30min, + 0-30 s jitter. attempt < 1 clamps to 1."""
+    30min, + 0-30 s jitter. attempt < 1 clamps to 1. Exponent capped before
+    exponentiation — see next_throttle_resume (overflow at attempt 41)."""
     attempt = max(1, attempt)
-    delay = min(timedelta(minutes=2) * 2 ** (attempt - 1), timedelta(minutes=30))
+    delay = min(timedelta(minutes=2) * 2 ** min(attempt - 1, 12), timedelta(minutes=30))
     return now + delay + timedelta(seconds=random.uniform(0, 30))  # noqa: S311
