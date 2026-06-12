@@ -2,10 +2,9 @@
    Included once inside each preset's x-if template (only one preset renders
    at a time, so the Alpine preview state never paints twice). All fields
    render via x-text — never x-html (message content is hostile input). #}
-{# has-staging mirrors the action bar's binding: at the phone breakpoint the
-   pane is a fixed bottom sheet and must lift above the docked staging bar. #}
-<div class="ws-preview" x-show="previewOpen" x-transition
-     :class="{'has-staging': staging.exists}">
+{# The mobile bottom-sheet lift needs no state class: its bottom sums the
+   measured dock vars, which are 0px while their bar is hidden. #}
+<div class="ws-preview" x-show="previewOpen" x-transition>
   <div class="ws-preview-head">
     <h4 class="ws-field-label">Preview</h4>
     <button type="button" class="ws-preview-close" @click="closePreview()"

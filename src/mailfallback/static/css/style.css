@@ -2162,24 +2162,28 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 }
 
 /* === Workspace bottom dock — the z ladder ===
-   Fixed/sticky bottom companions STACK vertically on measured slots
+   FIXED bottom companions STACK vertically on measured slots
    (--ws-staging-h / --ws-action-h, written by restore_workspace.js): each
    surface's bottom offset is the sum of the bars below it. z-index only
    breaks ties for transient surfaces. The ladder:
      content < action bar (40) < staging bar (50) < when-popover (60)
        < preview sheet (70) < push panel (80)
+   The action bar is sticky/in-flow on desktop and a FIXED dock member at
+   ≤768px — sticky has no knowable slot to stack on (at scroll-bottom it
+   rests at its flow position, far above its pinned one).
    A new surface gets the next slot in BOTH systems — never a guess. */
 
 /* Phones/drawer breakpoint — BOTH grids (this block owns the att twin too).
    Stacking the pane under the results would put it up to ~9 screens below
    the clicked row (100 results), so the open preview becomes a fixed
    bottom-sheet overlay instead; the existing × close is the dismiss
-   affordance. The sheet sits on top of the dock STACK: its bottom is the
-   measured sum of the bars below (the action bar shows without staging
-   too), and the height cap keeps the top edge — the close button —
-   on-screen on short viewports (dvh, not vh: iOS URL bar). The single
-   column stays — with the pane out of flow, a two-track template would
-   strand the results in a half-width first column. */
+   affordance. The sheet tops the dock STACK: ONE bottom for both staging
+   states (the vars are 0px while their bar is hidden) = .5rem inset +
+   .5rem gap above the action bar's slot. The height cap keeps the top
+   edge — the close button — on-screen on short viewports (dvh, not vh:
+   iOS URL bar); 3rem = the 1rem lift + 2rem top breathing room. The
+   single column stays — with the pane out of flow, a two-track template
+   would strand the results in a half-width first column. */
 @media (max-width: 768px) {
   .ws-results-grid.has-preview { grid-template-columns: 1fr; }
   .ws-att-grid.has-preview { grid-template-columns: 1fr; }
@@ -2188,17 +2192,13 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
     position: fixed;
     left: .5rem;
     right: .5rem;
-    bottom: calc(var(--ws-action-h, 0px) + .5rem);
+    bottom: calc(var(--ws-staging-h, 0px) + var(--ws-action-h, 0px) + 1rem);
     top: auto;
-    max-height: min(80vh, calc(100dvh - var(--ws-staging-h, 0px) - var(--ws-action-h, 0px) - 2.5rem));
+    max-height: min(80vh, calc(100dvh - var(--ws-staging-h, 0px) - var(--ws-action-h, 0px) - 3rem));
     overflow-y: auto;
     z-index: 70;
     box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.35);
   }
-  /* With a staging area the sheet clears BOTH dock bars (measured sum —
-     the staging bar wraps to 2+ rows exactly at this breakpoint). */
-  .ws-results-grid.has-preview .ws-preview.has-staging,
-  .ws-att-grid.has-preview .ws-preview.has-staging { bottom: calc(var(--ws-staging-h, 4rem) + var(--ws-action-h, 0px) + .5rem); }
 }
 
 /* Action bar */
@@ -2269,7 +2269,7 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   right: 2rem;
   /* Clears the staging bar — its real measured height, not a constant
      (the panel only opens while the bar exists, so the var is live). */
-  bottom: calc(var(--ws-staging-h, 4rem) + .5rem);
+  bottom: calc(var(--ws-staging-h, 0px) + .5rem);
   /* Top of the dock ladder: a transient surface opened from the staging
      bar must overlay everything, including the mobile preview sheet (70) —
      opening BEHIND the sheet looked broken. */
@@ -2311,17 +2311,40 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
 }
 .ws-preview-actions .ws-preview-webmail { margin-top: 0; }
 
-/* Keep page content (and the sticky selection bar) clear of the fixed bar.
-   --ws-staging-h is the bar's REAL measured height (ResizeObserver in
-   restore_workspace.js, 0px while hidden): at narrow widths the bar WRAPS
-   to 2+ rows, so any fixed constant lies exactly when it matters. The 4rem
-   fallback covers pre-Alpine paint. */
-body.page-restore-workspace .content { padding-bottom: calc(var(--ws-staging-h, 4rem) + 1.5rem); }
-.ws-action-bar.has-staging { bottom: calc(var(--ws-staging-h, 4rem) + .5rem); }
+/* Keep page content clear of the fixed dock. The vars are the bars' REAL
+   measured heights (ResizeObserver in restore_workspace.js, 0px while
+   hidden): at narrow widths the staging bar WRAPS to 2+ rows, so any fixed
+   constant lies exactly when it matters. 0px fallbacks on purpose: every
+   dock member is x-cloaked (or gated on an Alpine-bound class) pre-Alpine,
+   so there is nothing to clear before the trackers run — a rem fallback
+   painted phantom lifts. */
+body.page-restore-workspace .content { padding-bottom: calc(var(--ws-staging-h, 0px) + 1.5rem); }
+/* Desktop only: the selection bar is sticky/in-flow — lift its PINNED
+   position above the staging bar. At ≤768 the bar is a fixed dock member
+   (block below) and this lift must not fight that bottom. */
+@media (min-width: 769px) {
+  .ws-action-bar.has-staging { bottom: calc(var(--ws-staging-h, 0px) + .5rem); }
+}
 
 @media (max-width: 768px) {
   .ws-staging-bar { left: 0; flex-wrap: wrap; gap: .5rem; padding: .6rem 1rem; }
   .ws-push-panel { right: .5rem; left: .5rem; width: auto; }
+  /* The selection bar joins the FIXED dock: sticky has no knowable slot —
+     at scroll-bottom it rests at its FLOW position (measured up to ~227px
+     from the viewport bottom, fully inside the sheet's span), so no sum
+     can clear it. One bottom for both staging states (staging-h is 0px
+     without a staging area); insets match the sheet's. */
+  .ws-action-bar {
+    position: fixed;
+    left: .5rem;
+    right: .5rem;
+    bottom: calc(var(--ws-staging-h, 0px) + .5rem);
+    margin: 0;
+  }
+  /* Both bars are out of flow here — the padding must clear BOTH. */
+  body.page-restore-workspace .content {
+    padding-bottom: calc(var(--ws-staging-h, 0px) + var(--ws-action-h, 0px) + 1.5rem);
+  }
 }
 
 /* === Search presets: shared rows + attachment table === */

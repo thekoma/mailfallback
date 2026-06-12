@@ -302,9 +302,9 @@ def test_restore_page_preview_pane_close_and_attachment_actions(client, db_sessi
     )
     # Both results grids expand/split dynamically with the preview pane.
     assert resp.text.count("'has-preview': previewOpen") == 2
-    # Staging-lift binding: the action bar + both pane copies (the pane is a
-    # fixed bottom sheet at the phone breakpoint and must clear the bar).
-    assert resp.text.count("'has-staging': staging.exists") == 3
+    # Only the action bar still binds has-staging (desktop sticky lift): the
+    # mobile sheet's bottom sums the measured dock vars, no state class.
+    assert resp.text.count("'has-staging': staging.exists") == 1
 
 
 def test_restore_page_folder_preset_multiselect(client, db_session, default_store):
@@ -476,12 +476,10 @@ def test_workspace_css_responsive_grid_and_preview_overlay(client):
     assert "z-index: 70" in block
     # Dock lifts — derived from the bars' REAL measured heights (the bars
     # wrap at narrow widths, fixed constants let them cover each other).
-    # The sheet clears BOTH bars; the action bar clears the staging bar.
-    assert (
-        ".ws-preview.has-staging { "
-        "bottom: calc(var(--ws-staging-h, 4rem) + var(--ws-action-h, 0px) + .5rem); }"
-    ) in css
-    assert ".ws-action-bar.has-staging { bottom: calc(var(--ws-staging-h, 4rem) + .5rem); }" in css
+    # The sheet's ONE bottom serves both staging states (vars are 0px while
+    # their bar is hidden); the desktop sticky bar keeps its has-staging lift.
+    assert "bottom: calc(var(--ws-staging-h, 0px) + var(--ws-action-h, 0px) + 1rem)" in block
+    assert ".ws-action-bar.has-staging { bottom: calc(var(--ws-staging-h, 0px) + .5rem); }" in css
     # Medium widths: results may shrink, preview keeps a usable minimum.
     assert "grid-template-columns: minmax(0, 1.1fr) minmax(280px, 1fr);" in css
     # SOURCE ORDER pin: the responsive overrides share specificity (0,2,0)
@@ -526,27 +524,50 @@ def test_workspace_staging_height_var_drives_bottom_offsets(client):
     assert "get actionBarVisible()" in js
 
     css = client.get("/static/css/style.css").text
-    # Action-bar lift + push-panel anchor clear the staging bar; the mobile
-    # sheet clears BOTH bars (sum), with and without a staging area.
-    assert css.count("calc(var(--ws-staging-h, 4rem) + .5rem)") == 2
-    assert "calc(var(--ws-staging-h, 4rem) + var(--ws-action-h, 0px) + .5rem)" in css
-    assert "bottom: calc(var(--ws-action-h, 0px) + .5rem)" in css
+    # The staging-h + .5rem slot appears exactly thrice: desktop sticky lift,
+    # push-panel anchor, and the MOBILE FIXED action bar (live measurement
+    # showed sticky has no knowable slot — at scroll-bottom it rests at its
+    # flow position, fully inside the sheet's span, so at <=768 the bar is a
+    # fixed dock member).
+    assert css.count("calc(var(--ws-staging-h, 0px) + .5rem)") == 3
+    # The mobile sheet's ONE bottom: .5rem inset + .5rem gap above the bar's
+    # slot, both staging states (vars are 0px while hidden).
+    assert "bottom: calc(var(--ws-staging-h, 0px) + var(--ws-action-h, 0px) + 1rem)" in css
     # Sheet height cap: the close button stays on-screen on short viewports
-    # (dvh, not vh — iOS URL bar).
+    # (dvh, not vh — iOS URL bar); 3rem = the 1rem lift + 2rem top room.
     assert (
         "max-height: min(80vh, calc(100dvh - var(--ws-staging-h, 0px) "
-        "- var(--ws-action-h, 0px) - 2.5rem))"
+        "- var(--ws-action-h, 0px) - 3rem))"
     ) in css
-    # Content padding keeps its own breathing-room offset on the same var.
-    assert "padding-bottom: calc(var(--ws-staging-h, 4rem) + 1.5rem)" in css
+    # Content padding: staging-only on desktop (the bar is sticky/in-flow
+    # there), BOTH bars at mobile (both fixed = out of flow).
+    assert "padding-bottom: calc(var(--ws-staging-h, 0px) + 1.5rem)" in css
+    assert (
+        "padding-bottom: calc(var(--ws-staging-h, 0px) + var(--ws-action-h, 0px) + 1.5rem)"
+    ) in css
+    # Fallback normalization: every dock member is x-cloaked (or gated on an
+    # Alpine-bound class) pre-Alpine — rem fallbacks painted phantom lifts.
+    assert "--ws-staging-h, 4rem" not in css
     # The stale magic constants are gone.
     assert "bottom: 4.5rem" not in css
     assert "bottom: 64px" not in css
-    # The selection bar layers below the staging bar (50) so partial overlaps
-    # during transitions stack predictably.
-    action_bar = css[css.index(".ws-action-bar {") :]
-    action_bar = action_bar[: action_bar.index("}")]
-    assert "z-index: 40" in action_bar
+    # Desktop bar stays sticky (z-40, below the staging bar's 50); the mobile
+    # override is the SECOND .ws-action-bar block: a fixed dock member with
+    # sheet-matching insets and no sticky margin.
+    first = css.index(".ws-action-bar {")
+    desktop_bar = css[first : css.index("}", first)]
+    assert "position: sticky" in desktop_bar
+    assert "z-index: 40" in desktop_bar
+    second = css.index(".ws-action-bar {", first + 1)
+    mobile_bar = css[second : css.index("}", second)]
+    assert "position: fixed" in mobile_bar
+    assert "left: .5rem" in mobile_bar
+    assert "right: .5rem" in mobile_bar
+    assert "bottom: calc(var(--ws-staging-h, 0px) + .5rem)" in mobile_bar
+    assert "margin: 0" in mobile_bar
+    # The desktop sticky lift is scoped OUT of mobile (it would beat the
+    # fixed bottom by specificity when staging exists).
+    assert "@media (min-width: 769px) {" in css
     # Push panel tops the ladder — a transient surface opened from the
     # staging bar must overlay the mobile preview sheet (70), not hide
     # behind it.
@@ -554,9 +575,11 @@ def test_workspace_staging_height_var_drives_bottom_offsets(client):
     push_panel = push_panel[: push_panel.index("}")]
     assert "z-index: 80" in push_panel
     assert "z-index: 51" not in css
-    # The ladder is documented once, where its first z lives.
+    # The ladder is documented once, where its first z lives — including the
+    # action bar's dual nature (sticky desktop / fixed dock member <=768).
     assert "content < action bar (40) < staging bar (50) < when-popover (60)" in css
     assert "< preview sheet (70) < push panel (80)" in css
+    assert "sticky/in-flow on desktop and a FIXED dock member" in css
 
 
 def test_workspace_js_restore_confirms_share_reassurance(client):
