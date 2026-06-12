@@ -258,6 +258,9 @@ def _build_attachment_query(
             MailIndexAttachment.filename,
             MailIndexAttachment.ext,
             MailIndexAttachment.size_bytes,
+            # Raw Message-Id: the UI's unified selection restores to origin
+            # via /api/restore/resolve-uids, which takes Message-Ids.
+            MailIndexMessage.message_id,
             MailIndexMessage.subject,
             MailIndexMessage.from_addr,
             MailIndexMessage.folder_path,
@@ -401,6 +404,7 @@ def search_attachments(
             {
                 "account_id": r.account_id,
                 "message_id_hash": r.message_id_hash.hex(),
+                "message_id": r.message_id,
                 "part_index": r.part_index,
                 "filename": r.filename,
                 "ext": r.ext,

@@ -423,6 +423,9 @@ def test_attachment_hit_shape_and_snapshot_presence(db_session, att_setup):
     hit = out["results"][0]
     assert hit["account_id"] == acct.id
     assert hit["message_id_hash"] == (b"\x01" * 20).hex()  # hex contract
+    # Raw Message-Id rides along: the unified selection bar's restore-to-origin
+    # resolves live UIDs via /api/restore/resolve-uids, which takes Message-Ids.
+    assert hit["message_id"] == "<1@h>"
     assert hit["part_index"] == 2
     assert hit["filename"] == "Invoice_March.pdf"
     assert hit["ext"] == "pdf"

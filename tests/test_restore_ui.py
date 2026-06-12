@@ -139,9 +139,9 @@ def test_restore_page_renders_staging_ui(client, db_session, default_store):
     assert 'value="original"' in resp.text
     assert 'value="restored"' in resp.text
     # Add-to-staging entry points: the shared preview pane partial (included
-    # once per search preset: single-mail + attachment), the selection action
-    # bar, and the attachment table's per-row button.
-    assert resp.text.count("Add to staging") == 4
+    # once per search preset: single-mail + attachment) and the ONE shared
+    # selection bar (per-row attachment buttons are gone — selection rules).
+    assert resp.text.count("Add to staging") == 3
     assert "addToStaging([previewRef])" in resp.text
     assert "addSelectedToStaging()" in resp.text
     # Bar actions.
@@ -195,8 +195,9 @@ def test_restore_staging_bar_webmail_link_when_enabled(
 
 def test_restore_page_renders_attachment_preset(client, db_session, default_store):
     """The 'An attachment' preset ships its panel: type/size filter chips,
-    results table with download links and XSS-safe snippet rendering, and
-    per-row Preview / Add-to-staging actions wired to the shared plumbing."""
+    results table with download links and XSS-safe snippet rendering, and the
+    single-mail interaction model replicated: row click previews, a checkbox
+    feeds the shared message-level selection, ONE shared bar acts on it."""
     create_user(db_session, "attui", "pass", UserRole.admin, store_id=default_store.id)
     client.post("/api/auth/login", json={"username": "attui", "password": "pass"})
 
@@ -214,28 +215,45 @@ def test_restore_page_renders_attachment_preset(client, db_session, default_stor
     assert "attSnippetParts(a.content_snippet)" in resp.text
     assert "ws-snip-mark" in resp.text
     assert "x-html" not in resp.text
-    # Row actions delegate to the existing preview/staging methods. The
-    # button says "Preview email" — bare "Preview" in an attachment list
-    # reads as previewing the FILE.
+    # Per-row action buttons are GONE: row click previews, the checkbox
+    # selects, the shared bar acts (the user's unification ask).
     assert "openPreview(a)" in resp.text
-    assert ">Preview email</button>" in resp.text
-    assert ">Preview</button>" not in resp.text
-    assert "addToStaging([a])" in resp.text
+    assert "Preview email" not in resp.text
+    assert "addToStaging([a])" not in resp.text
+    assert "ws-att-actions" not in resp.text
     # Whole-row preview gesture, same as .ws-result-body: click anywhere on
-    # the row opens/changes the preview, with keyboard parity. The download
-    # anchor and the actions cell stop propagation so downloading or staging
+    # the row opens/changes the preview, with keyboard parity. The checkbox
+    # cell and the download anchor stop propagation so ticking/downloading
     # never ALSO swaps the preview. The key handlers carry .self: a bubbled
-    # Enter/Space from the inner buttons/anchor must keep its native
+    # Enter/Space from the inner checkbox/anchor must keep its native
     # activation (Alpine wraps .self outside .prevent).
-    tr_at = resp.text.index("<tr :class=\"{'is-selected': attIsSelected(a)}\"")
+    tr_at = resp.text.index(
+        "<tr :class=\"{'is-selected': selected.includes(selKey(a)), "
+        "'is-previewing': attIsPreviewing(a)}\""
+    )
     tr_tag = resp.text[tr_at : resp.text.index(">", tr_at)]
     assert '@click="openPreview(a)"' in tr_tag
     assert 'tabindex="0"' in tr_tag
     assert 'role="button"' in tr_tag
     assert '@keydown.enter.prevent.self="openPreview(a)"' in tr_tag
     assert '@keydown.space.prevent.self="openPreview(a)"' in tr_tag
-    assert resp.text.count("@click.stop") == 2  # download anchor + actions cell
-    assert '<td class="ws-att-actions" @click.stop>' in resp.text
+    assert resp.text.count("@click.stop") == 2  # checkbox cell + download anchor
+    assert '<td class="ws-att-check" @click.stop>' in resp.text
+    # Unified message-level selection: the att checkbox feeds the SAME
+    # `selected` model as the single-mail rows (one checkbox per row each).
+    assert resp.text.count('x-model="selected"') == 2
+    assert resp.text.count(':value="selKey(a)"') == 1
+    assert resp.text.count(':value="selKey(r)"') == 1
+    # ONE shared selection bar, rendered for both search presets, counting
+    # MESSAGES (selectableCount dedupes sibling attachment rows).
+    assert resp.text.count('class="ws-action-bar"') == 1
+    assert (
+        "(preset === 'single-mail' || preset === 'attachment') && selectableCount > 0" in resp.text
+    )
+    assert "toggleSelectAll($event.target.checked)" in resp.text
+    # Previewed-row marker is shared semantics across both presets.
+    assert "'is-previewing': isPreviewing(r)" in resp.text
+    assert "'is-previewing': attIsPreviewing(a)" in resp.text
     # Shared search row routes by preset (message vs attachment search).
     assert "submitSearch()" in resp.text
     # Empty state copy.
@@ -256,10 +274,11 @@ def test_restore_page_preview_pane_close_and_attachment_actions(client, db_sessi
     # Close affordance (real button, in both included copies of the partial).
     assert resp.text.count("ws-preview-close") == 2
     assert "closePreview()" in resp.text
-    # Attachment-context feedback: selected-attachment line + row highlight.
+    # Attachment-context feedback: selected-attachment line + previewed-row
+    # highlight (is-previewing — is-selected now means CHECKED).
     assert "ws-preview-attsel" in resp.text
     assert "previewIsAttachment" in resp.text
-    assert "attIsSelected(a)" in resp.text
+    assert "attIsPreviewing(a)" in resp.text
     # Attachment-context action: native download of the selected attachment.
     assert "attDownloadUrl(previewRef)" in resp.text
     assert "Download attachment" in resp.text
@@ -458,6 +477,16 @@ def test_workspace_css_responsive_grid_and_preview_overlay(client):
     assert ".ws-action-bar.has-staging { bottom: 4.5rem; }" in css
     # Medium widths: results may shrink, preview keeps a usable minimum.
     assert "grid-template-columns: minmax(0, 1.1fr) minmax(280px, 1fr);" in css
+    # SOURCE ORDER pin: the responsive overrides share specificity (0,2,0)
+    # with the base rules, so the base MUST come first — an .ws-att-grid base
+    # defined after the media blocks survived at mobile (measured: phantom
+    # half-width column under the bottom-sheet preview).
+    att_base = css.index(".ws-att-grid.has-preview { grid-template-columns: 1.1fr 1fr; }")
+    att_mid = css.index(
+        ".ws-att-grid.has-preview { grid-template-columns: minmax(0, 1.1fr) minmax(280px, 1fr); }"
+    )
+    att_mobile = css.index(".ws-att-grid.has-preview { grid-template-columns: 1fr; }")
+    assert att_base < att_mid < att_mobile
     # The old stacked-pane escape hatch is gone (the overlay replaces it).
     assert ".ws-preview { position: static; }" not in css
     # Clickable attachment rows: Pico paints ANY [role=button] (tag-agnostic
