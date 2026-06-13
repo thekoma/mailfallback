@@ -129,6 +129,7 @@ def account_live_status(account) -> dict:
     return {
         "pct": prog.get("pct"),
         "done_msgs": prog.get("done_msgs"),
+        "done_bytes": prog.get("done_bytes"),  # recap "Downloaded" (sampler total)
         "total_msgs": account.initial_sync_total_messages,
         "bytes_today": prog.get("bytes_today", account.bytes_synced_today),
         "budget_bytes": prog.get("budget_bytes", sync_budget.daily_budget_bytes(account)),
