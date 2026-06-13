@@ -371,26 +371,16 @@ def test_sample_maildir_counts_and_run_delta(tmp_path):
     _write(str(root / "INBOX" / "dovecot-uidlist"), 50)  # folder root, not cur/new
     _write(str(root / ".dovecot-home" / "u" / "cur" / "1.msg"), 5000)
 
-    # An EMPTY maildir folder (created, no messages) still counts as a
-    # folder on disk — mbsync created the dir when it processed the folder.
-    _write(str(root / "Archive" / "cur" / ".keep"), 0)  # dotfile -> no message
-    os.makedirs(str(root / "Archive" / "new"), exist_ok=True)
-
     since = time.time() - 60
-    total_msgs, total_bytes, run_msgs, run_bytes, done_folders = sync_worker._sample_maildir(
-        str(root), since
-    )
+    total_msgs, total_bytes, run_msgs, run_bytes = sync_worker._sample_maildir(str(root), since)
 
     assert (total_msgs, total_bytes) == (3, 600)
     assert (run_msgs, run_bytes) == (2, 500)
-    # Distinct maildir folders on disk: INBOX (cur+new collapse to one),
-    # Sent (cur), Archive (cur+new, empty) = 3. .dovecot-home excluded.
-    assert done_folders == 3
 
 
 def test_sample_maildir_missing_path_is_zero(tmp_path):
     out = sync_worker._sample_maildir(str(tmp_path / "nope"), time.time())
-    assert out == (0, 0, 0, 0, 0)
+    assert out == (0, 0, 0, 0)
 
 
 def test_sampler_tick_advances_ledger_and_live_progress(tmp_path, monkeypatch):
@@ -419,7 +409,6 @@ def test_sampler_tick_advances_ledger_and_live_progress(tmp_path, monkeypatch):
     assert prog["account_id"] == account.id
     assert prog["done_msgs"] == 2
     assert prog["done_bytes"] == 1500
-    assert prog["done_folders"] == 1  # both messages in INBOX -> one folder
     assert prog["bytes_today"] == 1500
     assert prog["pct"] == 50.0  # 2 of 4 (STATUS denominator)
     assert "eta" in prog and "rate_msgs_per_s" in prog

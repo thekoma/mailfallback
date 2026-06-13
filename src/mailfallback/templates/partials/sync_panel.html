@@ -73,10 +73,15 @@
        native <progress>, the app's house pattern (migration/drain/restore).
        No reinvented bar, no dot grid (the broken "Folder N of 1" estimate
        is gone). ── #}
-    {# Folders numerator = CUMULATIVE on-disk count (sampler done_folders),
-       NOT snap.folder_index (this-run log count, resets to 1 every resume)
-       — it must share done_msgs' basis so the two recap numerators agree. #}
-    {% set folders = live.done_folders or 0 %}
+    {# Folders numerator = snap.folder_index (log parser: boxes mbsync
+       OPENs) — the SAME basis as total_folders (selectable, pattern-
+       filtered). A maildir-DIR count would include \Noselect container
+       dirs ([Gmail], hierarchy nodes) and exceed the total. Clamped to
+       total_folders so the recap never shows done > total (>100%); mbsync
+       re-walks every box each run, so on a resume this climbs 0→total and
+       self-corrects within the walk ("re-checking folders"). #}
+    {% set folder_index = snap.folder_index if snap and snap.folder_index else 0 %}
+    {% set folders = [folder_index, live.total_folders] | min if live.total_folders else folder_index %}
     {% set has_data = folders or live.done_msgs is not none or live.done_bytes is not none %}
     {% if not has_data and snap and snap.phase in ("connecting", "authenticating", "listing") %}
     {# Early phase: no counts yet — indeterminate bar + phase label. #}
