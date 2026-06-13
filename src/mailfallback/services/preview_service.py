@@ -201,6 +201,14 @@ def get_preview(db: Session, account: Account, message_id_hash: bytes) -> dict |
         "source": source,
         "body_snippet": _body_snippet(msg),
         "attachments": [
-            {"filename": a.filename, "ext": a.ext, "size_bytes": a.size_bytes} for a in atts
+            # part_index lets the UI build per-chip download URLs (same
+            # endpoint as the attachment search table).
+            {
+                "filename": a.filename,
+                "ext": a.ext,
+                "size_bytes": a.size_bytes,
+                "part_index": a.part_index,
+            }
+            for a in atts
         ],
     }

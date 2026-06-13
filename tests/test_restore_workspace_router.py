@@ -808,6 +808,21 @@ def test_api_restore_search_include_all_ignored_for_non_admin(client, db_session
     assert db_session.query(AuditLog).filter_by(action="restore.search_all").count() == 0
 
 
+def test_api_restore_search_page_bounds_422(client, db_session, default_store, login_user):
+    """page=0 would compile to a negative OFFSET (PG 500); page_size is capped
+    so a client cannot request unbounded result pages."""
+    login = client.post("/api/auth/login", json={"username": "koma", "password": "x"})
+    assert login.status_code in (200, 303)
+
+    zero_page = client.post("/api/restore/search", json={"query": "x", "page": 0})
+    zero_page_size = client.post("/api/restore/search", json={"query": "x", "page_size": 0})
+    huge_page_size = client.post("/api/restore/search", json={"query": "x", "page_size": 500})
+
+    assert zero_page.status_code == 422
+    assert zero_page_size.status_code == 422
+    assert huge_page_size.status_code == 422
+
+
 def test_workspace_snapshot_dates_foreign_account_requires_include_all(
     client, db_session, default_store, login_user
 ):

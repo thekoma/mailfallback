@@ -628,6 +628,10 @@ class MailIndexAttachment(Base):
 
 # Must match idx_attachments_fts in migration 018 verbatim — PG matches
 # expression indexes structurally, so any deviation means a seq scan.
+# The column names are deliberately unqualified (the index is defined that
+# way): mail_index.messages must NEVER gain filename or content_text columns,
+# or this expression becomes ambiguous under the attachment search JOIN
+# (search_service._build_attachment_query) — a loud PG error, but better never.
 ATTACHMENTS_FTS_EXPR = (
     "to_tsvector('simple', coalesce(filename, '') || ' ' || coalesce(content_text, ''))"
 )

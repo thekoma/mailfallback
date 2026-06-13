@@ -21,10 +21,77 @@ from mailfallback.models import (
 from mailfallback.services import staging_service
 from mailfallback.services.restore_worker import (
     _fail_job,
+    _imap_utf7_encode,
     _locate_staged_file,
+    _map_folder,
     execute_restore_job,
     request_cancel,
 )
+
+
+class TestMapFolder:
+    """Pin _map_folder's contract: namespace strip, separator escape/convert,
+    and (the regression) the mapping ROOT getting the same separator
+    treatment as the folder name."""
+
+    def test_original_passthrough(self):
+        assert _map_folder("INBOX", "original") == "INBOX"
+        assert _map_folder("Archive/2025", "original") == "Archive/2025"
+
+    def test_original_converts_hierarchy_to_target_separator(self):
+        assert _map_folder("Archive/2025", "original", separator=".") == "Archive.2025"
+
+    def test_original_escapes_separator_collision(self):
+        assert _map_folder("My.Archive", "original", separator=".") == "My_Archive"
+
+    def test_custom_root_nests_folder(self):
+        assert _map_folder("INBOX", "Restored/2026-06-12") == "Restored/2026-06-12/INBOX"
+
+    def test_custom_root_separator_converted_on_dot_server(self):
+        """Regression: the root's "/" hierarchy must convert like the folder
+        name's — an unconverted root creates a literal "A/B" name (or fails)
+        on dot-separator servers."""
+        assert (
+            _map_folder("INBOX", "Restored/2026-06-12", separator=".")
+            == "Restored.2026-06-12.INBOX"
+        )
+
+    def test_custom_root_escapes_separator_collision(self):
+        # A literal "." inside a root segment must not create bogus depth.
+        assert _map_folder("INBOX", "v1.2/Custom", separator=".") == "v1_2.Custom.INBOX"
+
+    def test_src_prefix_stripped_before_custom_nesting(self):
+        assert (
+            _map_folder("Acc (a@b) [abcd]/Sent", "Restored/X", src_prefix="Acc (a@b) [abcd]/")
+            == "Restored/X/Sent"
+        )
+
+
+class TestImapUtf7Encode:
+    """RFC 3501 §5.1.3 modified UTF-7 — encode-only, at the worker's IMAP
+    boundary. Vectors verified against the RFC algorithm (b64 of UTF-16BE,
+    padding stripped, "," for "/", "&" shift)."""
+
+    def test_ascii_passthrough_including_wire_encoded_names(self):
+        assert _imap_utf7_encode("INBOX") == "INBOX"
+        assert _imap_utf7_encode("Archive/2025") == "Archive/2025"
+        # Names from LIST are ALREADY wire-encoded ASCII ("&AOA-" means "à",
+        # "&-" means "&") — re-encoding would double-encode them.
+        assert _imap_utf7_encode("Gi&AOA- letti") == "Gi&AOA- letti"
+        assert _imap_utf7_encode("Q&A") == "Q&A"
+
+    def test_known_vector_gia_letti(self):
+        assert _imap_utf7_encode("Già letti") == "Gi&AOA- letti"
+
+    def test_ampersand_shifts_when_name_is_not_ascii(self):
+        assert _imap_utf7_encode("Già & co") == "Gi&AOA- &- co"
+
+    def test_modified_base64_uses_comma_for_slash(self):
+        # U+07FF encodes to b64 "B/8=" — the "/" must become "," on the wire.
+        assert _imap_utf7_encode("߿") == "&B,8-"
+
+    def test_multichar_run_single_shift_no_padding(self):
+        assert _imap_utf7_encode("àè") == "&AOAA6A-"
 
 
 @pytest.fixture
@@ -104,6 +171,55 @@ def test_execute_restore_folder(
     assert tgt_conn.append.call_count == 2
     mock_create_temp.assert_called_once()
     mock_delete_temp.assert_called_once_with(db_session, "_restore_test1234")
+
+
+@patch("mailfallback.services.restore_worker.delete_temp_imap_user")
+@patch("mailfallback.services.restore_worker.create_temp_imap_user")
+@patch("mailfallback.services.restore_worker.connect_imap")
+@patch("mailfallback.services.restore_worker.decrypt_credentials")
+def test_execute_restore_custom_root_hits_wire_as_mutf7(
+    mock_decrypt, mock_connect, mock_create_temp, mock_delete_temp, db_session, restore_job_fixtures
+):
+    """A typed non-ASCII custom root ("Già letti") must reach the target as
+    modified UTF-7: _ensure_folder's CREATE and the APPEND both see
+    "Gi&AOA- letti/INBOX" — never the raw Unicode that imaplib's ASCII
+    command encoding would die on (UnicodeEncodeError → failed job)."""
+    f = restore_job_fixtures
+    job = f["job"]
+    job.folder_mapping = "Già letti"
+    db_session.commit()
+    mock_decrypt.return_value = "plaintext-pass"
+    mock_create_temp.return_value = ("_restore_test1234", "random-pass")
+
+    src_conn = MagicMock()
+    tgt_conn = MagicMock()
+    mock_connect.side_effect = [src_conn, tgt_conn]
+
+    src_conn.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "INBOX"'])
+    src_conn.select.return_value = ("OK", [b"1"])
+    src_conn.search.return_value = ("OK", [b"1"])
+    src_conn.fetch.side_effect = [
+        ("OK", [(b"1 (RFC822 {50}", b"From: a@b.com\r\nSubject: T\r\n\r\nBody"), b")"]),
+    ]
+    tgt_conn.list.return_value = ("OK", [b'(\\Noselect) "/" ""'])  # separator "/"
+    tgt_conn.select.return_value = ("NO", [b"missing"])  # forces _ensure_folder's CREATE
+    tgt_conn.append.return_value = ("OK", [b"APPEND completed"])
+
+    execute_restore_job(db_session, job.id)
+
+    db_session.refresh(job)
+    assert job.status == JobStatus.completed, f"job error: {job.error}"
+    assert job.restored_messages == 1
+    encoded = '"Gi&AOA- letti/INBOX"'
+    assert tgt_conn.append.call_args.args[0] == encoded
+    assert tgt_conn.create.call_args.args[0] == encoded
+    # The raw Unicode never reaches a target IMAP command.
+    touched = [
+        c.args[0]
+        for mock in (tgt_conn.select, tgt_conn.create, tgt_conn.append)
+        for c in mock.call_args_list
+    ]
+    assert touched and all("Già" not in str(t) for t in touched)
 
 
 @patch("mailfallback.services.restore_worker.connect_imap")
@@ -497,6 +613,43 @@ def test_execute_staging_push_appends_and_cleans_up(
     assert db_session.query(StagingMessage).count() == 0
     assert db_session.query(StagingArea).count() == 0
     assert not os.path.isdir(staging_service.staging_dir(f["user"]))
+
+
+@patch("mailfallback.services.restore_worker.delete_temp_imap_user")
+@patch("mailfallback.services.restore_worker.create_temp_imap_user")
+@patch("mailfallback.services.restore_worker.connect_imap")
+@patch("mailfallback.services.restore_worker.decrypt_credentials")
+def test_staging_push_custom_folder_hits_wire_as_mutf7(
+    mock_decrypt,
+    mock_connect,
+    mock_create_temp,
+    mock_delete_temp,
+    db_session,
+    staging_push_fixtures,
+):
+    """The push path composes its own target folder (manifest key, not
+    _map_folder) — a non-ASCII custom folder must be mUTF-7 on the wire
+    there too."""
+    f = staging_push_fixtures
+    mock_decrypt.return_value = "plaintext-pass"
+    raw = _stage_file(db_session, f["user"], f["account"], "<u1@x>", "100.aaaa.h:2,")
+    job = _mk_push_job(db_session, f["user"], f["account"], {"Già letti": ["100.aaaa.h:2,"]})
+
+    tgt_conn = _push_conn()
+    mock_connect.side_effect = [tgt_conn]
+
+    execute_restore_job(db_session, job.id)
+
+    db_session.refresh(job)
+    assert job.status == JobStatus.completed, f"job error: {job.error}"
+    assert job.restored_messages == 1
+    assert tgt_conn.append.call_args.args == ('"Gi&AOA- letti"', None, None, raw)
+    touched = [
+        c.args[0]
+        for mock in (tgt_conn.select, tgt_conn.create, tgt_conn.append)
+        for c in mock.call_args_list
+    ]
+    assert touched and all("Già" not in str(t) for t in touched)
 
 
 @patch("mailfallback.services.restore_worker.delete_temp_imap_user")

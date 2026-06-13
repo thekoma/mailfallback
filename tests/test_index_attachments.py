@@ -1,12 +1,40 @@
 """Attachment extraction during the live Maildir index walk."""
 
+import logging
 import os
 from email.message import EmailMessage
 
+import httpx
 import pytest
 
+from mailfallback.config import settings
 from mailfallback.models import Account, MailIndexAttachment, MailIndexMessage
 from mailfallback.services import index_service
+
+
+class _FakeResp:
+    def __init__(self, status_code=200, text=""):
+        self.status_code = status_code
+        self.text = text
+
+
+class _FakeHttpx:
+    """Stand-in for the httpx module inside index_service.
+
+    Records every PUT so tests can assert the exact URL shape, headers and
+    payload — or that NO call happened at all (the tika-disabled pin).
+    """
+
+    def __init__(self, response=None, exc=None):
+        self.calls = []
+        self.response = response if response is not None else _FakeResp()
+        self.exc = exc
+
+    def put(self, url, content=None, headers=None, timeout=None):
+        self.calls.append({"url": url, "content": content, "headers": headers, "timeout": timeout})
+        if self.exc is not None:
+            raise self.exc
+        return self.response
 
 
 def _write_maildir_message(maildir_root, filename, msg):
@@ -261,3 +289,303 @@ class TestBackfillAttachments:
         assert all(r.has_attachments for r in rows)
         filenames = {a.filename for a in db_session.query(MailIndexAttachment).all()}
         assert filenames == {"s.pdf", "i.pdf"}
+
+
+class TestTikaExtraction:
+    """Tika content extraction during the index walk (_parse_attachments)."""
+
+    def test_caps_pinned(self):
+        # test_oversized_part patches TIKA_MAX_PART_BYTES, so the real
+        # values are pinned here (spec: 20 MB part cap, 200 KB text cap).
+        assert index_service.TIKA_MAX_PART_BYTES == 20 * 1024 * 1024
+        assert index_service.TIKA_TEXT_CAP == 204_800
+
+    def test_tika_disabled_makes_no_http_call(
+        self, db_session, default_store, tmp_path, monkeypatch, caplog
+    ):
+        # Pinned explicitly (not ambient) so an exported
+        # MAILFALLBACK_TIKA_ENABLED=true on a dev box can't fail the suite.
+        monkeypatch.setattr(settings, "tika_enabled", False)
+        fake = _FakeHttpx(exc=AssertionError("HTTP must not be attempted"))
+        monkeypatch.setattr(index_service, "httpx", fake)
+        acc = _mk_account(db_session, default_store, tmp_path)
+        _write_maildir_message(
+            acc.maildir_path,
+            "200.m1.host:2,S",
+            _msg("<t1@x>", attachments=[("doc.pdf", b"%PDF-x")]),
+        )
+
+        with caplog.at_level(logging.INFO, logger="mailfallback.services.index_service"):
+            index_service.upsert_message_set(db_session, acc.id)
+
+        assert fake.calls == []
+        att = db_session.query(MailIndexAttachment).filter_by(account_id=acc.id).one()
+        assert att.content_text is None
+        # No attempts → no extraction summary line
+        assert not [r for r in caplog.records if "Tika extraction" in r.getMessage()]
+
+    def test_tika_enabled_stores_text_with_dovecot_url_shape(
+        self, db_session, default_store, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "tika_enabled", True)
+        monkeypatch.setattr(settings, "tika_url", "http://tika-test:9998")
+        fake = _FakeHttpx(response=_FakeResp(200, "Extracted text from the PDF"))
+        monkeypatch.setattr(index_service, "httpx", fake)
+        acc = _mk_account(db_session, default_store, tmp_path)
+        _write_maildir_message(
+            acc.maildir_path,
+            "201.m1.host:2,S",
+            _msg("<t2@x>", attachments=[("doc.pdf", b"%PDF-x")]),
+        )
+
+        index_service.upsert_message_set(db_session, acc.id)
+
+        att = db_session.query(MailIndexAttachment).filter_by(account_id=acc.id).one()
+        assert att.content_text == "Extracted text from the PDF"
+        # Mirror the Dovecot-proven shape: PUT {tika_url}/tika/ (trailing slash)
+        assert len(fake.calls) == 1
+        call = fake.calls[0]
+        assert call["url"] == "http://tika-test:9998/tika/"
+        assert call["content"] == b"%PDF-x"
+        assert call["headers"] == {"Accept": "text/plain", "Content-Type": "application/pdf"}
+        assert call["timeout"] == 10.0
+
+    def test_oversized_response_truncated_to_cap(
+        self, db_session, default_store, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "tika_enabled", True)
+        huge = "T" * (index_service.TIKA_TEXT_CAP + 5000)
+        fake = _FakeHttpx(response=_FakeResp(200, huge))
+        monkeypatch.setattr(index_service, "httpx", fake)
+        acc = _mk_account(db_session, default_store, tmp_path)
+        _write_maildir_message(
+            acc.maildir_path,
+            "202.m1.host:2,S",
+            _msg("<t3@x>", attachments=[("big.pdf", b"%PDF-x")]),
+        )
+
+        index_service.upsert_message_set(db_session, acc.id)
+
+        att = db_session.query(MailIndexAttachment).filter_by(account_id=acc.id).one()
+        assert att.content_text == huge[: index_service.TIKA_TEXT_CAP]
+        assert len(att.content_text) == index_service.TIKA_TEXT_CAP
+
+    def test_httpx_timeout_yields_null_and_indexing_completes(
+        self, db_session, default_store, tmp_path, monkeypatch, caplog
+    ):
+        monkeypatch.setattr(settings, "tika_enabled", True)
+        fake = _FakeHttpx(exc=httpx.TimeoutException("tika too slow"))
+        monkeypatch.setattr(index_service, "httpx", fake)
+        acc = _mk_account(db_session, default_store, tmp_path)
+        _write_maildir_message(
+            acc.maildir_path,
+            "203.m1.host:2,S",
+            _msg("<t4@x>", attachments=[("doc.pdf", b"%PDF-x")]),
+        )
+
+        with caplog.at_level(logging.INFO, logger="mailfallback.services.index_service"):
+            index_service.upsert_message_set(db_session, acc.id)
+
+        # Row created, message fully indexed — extraction misses never fail sync
+        row = db_session.query(MailIndexMessage).filter_by(account_id=acc.id).one()
+        assert row.has_attachments is True
+        assert row.attachments_indexed_at is not None
+        att = db_session.query(MailIndexAttachment).filter_by(account_id=acc.id).one()
+        assert att.content_text is None
+        assert len(fake.calls) == 1
+        # The walk summary counts the miss
+        summaries = [r.getMessage() for r in caplog.records if "Tika extraction" in r.getMessage()]
+        assert len(summaries) == 1
+        assert "1 parts attempted, 1 misses" in summaries[0]
+
+    def test_walk_logs_one_extraction_summary(
+        self, db_session, default_store, tmp_path, monkeypatch, caplog
+    ):
+        monkeypatch.setattr(settings, "tika_enabled", True)
+        fake = _FakeHttpx(response=_FakeResp(200, "text"))
+        monkeypatch.setattr(index_service, "httpx", fake)
+        acc = _mk_account(db_session, default_store, tmp_path)
+        _write_maildir_message(
+            acc.maildir_path,
+            "207.m1.host:2,S",
+            _msg("<t8@x>", attachments=[("a.pdf", b"A"), ("b.pdf", b"B")]),
+        )
+
+        with caplog.at_level(logging.INFO, logger="mailfallback.services.index_service"):
+            index_service.upsert_message_set(db_session, acc.id)
+
+        summaries = [r.getMessage() for r in caplog.records if "Tika extraction" in r.getMessage()]
+        assert len(summaries) == 1
+        assert "index walk" in summaries[0]
+        assert "2 parts attempted, 0 misses" in summaries[0]
+
+    def test_non_200_yields_null(self, db_session, default_store, tmp_path, monkeypatch):
+        monkeypatch.setattr(settings, "tika_enabled", True)
+        fake = _FakeHttpx(response=_FakeResp(422, "Unprocessable"))
+        monkeypatch.setattr(index_service, "httpx", fake)
+        acc = _mk_account(db_session, default_store, tmp_path)
+        _write_maildir_message(
+            acc.maildir_path,
+            "204.m1.host:2,S",
+            _msg("<t5@x>", attachments=[("doc.pdf", b"%PDF-x")]),
+        )
+
+        index_service.upsert_message_set(db_session, acc.id)
+
+        att = db_session.query(MailIndexAttachment).filter_by(account_id=acc.id).one()
+        assert att.content_text is None
+
+    def test_whitespace_only_response_yields_null(
+        self, db_session, default_store, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "tika_enabled", True)
+        fake = _FakeHttpx(response=_FakeResp(200, "  \n\t  \n"))
+        monkeypatch.setattr(index_service, "httpx", fake)
+        acc = _mk_account(db_session, default_store, tmp_path)
+        _write_maildir_message(
+            acc.maildir_path,
+            "205.m1.host:2,S",
+            _msg("<t6@x>", attachments=[("scan.pdf", b"%PDF-x")]),
+        )
+
+        index_service.upsert_message_set(db_session, acc.id)
+
+        att = db_session.query(MailIndexAttachment).filter_by(account_id=acc.id).one()
+        assert att.content_text is None
+
+    def test_oversized_part_skipped_others_extracted(
+        self, db_session, default_store, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "tika_enabled", True)
+        monkeypatch.setattr(index_service, "TIKA_MAX_PART_BYTES", 5)
+        fake = _FakeHttpx(response=_FakeResp(200, "small text"))
+        monkeypatch.setattr(index_service, "httpx", fake)
+        acc = _mk_account(db_session, default_store, tmp_path)
+        _write_maildir_message(
+            acc.maildir_path,
+            "206.m1.host:2,S",
+            _msg("<t7@x>", attachments=[("big.pdf", b"BIGGER!"), ("small.pdf", b"abc")]),
+        )
+
+        index_service.upsert_message_set(db_session, acc.id)
+
+        # Only the small part hit Tika
+        assert len(fake.calls) == 1
+        assert fake.calls[0]["content"] == b"abc"
+        atts = {
+            a.filename: a.content_text
+            for a in db_session.query(MailIndexAttachment).filter_by(account_id=acc.id)
+        }
+        assert atts == {"big.pdf": None, "small.pdf": "small text"}
+
+
+class TestBackfillAttachmentContent:
+    """`mfb index backfill-attachments --content-only` service layer."""
+
+    def _index_with_tika_off(self, db_session, default_store, tmp_path, attachments, monkeypatch):
+        """Index one message while Tika is disabled → rows with NULL content.
+
+        Disabled explicitly (not asserted from ambient settings) so an
+        exported MAILFALLBACK_TIKA_ENABLED=true can't fail the suite.
+        """
+        monkeypatch.setattr(settings, "tika_enabled", False)
+        acc = _mk_account(db_session, default_store, tmp_path)
+        _write_maildir_message(
+            acc.maildir_path,
+            "300.m1.host:2,S",
+            _msg("<c1@x>", attachments=attachments),
+        )
+        index_service.upsert_message_set(db_session, acc.id)
+        return acc
+
+    def test_refuses_when_tika_disabled(self, db_session, default_store, tmp_path, monkeypatch):
+        acc = self._index_with_tika_off(
+            db_session, default_store, tmp_path, [("a.pdf", b"AA")], monkeypatch
+        )
+        with pytest.raises(ValueError, match=r"[Tt]ika"):
+            index_service.backfill_attachment_content(db_session, acc.id)
+
+    def test_fills_null_rows_only_returns_row_count(
+        self, db_session, default_store, tmp_path, monkeypatch
+    ):
+        acc = self._index_with_tika_off(
+            db_session, default_store, tmp_path, [("a.pdf", b"AA"), ("b.pdf", b"BB")], monkeypatch
+        )
+        rows = (
+            db_session.query(MailIndexAttachment)
+            .filter_by(account_id=acc.id)
+            .order_by(MailIndexAttachment.part_index)
+            .all()
+        )
+        assert [r.content_text for r in rows] == [None, None]
+        # Pre-fill the first row: the backfill must NOT touch it
+        rows[0].content_text = "SENTINEL"
+        db_session.commit()
+
+        monkeypatch.setattr(settings, "tika_enabled", True)
+        fake = _FakeHttpx(response=_FakeResp(200, "fresh text"))
+        monkeypatch.setattr(index_service, "httpx", fake)
+
+        n = index_service.backfill_attachment_content(db_session, acc.id)
+
+        assert n == 1  # attachment ROWS filled, not messages
+        rows = (
+            db_session.query(MailIndexAttachment)
+            .filter_by(account_id=acc.id)
+            .order_by(MailIndexAttachment.part_index)
+            .all()
+        )
+        assert rows[0].content_text == "SENTINEL"
+        assert rows[1].content_text == "fresh text"
+
+        # Re-run: nothing pending — returns 0 and re-walks no file
+        calls_after_first = len(fake.calls)
+        assert index_service.backfill_attachment_content(db_session, acc.id) == 0
+        assert len(fake.calls) == calls_after_first
+
+    def test_skips_missing_file_without_marking(
+        self, db_session, default_store, tmp_path, monkeypatch
+    ):
+        acc = self._index_with_tika_off(
+            db_session, default_store, tmp_path, [("a.pdf", b"AA")], monkeypatch
+        )
+        os.remove(os.path.join(acc.maildir_path, "cur", "300.m1.host:2,S"))
+        monkeypatch.setattr(settings, "tika_enabled", True)
+        fake = _FakeHttpx(response=_FakeResp(200, "never used"))
+        monkeypatch.setattr(index_service, "httpx", fake)
+
+        n = index_service.backfill_attachment_content(db_session, acc.id)
+
+        assert n == 0
+        assert fake.calls == []
+        att = db_session.query(MailIndexAttachment).filter_by(account_id=acc.id).one()
+        assert att.content_text is None  # left pending, no fake fill
+        # Re-runnable: same outcome, no crash
+        assert index_service.backfill_attachment_content(db_session, acc.id) == 0
+
+    def test_extraction_failures_stay_null_and_retry_next_run(
+        self, db_session, default_store, tmp_path, monkeypatch
+    ):
+        acc = self._index_with_tika_off(
+            db_session, default_store, tmp_path, [("a.pdf", b"AA")], monkeypatch
+        )
+        monkeypatch.setattr(settings, "tika_enabled", True)
+        broken = _FakeHttpx(exc=httpx.TimeoutException("down"))
+        monkeypatch.setattr(index_service, "httpx", broken)
+
+        assert index_service.backfill_attachment_content(db_session, acc.id) == 0
+        att = db_session.query(MailIndexAttachment).filter_by(account_id=acc.id).one()
+        assert att.content_text is None
+
+        # Tika recovers → the same run fills the row (resumable by construction)
+        monkeypatch.setattr(
+            index_service, "httpx", _FakeHttpx(response=_FakeResp(200, "recovered"))
+        )
+        assert index_service.backfill_attachment_content(db_session, acc.id) == 1
+        att = db_session.query(MailIndexAttachment).filter_by(account_id=acc.id).one()
+        assert att.content_text == "recovered"
+
+    def test_unknown_account_raises(self, db_session, monkeypatch):
+        monkeypatch.setattr(settings, "tika_enabled", True)
+        with pytest.raises(ValueError, match="not found"):
+            index_service.backfill_attachment_content(db_session, "nope")

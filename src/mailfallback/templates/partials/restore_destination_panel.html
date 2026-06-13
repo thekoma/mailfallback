@@ -1,0 +1,62 @@
+{# Unified destination panel — included by BOTH the folder and full presets.
+   They share one rest* state set: only one panel is visible at a time and
+   both answer the same question ("where do restored messages go"), exactly
+   like the single sidebar Destination select this replaces. The staging push
+   panel carries the same pattern on its own push* state (its Destination
+   semantics differ: per-message origin vs one source mailbox).
+   Account options render from Jinja all_accounts for parity with the sidebar
+   Mailbox select (admins may target any account; the API re-checks access). #}
+<div class="ws-dest-panel">
+  <div class="ws-dest-group">
+    <span class="ws-field-label">Destination</span>
+    <label class="ws-inline">
+      <input type="radio" value="back" x-model="restDestMode" @change="ensureRestFolders()">
+      Back into <span x-text="accountName(accountId)"></span>
+    </label>
+    <label class="ws-inline">
+      <input type="radio" value="other" x-model="restDestMode" @change="ensureRestFolders()">
+      Another mailbox:
+      <select x-model="restDestOtherId" :disabled="restDestMode !== 'other'"
+              @change="ensureRestFolders()">
+        {% for acct in all_accounts %}
+        <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address or "—" }})</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <div class="ws-dest-group">
+    <span class="ws-field-label">Folder</span>
+    <label class="ws-inline">
+      <input type="radio" value="original" x-model="restFolderMode">
+      Original layout
+    </label>
+    <label class="ws-inline">
+      <input type="radio" value="restored" x-model="restFolderMode">
+      <span x-text="'Everything under Restored/' + todayStamp()"></span>
+    </label>
+    <label class="ws-inline">
+      <input type="radio" value="custom" x-model="restFolderMode" @change="ensureRestFolders()">
+      Custom folder
+    </label>
+    {# Picker first and it KEEPS the picked option selected (x-model) —
+       picking copies into the text input below, which stays the source of
+       truth (freely editable) and pulses to confirm the write landed. #}
+    <div class="ws-custom-folder" x-show="restFolderMode === 'custom'">
+      <label class="ws-custom-pick">
+        <span class="ws-custom-sublabel">Existing folders</span>
+        <select x-model="restPickedFolder" @change="pickRestFolder()">
+          <option value="">Pick a folder…</option>
+          <template x-for="f in restPickerFolders" :key="f.full_name || f.name">
+            <option :value="f.name" x-text="f.name"></option>
+          </template>
+        </select>
+      </label>
+      <label class="ws-custom-pick">
+        <span class="ws-custom-sublabel">or type a new path (created if missing)</span>
+        <input type="text" x-model="restCustomFolder" maxlength="200"
+               :class="{'ws-input-pulse': restFolderPulse}"
+               placeholder="Folder or folder/subfolder">
+      </label>
+    </div>
+  </div>
+</div>

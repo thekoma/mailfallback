@@ -4,10 +4,12 @@ Public functions:
 - upsert_message_set(db, account_id) -> int
 - record_snapshot / prune_snapshot / backfill_snapshots — snapshot bitmap upkeep
 - backfill_attachments(db, account_id) -> int — attachment rows for pre-era index rows
+- backfill_attachment_content(db, account_id) -> int — Tika text for NULL rows
 
 The service owns reads from the live Maildir filesystem. Header upserts use
 email.parser.BytesHeaderParser (headers only); on first insert of a message
-the file gets one full MIME walk (_parse_attachments) for attachment metadata.
+the file gets one full MIME walk (_parse_attachments) for attachment metadata
+(plus Tika text extraction when tika_enabled).
 Maildir files are immutable, so attachments are never re-parsed on later walks.
 
 Known limitations:
@@ -19,13 +21,17 @@ Known limitations:
 import hashlib
 import logging
 import os
+import threading
+import time
 from datetime import UTC, datetime
 from email import policy
 from email.parser import BytesHeaderParser, BytesParser
 from email.utils import getaddresses, parsedate_to_datetime
 
+import httpx
 from sqlalchemy.orm import Session
 
+from mailfallback.config import settings
 from mailfallback.models import (
     Account,
     MailIndexAttachment,
@@ -39,6 +45,40 @@ logger = logging.getLogger(__name__)
 # Maximum rows touched per transaction during the live Maildir walk.
 # Bounded so big mailboxes (150k+ messages) don't lock the index for minutes.
 BATCH_SIZE = 1000
+
+# Tika extraction caps (restore spec): parts above the byte cap are never
+# sent to Tika; extracted text is stored truncated to TIKA_TEXT_CAP
+# CHARACTERS (a str slice, not bytes — approximate for multibyte text).
+TIKA_MAX_PART_BYTES = 20 * 1024 * 1024
+TIKA_TEXT_CAP = 204_800
+
+# Per-walk Tika accounting seam: _extract_attachment_text bumps these
+# thread-local counters on every attempt; the walk drivers
+# (upsert_message_set, backfill_attachments, backfill_attachment_content)
+# reset them on entry and emit ONE INFO summary on exit when any part was
+# attempted. This keeps _parse_attachments' contract (list[dict] | None)
+# untouched. Thread-local because a walk is synchronous within its thread,
+# so concurrent walks (scheduler threads) keep independent counters.
+_TIKA_STATS = threading.local()
+
+
+def _reset_tika_stats() -> None:
+    _TIKA_STATS.attempts = 0
+    _TIKA_STATS.misses = 0
+    _TIKA_STATS.elapsed = 0.0
+
+
+def _log_tika_stats(context: str) -> None:
+    attempts = getattr(_TIKA_STATS, "attempts", 0)
+    if not attempts:
+        return
+    logger.info(
+        "Tika extraction (%s): %d parts attempted, %d misses, %.1fs",
+        context,
+        attempts,
+        _TIKA_STATS.misses,
+        _TIKA_STATS.elapsed,
+    )
 
 
 def _hash_message_id(message_id: str) -> bytes:
@@ -83,6 +123,53 @@ def _parse_headers(path: str) -> dict | None:
     }
 
 
+def _extract_attachment_text(payload: bytes, content_type: str) -> str | None:
+    """Tika extraction for one part, with per-walk accounting. Never raises.
+
+    Thin wrapper over _tika_put that bumps the thread-local walk counters
+    (attempts / misses / elapsed) — the seam behind _log_tika_stats.
+    """
+    start = time.monotonic()
+    text = _tika_put(payload, content_type)
+    _TIKA_STATS.attempts = getattr(_TIKA_STATS, "attempts", 0) + 1
+    _TIKA_STATS.misses = getattr(_TIKA_STATS, "misses", 0) + (1 if text is None else 0)
+    _TIKA_STATS.elapsed = getattr(_TIKA_STATS, "elapsed", 0.0) + (time.monotonic() - start)
+    return text
+
+
+def _tika_put(payload: bytes, content_type: str) -> str | None:
+    """Plain-text extraction of one attachment part via Apache Tika. Never raises.
+
+    PUT {tika_url}/tika/ mirrors the URL shape Dovecot's fts decoder uses
+    (config_generator: `fts_decoder_tika_url = {tika_url}/tika/`) — proven
+    to work against this Tika container. Non-200, transport errors and
+    empty/whitespace-only output all collapse to None at DEBUG level:
+    extraction misses are routine (encrypted PDFs, exotic formats) and
+    must never fail indexing or sync. Stored text is capped at
+    TIKA_TEXT_CAP characters (not bytes).
+    """
+    try:
+        resp = httpx.put(
+            f"{settings.tika_url}/tika/",
+            content=payload,
+            headers={
+                "Accept": "text/plain",
+                "Content-Type": content_type or "application/octet-stream",
+            },
+            timeout=10.0,
+        )
+    except Exception:
+        logger.debug("Tika extraction failed (transport)", exc_info=True)
+        return None
+    if resp.status_code != 200:
+        logger.debug("Tika extraction failed: HTTP %s", resp.status_code)
+        return None
+    text = resp.text[:TIKA_TEXT_CAP]
+    if not text.strip():
+        return None
+    return text
+
+
 def _parse_attachments(path: str) -> list[dict] | None:
     """Full MIME walk of one Maildir file. Returns attachment metadata rows.
 
@@ -92,6 +179,8 @@ def _parse_attachments(path: str) -> list[dict] | None:
     re-walk can address the same part without ambiguity.
     `size_bytes` is None when the decoded size is unknown (message/* parts,
     malformed CTE) — never a fake 0. Returns None on unreadable/unparsable files.
+    When tika_enabled, decodable parts up to TIKA_MAX_PART_BYTES also get
+    `content_text` extracted via Tika (None on any miss — never an error).
     """
     parser = BytesParser(policy=policy.default)
     try:
@@ -101,6 +190,7 @@ def _parse_attachments(path: str) -> list[dict] | None:
         return None
     out: list[dict] = []
     part_index = 0
+    extract = settings.tika_enabled
     try:
         for part in msg.walk():
             if part.get_content_maintype() == "multipart":
@@ -115,13 +205,18 @@ def _parse_attachments(path: str) -> list[dict] | None:
             except Exception:  # malformed CTE — keep the row, size unknown
                 payload = None
             ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            content_type = part.get_content_type()
+            content_text = None
+            if extract and payload is not None and len(payload) <= TIKA_MAX_PART_BYTES:
+                content_text = _extract_attachment_text(payload, content_type)
             out.append(
                 {
                     "part_index": part_index,
                     "filename": filename,
                     "ext": ext,
                     "size_bytes": len(payload) if payload is not None else None,
-                    "content_type": part.get_content_type(),
+                    "content_type": content_type,
+                    "content_text": content_text,
                 }
             )
     except Exception:
@@ -178,6 +273,7 @@ def upsert_message_set(db: Session, account_id: str) -> int:
 
     seen_hashes: set[bytes] = set()
     touched = 0
+    _reset_tika_stats()
     try:
         for folder, filename, full_path in _walk_maildir(account.maildir_path):
             parsed = _parse_headers(full_path)
@@ -252,6 +348,9 @@ def upsert_message_set(db: Session, account_id: str) -> int:
         raise
     finally:
         db.commit()
+        # One summary per walk, even on partial failure; silent when no
+        # part was attempted (tika disabled, or no new attachments).
+        _log_tika_stats("index walk")
     return touched
 
 
@@ -461,6 +560,7 @@ def backfill_attachments(db: Session, account_id: str) -> int:
     )
     processed = 0
     now = datetime.now(UTC)
+    _reset_tika_stats()
     for row in pending:
         path = None
         for base in maildir_folder_bases(account.maildir_path, row.folder_path):
@@ -495,4 +595,83 @@ def backfill_attachments(db: Session, account_id: str) -> int:
         if processed % BATCH_SIZE == 0:
             db.commit()
     db.commit()
+    _log_tika_stats("attachment backfill")
     return processed
+
+
+def backfill_attachment_content(db: Session, account_id: str) -> int:
+    """Extract Tika text for attachment rows still missing content_text.
+
+    Operator-invoked (`mfb index backfill-attachments <id> --content-only`);
+    refuses outright when Tika is disabled. Visits each alive message that
+    has at least one attachment row with content_text IS NULL, locates its
+    live file (exact filename, then flag-rename prefix fallback — the
+    preview locator), re-walks it with _parse_attachments (which extracts
+    now that Tika is on) and fills ONLY the still-NULL rows, matched by
+    part_index. Missing files are skipped WITHOUT marking anything — the
+    next upsert_message_set reconciles them, same contract as the metadata
+    backfill above.
+
+    Returns the number of attachment ROWS filled (not messages). Rows whose
+    extraction misses stay NULL, so the backfill is resumable by
+    construction — which also means persistent misses (e.g. encrypted PDFs)
+    are retried on every run; acceptable for an operator-invoked command.
+    Commits every BATCH_SIZE messages.
+    """
+    if not settings.tika_enabled:
+        raise ValueError(
+            "Tika is disabled (MAILFALLBACK_TIKA_ENABLED=false) — content extraction is unavailable"
+        )
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not account:
+        raise ValueError(f"Account {account_id} not found")
+
+    # Deferred import: preview_service imports index_service helpers at
+    # module level, so the reverse import must stay function-local.
+    from mailfallback.services.preview_service import _locate_live_file
+
+    pending = (
+        db.query(MailIndexMessage)
+        .filter(
+            MailIndexMessage.account_id == account_id,
+            MailIndexMessage.deleted_at.is_(None),
+            db.query(MailIndexAttachment)
+            .filter(
+                MailIndexAttachment.account_id == MailIndexMessage.account_id,
+                MailIndexAttachment.message_id_hash == MailIndexMessage.message_id_hash,
+                MailIndexAttachment.content_text.is_(None),
+            )
+            .exists(),
+        )
+        .all()
+    )
+    filled = 0
+    _reset_tika_stats()
+    for visited, row in enumerate(pending, start=1):
+        path = _locate_live_file(account, row)
+        # path None: file gone — skip without marking; the next walk reconciles
+        if path is not None:
+            atts = _parse_attachments(path)
+            extracted = {
+                a["part_index"]: a["content_text"] for a in atts or [] if a["content_text"]
+            }
+            if extracted:
+                null_rows = (
+                    db.query(MailIndexAttachment)
+                    .filter(
+                        MailIndexAttachment.account_id == account_id,
+                        MailIndexAttachment.message_id_hash == row.message_id_hash,
+                        MailIndexAttachment.content_text.is_(None),
+                    )
+                    .all()
+                )
+                for att in null_rows:
+                    text = extracted.get(att.part_index)
+                    if text is not None:
+                        att.content_text = text
+                        filled += 1
+        if visited % BATCH_SIZE == 0:
+            db.commit()
+    db.commit()
+    _log_tika_stats("content backfill")
+    return filled

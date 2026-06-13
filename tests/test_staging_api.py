@@ -340,6 +340,71 @@ def test_push_invalid_folder_mode_400(client, db_session, real_store):
     assert db_session.query(AuditLog).filter_by(action="staging.push").count() == 0
 
 
+def test_push_custom_folder_creates_manifest_and_audits(client, db_session, real_store, tmp_path):
+    """folder_mode="custom": the manifest folder is the user's path verbatim
+    (stripped), and the audit row records which path the push targeted."""
+    user = _mk_user(db_session, real_store)
+    acc, row = _mk_indexed_account(db_session, real_store, tmp_path, owner=user)
+    acc.credentials = "enc"  # create_restore_job requires target credentials
+    db_session.commit()
+    _login(client, "mario")
+    add = client.post("/api/restore/staging/items", json={"items": _items(acc, row)})
+    assert add.status_code == 200, add.text
+    staged_filename = db_session.query(StagingMessage).one().staged_filename
+
+    with patch("mailfallback.services.restore_worker.submit_restore_job"):
+        resp = client.post(
+            "/api/restore/staging/push",
+            json={
+                "destination": "origin",
+                "folder_mode": "custom",
+                "custom_folder": "  Team/Recovered mails  ",  # stripped server-side
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    job = db_session.query(RestoreJob).one()
+    assert job.selected_uids == {"Team/Recovered mails": [staged_filename]}
+    entry = db_session.query(AuditLog).filter_by(action="staging.push").one()
+    assert entry.details["folder_mode"] == "custom"
+    assert entry.details["custom_folder"] == "Team/Recovered mails"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        None,  # custom mode requires the field
+        "",
+        "   ",
+        "/Archive",  # leading separator
+        "Archive/",  # trailing separator
+        "a//b",  # empty segment
+        "a/ /b",  # whitespace-only segment
+        "a/../b",  # traversal segment
+        "..",
+        'Archi"ve',  # would break the quoted IMAP atom
+        "Arch\\ive",
+        "bad\x01name",  # control chars
+        "bad\x7fname",  # DEL — outside _sanitize_imap_string's class
+        "bad\x85name",  # C1 control range
+        "x" * 201,  # over the length cap
+    ],
+)
+def test_push_custom_folder_garbage_400(client, db_session, real_store, bad):
+    _mk_user(db_session, real_store)
+    _login(client, "mario")
+
+    resp = client.post(
+        "/api/restore/staging/push",
+        json={"destination": "origin", "folder_mode": "custom", "custom_folder": bad},
+    )
+
+    assert resp.status_code == 400, resp.text
+    assert "custom_folder" in resp.json()["detail"]
+    assert db_session.query(RestoreJob).count() == 0
+    assert db_session.query(AuditLog).filter_by(action="staging.push").count() == 0
+
+
 def test_push_unauthenticated_401(client):
     resp = client.post(
         "/api/restore/staging/push",

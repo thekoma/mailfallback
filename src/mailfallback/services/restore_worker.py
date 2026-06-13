@@ -1,3 +1,4 @@
+import base64
 import contextlib
 import imaplib
 import logging
@@ -376,8 +377,13 @@ def _execute_restore(
         )
 
         existing_ids = set()
-        target_folder = _map_folder(
-            short_folder, job.folder_mapping, tgt_separator, src_prefix=src_namespace_prefix
+        # mUTF-7 at the IMAP boundary: a typed non-ASCII custom root would
+        # otherwise die in imaplib's ASCII command encoding. No-op for the
+        # (already wire-encoded) source-derived names.
+        target_folder = _imap_utf7_encode(
+            _map_folder(
+                short_folder, job.folder_mapping, tgt_separator, src_prefix=src_namespace_prefix
+            )
         )
         if job.skip_duplicates:
             existing_ids = _get_existing_message_ids(tgt_conn, target_folder)
@@ -594,6 +600,9 @@ def _execute_staging_push(db, job, target, tgt_password, tgt_auth_method):
         pushed: dict[str, str] = {}  # manifest filename -> actual on-disk path
         for folder, filenames in manifest.items():
             tgt_folder = folder.replace("/", tgt_separator) if tgt_separator != "/" else folder
+            # mUTF-7 at the IMAP boundary — typed custom folders may carry
+            # non-ASCII; original-folder keys are wire-encoded already (no-op).
+            tgt_folder = _imap_utf7_encode(tgt_folder)
             _ensure_folder(tgt_conn, tgt_folder)
             existing_ids = (
                 _get_existing_message_ids(tgt_conn, tgt_folder) if job.skip_duplicates else set()
@@ -712,7 +721,51 @@ def _map_folder(folder_name, folder_mapping, separator="/", escape_char="_", src
     converted = folder_name.replace("/", separator)
     if folder_mapping == "original":
         return converted
-    return f"{folder_mapping}{separator}{converted}"
+    # The mapping root is a "/"-hierarchy path too ("Restored/<date>", typed
+    # Custom roots) — give it the same separator treatment as the folder
+    # name: escape literal target-separator characters first, then convert
+    # its "/" hierarchy. Composing an unconverted root on a dot-separator
+    # server would create a literal "A/B" mailbox name (or fail) instead of
+    # nesting A → B.
+    root = folder_mapping
+    if separator != "/" and separator in root:
+        root = root.replace(separator, escape_char)
+        logger.info("Mapping root renamed: '%s' → '%s' (separator collision)", folder_mapping, root)
+    root = root.replace("/", separator)
+    return f"{root}{separator}{converted}"
+
+
+def _imap_utf7_encode(name: str) -> str:
+    """Encode a mailbox name as RFC 3501 §5.1.3 modified UTF-7 for the wire.
+
+    Pure-ASCII names pass through UNTOUCHED: every name the worker receives
+    from LIST or selected_uids keys is already wire-encoded ASCII (a literal
+    "&-"/"&AOA-" in it IS the encoding), so re-encoding would double-encode
+    them. Only decoded Unicode — user-typed custom roots — actually shifts:
+    printable ASCII represents itself, "&" becomes "&-", and everything else
+    rides in "&…-" runs of base64'd UTF-16BE with "," for "/" and the
+    padding stripped. Encode-only: nothing in the worker needs the decode
+    direction.
+    """
+    if name.isascii():
+        return name
+    out: list[str] = []
+    run: list[str] = []  # pending non-printable run, shifted as one block
+
+    def _flush():
+        if run:
+            b64 = base64.b64encode("".join(run).encode("utf-16-be")).decode("ascii")
+            out.append("&" + b64.rstrip("=").replace("/", ",") + "-")
+            run.clear()
+
+    for ch in name:
+        if " " <= ch <= "~":  # printable US-ASCII represents itself...
+            _flush()
+            out.append("&-" if ch == "&" else ch)  # ...except the shift char
+        else:
+            run.append(ch)
+    _flush()
+    return "".join(out)
 
 
 def _ensure_folder(conn, folder_name):
