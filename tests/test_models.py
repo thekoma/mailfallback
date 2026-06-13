@@ -91,6 +91,61 @@ def test_create_sync_job():
     assert job.account.name == "Work"
 
 
+def test_account_sync_budget_columns_defaults():
+    """Migration-021 columns: the daily byte ledger starts at 0 (NOT NULL,
+    server default) and every budget/pause/initial-sync marker starts NULL —
+    a fresh account is in the initial-sync regime with no pause and the
+    provider-default budget."""
+    session = make_session()
+    store = _make_store(session)
+    account = Account(
+        name="Budget",
+        imap_host="imap.example.com",
+        maildir_path="/data/mailboxes/budget",
+        store_id=store.id,
+    )
+    session.add(account)
+    session.commit()
+    session.refresh(account)
+    assert account.bytes_synced_today == 0
+    assert account.traffic_date is None
+    assert account.daily_sync_budget_mb is None
+    assert account.sync_paused_until is None
+    assert account.pause_reason is None
+    assert account.initial_sync_completed_at is None
+    assert account.initial_sync_total_messages is None
+
+
+def test_sync_job_failure_kind_plain_string():
+    """failure_kind is a PLAIN string (no enum — new kinds must not need a
+    migration): NULL by default, classifier values persist as-is."""
+    session = make_session()
+    store = _make_store(session)
+    account = Account(
+        name="FK",
+        imap_host="imap.example.com",
+        maildir_path="/data/mailboxes/fk",
+        store_id=store.id,
+    )
+    session.add(account)
+    session.commit()
+    job = SyncJob(account_id=account.id)
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    assert job.failure_kind is None
+    job.failure_kind = "budget_paused"
+    session.commit()
+    session.refresh(job)
+    assert job.failure_kind == "budget_paused"
+    # The plain-string PROOF: a value outside the documented vocabulary
+    # round-trips too — an Enum column would reject it at flush time.
+    job.failure_kind = "future_kind"
+    session.commit()
+    session.refresh(job)
+    assert job.failure_kind == "future_kind"
+
+
 def test_account_defaults():
     session = make_session()
     store = _make_store(session)

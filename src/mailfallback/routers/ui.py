@@ -105,6 +105,42 @@ templates.env.filters["number"] = _number_format
 templates.env.globals["webmail_url"] = settings.webmail_url
 templates.env.globals["webmail_enabled"] = settings.webmail_enabled
 
+# Honest copy per pause reason — chip tooltips + panel headlines.
+PAUSE_TOOLTIPS = {
+    "budget": "Daily sync budget reached",
+    "throttle": "Provider throttled",
+    "transient": "Connection lost — retrying",
+}
+
+
+def account_live_status(account) -> dict:
+    """Per-account live sync status for the polling partials (spec §8).
+
+    Cheap by contract: the sampler's in-memory last-known entry (kept
+    briefly after job end, evicted on the account's next job) + columns
+    already loaded on the account row — no extra queries.
+    """
+    from mailfallback.services import sync_budget
+    from mailfallback.services.sync_worker import get_live_progress_for_account
+
+    prog = get_live_progress_for_account(account.id) or {}
+    eta = prog.get("eta") or {}
+    paused_until = account.sync_paused_until
+    return {
+        "pct": prog.get("pct"),
+        "done_msgs": prog.get("done_msgs"),
+        "total_msgs": account.initial_sync_total_messages,
+        "bytes_today": prog.get("bytes_today", account.bytes_synced_today),
+        "budget_bytes": prog.get("budget_bytes", sync_budget.daily_budget_bytes(account)),
+        "eta_label": eta.get("label"),
+        "rate_msgs_per_s": prog.get("rate_msgs_per_s"),
+        "paused_until": paused_until,
+        "resume_hhmm": paused_until.strftime("%H:%M") if paused_until else None,
+        "pause_reason": account.pause_reason,
+        "pause_tooltip": PAUSE_TOOLTIPS.get(account.pause_reason),
+        "initial_sync": account.initial_sync_completed_at is None,
+    }
+
 
 def _get_theme(request: Request) -> str:
     if hasattr(request, "session"):
@@ -163,7 +199,11 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
     total_messages = sum(a.total_messages for a in accounts)
     total_bytes = sum(a.maildir_size_bytes for a in accounts)
-    error_count = sum(1 for a in accounts if a.sync_state.value == "error")
+    # Self-recovering pauses are NOT errors (sync-budget spec §8): the
+    # account-level pause_reason check is the adopted exclusion logic.
+    error_count = sum(
+        1 for a in accounts if a.sync_state.value == "error" and a.pause_reason is None
+    )
 
     stats = {
         "accounts": len(accounts),
@@ -195,9 +235,22 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     stale_cutoff = datetime.now(UTC) - timedelta(days=7)
     attention = []
     for a in accounts:
-        if a.sync_state.value == "error":
+        if a.sync_state.value == "error" and a.pause_reason is None:
             reason = a.last_error[:80] if a.last_error else "Sync failed"
             attention.append({"id": a.id, "name": a.name, "type": "error", "reason": reason})
+        elif a.initial_sync_completed_at is None and a.is_authenticated and not a.suspended:
+            # The first full sync in flight is an INFO state, never an error.
+            ls = account_live_status(a)
+            bits = ["initial sync"]
+            if ls["pct"] is not None:
+                bits[0] += f" {int(ls['pct'])}%"
+            if ls["eta_label"]:
+                bits.append(f"ETA {ls['eta_label']}")
+            if ls["resume_hhmm"]:
+                bits.append(f"resumes {ls['resume_hhmm']}")
+            attention.append(
+                {"id": a.id, "name": a.name, "type": "info", "reason": " · ".join(bits)}
+            )
         elif a.last_sync_at and a.last_sync_at.replace(tzinfo=UTC) < stale_cutoff:
             attention.append(
                 {"id": a.id, "name": a.name, "type": "stale", "reason": "No sync in 7+ days"}
@@ -367,7 +420,12 @@ def accounts_page(request: Request, show_all: str = "", db: Session = Depends(ge
     return templates.TemplateResponse(
         request=request,
         name="accounts.html",
-        context={"user": user, "accounts": accounts, "show_all_users": show_all_users},
+        context={
+            "user": user,
+            "accounts": accounts,
+            "show_all_users": show_all_users,
+            "live_status": {a.id: account_live_status(a) for a in accounts},
+        },
     )
 
 
@@ -395,7 +453,11 @@ def accounts_table_partial(request: Request, show_all: str = "", db: Session = D
     response = templates.TemplateResponse(
         request=request,
         name="partials/accounts_table.html",
-        context={"user": user, "accounts": accounts},
+        context={
+            "user": user,
+            "accounts": accounts,
+            "live_status": {a.id: account_live_status(a) for a in accounts},
+        },
     )
     if not any_syncing:
         response.headers["HX-Trigger"] = "sync-idle"

@@ -81,3 +81,185 @@ def test_run_staging_cleanup_purges_expired_area(db_session, tmp_path):
 
     assert db_session.query(StagingArea).count() == 0
     assert not os.path.isdir(sdir)
+
+
+# ---------------------------------------------------------------------------
+# Pause gating + expiry resume (sync-budget Task 7, spec §6)
+# ---------------------------------------------------------------------------
+
+
+def _mk_account(db_session, store, **kw):
+    from mailfallback.models import Account
+
+    account = Account(
+        name=kw.pop("name", "Sched"),
+        imap_host="imap.test.com",
+        maildir_path=kw.pop("maildir_path", "/data/mailboxes/sched"),
+        store_id=store.id,
+        **kw,
+    )
+    db_session.add(account)
+    db_session.commit()
+    return account
+
+
+def test_periodic_sync_skips_paused_account(db_session, default_store):
+    """The periodic path must not enqueue while a self-recovering pause is
+    live — ANY pause_reason (budget|throttle|transient) gates uniformly."""
+    from mailfallback.models import SyncJob
+    from mailfallback.services import scheduler as sched
+
+    account = _mk_account(
+        db_session,
+        default_store,
+        sync_paused_until=datetime.now(UTC) + timedelta(hours=4),
+        pause_reason="throttle",
+    )
+
+    with (
+        patch("mailfallback.services.scheduler.SessionLocal", return_value=db_session),
+        patch("mailfallback.services.scheduler.submit_sync_job") as submit,
+    ):
+        sched._run_scheduled_sync(account.id)
+
+    assert db_session.query(SyncJob).count() == 0
+    submit.assert_not_called()
+
+
+def test_periodic_sync_runs_when_pause_expired(db_session, default_store):
+    """An EXPIRED pause does not gate the cron path (the expiry tick may not
+    have cleared it yet — clearing is its job, not the gate's)."""
+    from mailfallback.models import SyncJob
+    from mailfallback.services import scheduler as sched
+
+    account = _mk_account(
+        db_session,
+        default_store,
+        maildir_path="/data/mailboxes/sched2",
+        sync_paused_until=datetime.now(UTC) - timedelta(minutes=5),
+        pause_reason="budget",
+    )
+
+    with (
+        patch("mailfallback.services.scheduler.SessionLocal", return_value=db_session),
+        patch("mailfallback.services.scheduler.submit_sync_job") as submit,
+    ):
+        sched._run_scheduled_sync(account.id)
+
+    assert db_session.query(SyncJob).count() == 1
+    submit.assert_called_once()
+
+
+def test_pause_expiry_tick_enqueues_initial_incomplete_once(db_session, default_store):
+    """An expired pause on an account still in the initial-sync regime is
+    resumed IMMEDIATELY (the budget window just opened) — once: the columns
+    clear on enqueue, so the next tick no-ops."""
+    from mailfallback.models import SyncJob
+    from mailfallback.services import scheduler as sched
+
+    account = _mk_account(
+        db_session,
+        default_store,
+        maildir_path="/data/mailboxes/sched3",
+        sync_paused_until=datetime.now(UTC) - timedelta(minutes=1),
+        pause_reason="budget",
+    )
+    account_id = account.id  # the tick closes the session — capture early
+
+    with (
+        patch("mailfallback.services.scheduler.SessionLocal", return_value=db_session),
+        patch("mailfallback.services.scheduler.submit_sync_job") as submit,
+    ):
+        sched._run_pause_expiry_tick()
+        first_count = db_session.query(SyncJob).count()
+        sched._run_pause_expiry_tick()  # second tick must not enqueue again
+
+    # The tick closes the session in finally — re-acquire, don't refresh.
+    from mailfallback.models import Account
+
+    account = db_session.get(Account, account_id)
+    assert first_count == 1
+    assert db_session.query(SyncJob).count() == 1
+    assert submit.call_count == 1
+    assert account.sync_paused_until is None
+    assert account.pause_reason is None
+    job = db_session.query(SyncJob).one()
+    assert job.source == "scheduler"
+
+
+def test_pause_expiry_tick_initial_complete_clears_without_enqueue(db_session, default_store):
+    """Initial sync done: a routine incremental has no urgency — clear the
+    columns, let the account's own cron resume it."""
+    from mailfallback.models import SyncJob
+    from mailfallback.services import scheduler as sched
+
+    account = _mk_account(
+        db_session,
+        default_store,
+        maildir_path="/data/mailboxes/sched4",
+        sync_paused_until=datetime.now(UTC) - timedelta(minutes=1),
+        pause_reason="throttle",
+        initial_sync_completed_at=datetime.now(UTC) - timedelta(days=30),
+    )
+
+    with (
+        patch("mailfallback.services.scheduler.SessionLocal", return_value=db_session),
+        patch("mailfallback.services.scheduler.submit_sync_job") as submit,
+    ):
+        sched._run_pause_expiry_tick()
+
+    account = db_session.get(type(account), account.id)
+    assert account.sync_paused_until is None
+    assert account.pause_reason is None
+    assert db_session.query(SyncJob).count() == 0
+    submit.assert_not_called()
+
+
+def test_pause_expiry_tick_future_pause_untouched(db_session, default_store):
+    from mailfallback.models import SyncJob
+    from mailfallback.services import scheduler as sched
+
+    account = _mk_account(
+        db_session,
+        default_store,
+        maildir_path="/data/mailboxes/sched5",
+        sync_paused_until=datetime.now(UTC) + timedelta(hours=2),
+        pause_reason="budget",
+    )
+
+    with (
+        patch("mailfallback.services.scheduler.SessionLocal", return_value=db_session),
+        patch("mailfallback.services.scheduler.submit_sync_job") as submit,
+    ):
+        sched._run_pause_expiry_tick()
+
+    account = db_session.get(type(account), account.id)
+    assert account.pause_reason == "budget"
+    assert account.sync_paused_until is not None
+    assert db_session.query(SyncJob).count() == 0
+    submit.assert_not_called()
+
+
+def test_start_scheduler_registers_pause_expiry(db_session):
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+    for job in list(scheduler.get_jobs()):
+        scheduler.remove_job(job.id)
+
+    # Cleanup in finally: a failing assert must not leave the scheduler
+    # running — refresh_scheduler() in later tests would dial the REAL
+    # SessionLocal from the test thread (observed pollution).
+    try:
+        with (
+            patch("mailfallback.services.scheduler.sync_scheduler_jobs"),
+            patch("mailfallback.services.scheduler.backup_scheduler_jobs"),
+        ):
+            start_scheduler(db_session)
+
+        job_ids = {j.id for j in scheduler.get_jobs()}
+        assert "pause-expiry" in job_ids
+    finally:
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
+        for job in list(scheduler.get_jobs()):
+            scheduler.remove_job(job.id)
