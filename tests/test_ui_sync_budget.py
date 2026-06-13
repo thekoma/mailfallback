@@ -243,10 +243,13 @@ def test_detail_first_sync_shows_progress_and_priority_note(client, db_session, 
         _clear_progress()
 
     text = resp.text
-    assert "46,200" in text and "121,000" in text  # messages line (| number)
+    # Recap Messages item (| number); ETA + priority note in the summary.
+    assert "46,200" in text and "121,000" in text
     assert "ETA ≈ 3d" in text
-    assert "today" in text  # bytes/budget line
     assert "INBOX first, then the archive" in text
+    # Pico-native progress, not the old reinvented bar.
+    assert "<progress" in text
+    assert "progress-bar-fill" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -336,3 +339,119 @@ def test_dashboard_true_error_still_counts(client, db_session, default_store):
 
     assert "ReallyBroken" in resp.text
     assert "AUTHENTICATIONFAILED" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# First-sync panel: Pico-native <progress> + recap, no dot grid (mockup)
+# ---------------------------------------------------------------------------
+
+
+def test_first_sync_panel_pico_progress_and_recap(client, db_session, default_store):
+    """The first-sync hero matches the frozen mockup: a Pico native
+    <progress> bar, the Folders/Messages/Downloaded recap card, the summary
+    line — and NONE of the old custom progress divs or the dot grid."""
+    _login(client, db_session, default_store)
+    account = _mk_account(
+        db_session,
+        default_store,
+        sync_state=SyncState.syncing,
+        initial_sync_total_messages=169_403,
+    )
+    _seed_progress(account, pct=44.0, done=75_844, eta="≈ 2 days")
+    # The log parser feeds the advancing folder count + current folder.
+    from types import SimpleNamespace
+
+    snap = SimpleNamespace(
+        current_folder="SoTeHa/Inbox",
+        folder_index=342,
+        folder_total_estimate=1,  # the broken first-sync estimate — must be ignored
+        per_folder=[],
+        phase="syncing",
+    )
+    from unittest.mock import patch
+
+    from mailfallback.routers import ui_accounts
+
+    real = ui_accounts._compute_hero_state
+
+    def fake_state(acc, db):
+        _state, _snap, last_job = real(acc, db)
+        return "first-sync", snap, last_job
+
+    try:
+        with patch.object(ui_accounts, "_compute_hero_state", fake_state):
+            resp = client.get(f"/accounts/{account.id}/partials/sync-panel")
+    finally:
+        _clear_progress()
+
+    text = resp.text
+    # Pico native progress (house pattern), value/max.
+    assert "<progress" in text
+    assert 'value="44"' in text and 'max="100"' in text
+    # Recap card: three labelled items.
+    assert "sync-recap" in text
+    assert "Folders" in text and "342" in text
+    assert "Messages" in text and "75,844" in text and "169,403" in text
+    assert "Downloaded" in text  # done_bytes humanized
+    # Summary line (44% bolded per the mockup) + ETA + priority note.
+    assert "<strong>44%</strong>" in text
+    assert "ETA ≈ 2 days · INBOX first, then the archive" in text
+    # Liveness line: current folder + today's budget burn.
+    assert "Downloading" in text and "SoTeHa/Inbox" in text
+    assert "1.9 GB / 2.0 GB budget today" in text
+    # The reinvented progress + dot grid are GONE.
+    assert "progress-bar-fill" not in text
+    assert "folder-chips" not in text
+    assert "Folder 342 of" not in text  # the "Folder N of 1" bug string
+
+
+def test_first_sync_panel_early_phase_indeterminate(client, db_session, default_store):
+    """Before any folder data: bare indeterminate <progress> + phase label,
+    no recap (nothing to show yet)."""
+    _login(client, db_session, default_store)
+    account = _mk_account(
+        db_session,
+        default_store,
+        maildir_path="/data/mailboxes/uibud_early",
+        sync_state=SyncState.syncing,
+    )
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from mailfallback.routers import ui_accounts
+
+    snap = SimpleNamespace(
+        current_folder=None,
+        folder_index=0,
+        folder_total_estimate=0,
+        per_folder=[],
+        phase="connecting",
+    )
+    real = ui_accounts._compute_hero_state
+
+    def fake_state(acc, db):
+        _s, _sn, lj = real(acc, db)
+        return "first-sync", snap, lj
+
+    # No sampler entry -> pct None; total None too.
+    with patch.object(ui_accounts, "_compute_hero_state", fake_state):
+        resp = client.get(f"/accounts/{account.id}/partials/sync-panel")
+
+    text = resp.text
+    assert "<progress></progress>" in text  # bare = indeterminate
+    assert "Connecting" in text
+    assert "progress-bar-fill" not in text
+
+
+def test_account_live_status_forwards_done_bytes(db_session, default_store):
+    """The recap 'Downloaded' value needs done_bytes — the helper must
+    forward it from the sampler dict."""
+    from mailfallback.routers.ui import account_live_status
+
+    account = _mk_account(db_session, default_store, maildir_path="/data/mailboxes/uibud_db")
+    _seed_progress(account, done=75_844)
+    try:
+        ls = account_live_status(account)
+    finally:
+        _clear_progress()
+    assert ls["done_bytes"] == 75_844 * 1024
