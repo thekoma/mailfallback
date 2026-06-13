@@ -1,5 +1,6 @@
 # src/mailfallback/services/scheduler.py
 import logging
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -13,6 +14,12 @@ from mailfallback.services.sync_worker import submit_sync_job
 logger = logging.getLogger(__name__)
 
 scheduler = BackgroundScheduler()
+
+
+def _aware_utc(dt: datetime) -> datetime:
+    """SQLite hands DateTime(timezone=True) back naive, PostgreSQL aware —
+    normalize for comparisons (stored values are UTC by construction)."""
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def _run_scheduled_sync(account_id: str) -> None:
@@ -38,9 +45,70 @@ def _run_scheduled_sync(account_id: str) -> None:
                     owner.username,
                 )
                 return
+        # Self-recovering pause gate (sync-budget spec §6): ANY non-null
+        # future pause (budget|throttle|transient) blocks the PERIODIC path
+        # only — manual syncs override in the API layer. An EXPIRED pause
+        # does not gate; clearing it is the expiry tick's job.
+        if account.sync_paused_until and _aware_utc(account.sync_paused_until) > datetime.now(UTC):
+            logger.debug(
+                "Skipping sync for %s — paused (%s) until %s",
+                account.name,
+                account.pause_reason,
+                account.sync_paused_until,
+            )
+            return
         job = create_sync_job(db, account_id, source="scheduler")
         if job:
             submit_sync_job(job.id)
+    finally:
+        db.close()
+
+
+def _run_pause_expiry_tick() -> None:
+    """Lift expired sync pauses (sync-budget spec §6), every minute.
+
+    Initial sync incomplete → enqueue immediately ONCE (the budget/backoff
+    window just opened; waiting for the next cron slot would waste it) and
+    clear the pause columns on enqueue. Initial sync complete → just clear;
+    the account's own cron resumes it naturally (a routine incremental sync
+    has no urgency). Idempotent and race-benign: clearing removes the
+    account from the next tick's query, and create_sync_job's existing-job
+    guard dedupes against a manual sync that got there first.
+    """
+    db = SessionLocal()
+    try:
+        now = datetime.now(UTC)
+        paused = db.query(Account).filter(Account.sync_paused_until.isnot(None)).all()
+        for account in paused:
+            if _aware_utc(account.sync_paused_until) > now:
+                continue
+            reason = account.pause_reason
+            account.sync_paused_until = None
+            account.pause_reason = None
+            db.commit()
+            eligible = (
+                not account.suspended
+                and account.is_authenticated
+                and not account.migrating
+                and all(not o.migrating for o in account.owners)
+            )
+            if account.initial_sync_completed_at is None and eligible:
+                logger.info(
+                    "Sync pause (%s) expired for %s — resuming the initial sync now",
+                    reason,
+                    account.name,
+                )
+                job = create_sync_job(db, account.id, source="scheduler")
+                if job:
+                    submit_sync_job(job.id)
+            else:
+                logger.info(
+                    "Sync pause (%s) expired for %s — cron resumes it",
+                    reason,
+                    account.name,
+                )
+    except Exception:
+        logger.exception("Pause expiry tick failed")
     finally:
         db.close()
 
@@ -209,6 +277,15 @@ def start_scheduler(db: Session) -> None:
             _run_staging_cleanup,
             CronTrigger(minute="*/15"),
             id="staging-cleanup",
+            replace_existing=True,
+        )
+    if not any(j.id == "pause-expiry" for j in scheduler.get_jobs()):
+        scheduler.add_job(
+            _run_pause_expiry_tick,
+            # Every minute: pause resumes carry minute-level jitter, and an
+            # initial sync should grab its budget window as soon as it opens.
+            CronTrigger(minute="*"),
+            id="pause-expiry",
             replace_existing=True,
         )
     if not scheduler.running:

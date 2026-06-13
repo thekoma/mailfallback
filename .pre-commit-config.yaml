@@ -38,7 +38,7 @@ repos:
         name: Check Alembic migration drift
         entry: uv run pytest tests/test_alembic_sync.py -x -q
         language: system
-        files: '(models\.py|migrations/versions/.*\.py)$'
+        files: '(models\.py|alembic/versions/.*\.py)$'
         pass_filenames: false
 
       - id: lexicon-check

@@ -38,6 +38,9 @@ class AccountUpdate(BaseModel):
     credentials: str | None = None
     enabled: bool | None = None
     suspended: bool | None = None
+    # NULL = provider default, 0 = unlimited, N = N MB/day (exclude_unset
+    # semantics: send the field explicitly null to clear the override).
+    daily_sync_budget_mb: int | None = None
 
 
 class OwnerAssign(BaseModel):

@@ -321,6 +321,13 @@
                 </p>
             </div>
             {% endif %}
+            <div>
+                <label for="daily_sync_budget_mb">Daily sync budget (MB)</label>
+                <input type="number" id="daily_sync_budget_mb" name="daily_sync_budget_mb" min="0"
+                       value="{{ account.daily_sync_budget_mb if account.daily_sync_budget_mb is not none else '' }}"
+                       placeholder="{{ budget_placeholder }}">
+                <small class="text-muted">0 = unlimited. Applies to all syncs for this account.</small>
+            </div>
         </div>
 
         {% with is_edit=true, sync_schedule=account.sync_schedule %}

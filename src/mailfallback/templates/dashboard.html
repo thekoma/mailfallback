@@ -151,6 +151,9 @@
     <div class="attention-item">
         {% if item.type == 'error' %}
         <span class="badge badge-error"><i data-lucide="alert-circle" class="icon-sm"></i></span>
+        {% elif item.type == 'info' %}
+        {# Initial sync in progress / self-recovering pause — info, not error. #}
+        <span class="badge badge-info"><i data-lucide="download" class="icon-sm"></i></span>
         {% else %}
         <span class="badge badge-syncing"><i data-lucide="clock" class="icon-sm"></i></span>
         {% endif %}

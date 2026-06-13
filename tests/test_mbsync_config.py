@@ -124,3 +124,46 @@ def test_verbatim_with_path_and_inbox():
     inbox_line = next(ln for ln in lines if ln.startswith("Inbox "))
     assert path_line == "Path /data/mailboxes/user/account/"
     assert inbox_line == "Inbox /data/mailboxes/user/account/INBOX"
+
+
+# ---------------------------------------------------------------------------
+# Pattern exclusions + channel name (worker seams, sync-budget Task 5)
+# ---------------------------------------------------------------------------
+
+
+def test_excluded_folder_names_real_gmail_patterns():
+    """The REAL gmail patterns string the app generates — quoted negations."""
+    from mailfallback.services.mbsync_config import excluded_folder_names
+
+    patterns = '* !"[Gmail]/All Mail" !"[Gmail]/Spam" !"[Gmail]/Trash"'
+    assert excluded_folder_names(patterns) == [
+        "[Gmail]/All Mail",
+        "[Gmail]/Spam",
+        "[Gmail]/Trash",
+    ]
+
+
+def test_excluded_folder_names_bare_and_empty():
+    from mailfallback.services.mbsync_config import excluded_folder_names
+
+    assert excluded_folder_names("* !Spam !Trash") == ["Spam", "Trash"]
+    assert excluded_folder_names("*") == []
+    assert excluded_folder_names("") == []
+
+
+def test_channel_name_matches_generated_channel():
+    """The worker's priority pass targets `<channel>:INBOX` — the helper must
+    derive EXACTLY the Channel line generate_mbsyncrc writes."""
+    from mailfallback.services.mbsync_config import channel_name
+
+    config = generate_mbsyncrc(
+        account_name="Main gMail",
+        imap_host="imap.gmail.com",
+        imap_port=993,
+        username="u@test.com",
+        auth_type="app_password",
+        password="p",
+        maildir_path="/data/mailboxes/x",
+    )
+    assert channel_name("Main gMail") == "main_gmail"
+    assert f"Channel {channel_name('Main gMail')}" in config
