@@ -69,7 +69,11 @@ acl_global_path = /etc/dovecot/conf.d/dovecot-acl
 
 
 def _dovecot_acl_file() -> str:
-    return "* owner lrs\n"
+    # Everything read-only except the per-user staging namespace, which is
+    # the curation surface for restores (delete-before-push in webmail).
+    # lrwstie = lookup/read/write-flags/write-seen/write-deleted/insert/expunge
+    # -- no create/delete-mailbox/admin.
+    return "* owner lrs\nStaging owner lrwstie\nStaging/* owner lrwstie\n"
 
 
 def _dovecot_fts_conf(settings: Any) -> str:
@@ -297,6 +301,10 @@ $config['db_prefix'] = 'rc_';
 $config['use_subscriptions'] = false;
 $config['check_all_folders'] = true;
 $config['disabled_actions'] = ['mail.compose'];
+// Blank trash = delete directly (flag+expunge). Account namespaces are
+// read-only (no Trash reachable) and the writable Staging/ namespace is a
+// curation surface — direct deletion there is exactly the intended gesture.
+$config['trash_mbox'] = '';
 $config['search_mods'] = [
     '*' => ['subject' => 1, 'from' => 1, 'text' => 1],
 ];

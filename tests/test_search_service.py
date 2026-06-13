@@ -140,6 +140,90 @@ def test_search_respects_account_visibility(db_session, search_setup, default_st
     assert "fattura nascosta" not in [r["subject"] for r in result["results"]]
 
 
+@pytest.fixture
+def foreign_setup(db_session, default_store):
+    """An admin who owns nothing + an account owned by a different user."""
+    admin = User(
+        username="root",
+        password_hash=hash_password("p"),
+        role=UserRole.admin,
+        enabled=True,
+        store_id=default_store.id,
+    )
+    luigi = User(
+        username="luigi",
+        password_hash=hash_password("p"),
+        role=UserRole.user,
+        enabled=True,
+        store_id=default_store.id,
+    )
+    owner = User(
+        username="owner",
+        password_hash=hash_password("p"),
+        role=UserRole.user,
+        enabled=True,
+        store_id=default_store.id,
+    )
+    db_session.add_all([admin, luigi, owner])
+
+    acct = Account(
+        name="foreign",
+        store=default_store,
+        maildir_path="/f",
+        imap_host="i",
+    )
+    db_session.add(acct)
+    db_session.flush()
+    acct.owners.append(owner)
+    db_session.add(
+        MailIndexMessage(
+            account_id=acct.id,
+            message_id_hash=b"\x0a" * 20,
+            message_id="<f1@h>",
+            subject="fattura riservata",
+            folder_path="INBOX",
+            maildir_filename="f1",
+        )
+    )
+    db_session.commit()
+    return {"admin": admin, "luigi": luigi, "account": acct}
+
+
+def test_admin_include_all_searches_foreign_accounts(db_session, foreign_setup):
+    """The audited escalation: include_all widens an admin's scope to every
+    account, even ones outside their ownership/groups."""
+    out = search_service.search_messages(
+        db_session,
+        user=foreign_setup["admin"],
+        query="riservata",
+        include_all=True,
+    )
+    assert [r["subject"] for r in out["results"]] == ["fattura riservata"]
+    assert out["total"] == 1
+
+
+def test_admin_without_include_all_stays_scoped(db_session, foreign_setup):
+    """Privacy default: even admins only search their accessible accounts."""
+    out = search_service.search_messages(
+        db_session,
+        user=foreign_setup["admin"],
+        query="riservata",
+    )
+    assert out["results"] == []
+    assert out["total"] == 0
+
+
+def test_non_admin_include_all_is_ignored(db_session, foreign_setup):
+    out = search_service.search_messages(
+        db_session,
+        user=foreign_setup["luigi"],
+        query="riservata",
+        include_all=True,
+    )
+    assert out["results"] == []
+    assert out["total"] == 0
+
+
 def test_search_pagination(db_session, search_setup):
     page1 = search_service.search_messages(
         db_session,

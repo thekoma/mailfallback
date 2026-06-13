@@ -21,6 +21,7 @@ function restoreWorkspace() {
     includeSnapshots: true,
     query: '',
     scopeAccountId: '',         // '' = all visible mailboxes
+    includeAll: false,          // admin-only: audited cross-user scope escalation
     deepSearch: false,
     partial: false,
     selectedFolder: '',
@@ -35,12 +36,26 @@ function restoreWorkspace() {
 
     // Preview pane state
     preview: null,
+    previewRef: null,           // the result row behind the open preview — staging adds need its ids
     previewOpen: false,
     previewLoading: false,
     _previewSeq: 0,             // monotonic seq — stale preview responses are dropped
 
-    // From the template: data island + root data attribute
-    accounts: [],
+    // Staging bar / push panel state
+    staging: {exists: false, count: 0, bytes_used: 0, expires_at: null, max_bytes: 0},
+    stagingStatus: '',          // staging feedback — rendered in the bar (statusText
+                                // only renders inside the single-mail preset)
+    pushPanelOpen: false,
+    pushDestination: 'origin',  // 'origin' | 'override' (the API gets an account id)
+    pushOverrideId: '',
+    pushFolderMode: 'original', // 'original' | 'restored'
+    pushing: false,             // guards against overlapping pushes
+    _stagingTimers: [],         // post-push delayed refreshes — cleared on re-push
+
+    // From the template: data islands + root data attribute
+    accounts: [],               // active scope dataset (accessible or all)
+    accountsAccessible: [],     // ownership OR groups — the privacy default
+    accountsAll: [],            // admins only — empty island for everyone else
     webmailUrl: '',
 
     folders: [],
@@ -69,16 +84,15 @@ function restoreWorkspace() {
       const destSel = document.querySelector('[x-model="destinationId"]');
       if (destSel && destSel.options.length > 0) this.destinationId = destSel.options[0].value;
 
-      // Account names for result badges (data island) + webmail link target.
-      const island = document.getElementById('ws-accounts-data');
-      if (island) {
-        try {
-          this.accounts = JSON.parse(island.textContent) || [];
-        } catch (e) {
-          this.accounts = [];
-        }
-      }
+      // Account names for result badges + scope options (data islands) and
+      // webmail link target. The all-accounts island only exists for admins.
+      this.accountsAccessible = this._parseIsland('ws-accounts-data');
+      this.accountsAll = this._parseIsland('ws-accounts-all-data');
+      this.accounts = this.accountsAccessible;
       this.webmailUrl = (this.$el && this.$el.dataset.webmailUrl) || '';
+      // Pre-pick a push-override destination so the select isn't empty when
+      // the user switches the destination radio to "override".
+      if (this.accounts.length) this.pushOverrideId = this.accounts[0].id;
 
       this._initCalendar();
       this.refreshIcons();
@@ -93,6 +107,17 @@ function restoreWorkspace() {
       if (this._fp) this._fp.setDate([start, end], false);
 
       this.fetchSnapshotDates();
+      this.refreshStaging();
+    },
+
+    _parseIsland(id) {
+      const el = document.getElementById(id);
+      if (!el) return [];
+      try {
+        return JSON.parse(el.textContent) || [];
+      } catch (e) {
+        return [];
+      }
     },
 
     _initCalendar() {
@@ -142,7 +167,10 @@ function restoreWorkspace() {
           const resp = await fetch('/api/restore/workspace/snapshot-dates', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({account_id: this.scopeAccountId}),
+            body: JSON.stringify({
+              account_id: this.scopeAccountId,
+              include_all: this.includeAll,
+            }),
           });
           const body = resp.ok ? await resp.json() : {};
           dates = body.dates || [];
@@ -168,7 +196,10 @@ function restoreWorkspace() {
 
     // === Result/preview helpers ===
     accountName(id) {
-      const a = this.accounts.find(x => x.id === id);
+      // Both datasets: a result badge must resolve even after the admin
+      // toggle swapped the active scope list.
+      const a = this.accountsAccessible.find(x => x.id === id)
+        || this.accountsAll.find(x => x.id === id);
       return a ? a.name : '?';
     },
     fmtSize(n) {
@@ -187,10 +218,13 @@ function restoreWorkspace() {
       // Seq guard: rapid row clicks race their fetches — only the latest
       // request may write state, stale responses are dropped.
       const seq = ++this._previewSeq;
+      this.previewRef = r;
       this.previewOpen = true;
       this.previewLoading = true;
       try {
-        const resp = await fetch(`/api/restore/preview/${r.account_id}/${r.message_id_hash}`);
+        const url = `/api/restore/preview/${r.account_id}/${r.message_id_hash}`
+          + (this.includeAll ? '?include_all=true' : '');
+        const resp = await fetch(url);
         const data = resp.ok ? await resp.json() : null;
         if (seq !== this._previewSeq) return;
         this.preview = data;
@@ -221,6 +255,7 @@ function restoreWorkspace() {
       this.statusText = '';
       this.partial = false;
       this.preview = null;
+      this.previewRef = null;
       this.previewOpen = false;
       this.refreshIcons();
       if (id === 'folder') this.loadFolders();
@@ -240,8 +275,23 @@ function restoreWorkspace() {
       this.statusText = '';
       this.partial = false;
       this.preview = null;
+      this.previewRef = null;
       this.previewOpen = false;
       this.fetchSnapshotDates();
+    },
+
+    onIncludeAllChange() {
+      // Swapping the dataset re-renders the scope options; everything tied
+      // to the old dataset (scope, results, selection, preview, dots) resets.
+      this.accounts = this.includeAll ? this.accountsAll : this.accountsAccessible;
+      this.scopeAccountId = '';
+      // The push-override select renders from the active dataset too — keep
+      // its pick valid (toggling OFF can drop a foreign account; the API
+      // would 404 on it anyway).
+      if (!this.accounts.some(a => a.id === this.pushOverrideId)) {
+        this.pushOverrideId = this.accounts.length ? this.accounts[0].id : '';
+      }
+      this.onScopeChange();
     },
 
     async runSearch() {
@@ -253,6 +303,7 @@ function restoreWorkspace() {
       this.partial = false;
       this.selected = [];
       this.preview = null;
+      this.previewRef = null;
       this.previewOpen = false;
       this.refreshIcons();
       try {
@@ -266,6 +317,7 @@ function restoreWorkspace() {
             range_end: this.rangeEndIso,
             include_deleted: this.includeSnapshots,
             deep: this.deepSearch,
+            include_all: this.includeAll,
             page: 1,
             page_size: 100,
           }),
@@ -328,7 +380,11 @@ function restoreWorkspace() {
           const res = await fetch('/api/restore/resolve-uids', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({account_id: accountId, message_ids: messageIds}),
+            body: JSON.stringify({
+              account_id: accountId,
+              message_ids: messageIds,
+              include_all: this.includeAll,
+            }),
           });
           if (!res.ok) {
             failure = `resolve failed for ${this.accountName(accountId)}: ${res.status}`;
@@ -384,6 +440,142 @@ function restoreWorkspace() {
         this.restoring = false;
         this.refreshIcons();
       }
+    },
+
+    // === Staging area ===
+    async refreshStaging() {
+      // No seq guard: refreshes are idempotent reads — last write wins.
+      try {
+        const resp = await fetch('/api/restore/staging');
+        if (resp.ok) this.staging = await resp.json();
+      } catch (e) { /* keep last known state */ }
+      finally {
+        // The status slot lives in the bar: when the area disappears the bar
+        // hides, and a stale message must not resurface with the next one.
+        if (!this.staging.exists) this.stagingStatus = '';
+        this.refreshIcons();
+      }
+    },
+    fmtExpiry(iso) {
+      if (!iso) return '—';
+      const ms = new Date(iso) - new Date();
+      if (ms <= 0) return 'expired';
+      const days = Math.floor(ms / 86400000);
+      if (days >= 1) return 'in ' + days + 'd';
+      const hours = Math.floor(ms / 3600000);
+      if (hours >= 1) return 'in ' + hours + 'h';
+      return 'in ' + Math.max(1, Math.floor(ms / 60000)) + 'm';
+    },
+    _stagingFeedback(msg) {
+      // Staging messages go to the bar — single slot, no duplication. But a
+      // rejected FIRST add creates no area server-side (verified: the service
+      // quota-checks before creating anything), so there is no bar to host
+      // the message — fall back to statusText, which IS rendered in the
+      // single-mail preset where add-to-staging lives.
+      if (this.staging.exists) this.stagingStatus = msg;
+      else this.statusText = msg;
+    },
+    async addToStaging(results) {
+      const items = results
+        .filter(Boolean)
+        .map(r => ({account_id: r.account_id, message_id_hash: r.message_id_hash}));
+      if (!items.length) return;
+      try {
+        const resp = await fetch('/api/restore/staging/items', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({items, include_all: this.includeAll}),
+        });
+        if (resp.status === 413) {
+          // Quota refusal — the detail is the user-facing message.
+          this._stagingFeedback((await resp.json()).detail);
+          return;
+        }
+        if (!resp.ok) {
+          this._stagingFeedback(`Add to staging failed: ${resp.status}`);
+          return;
+        }
+        const r = await resp.json();
+        const bits = [`${r.staged} staged`];
+        if (r.skipped) bits.push(`${r.skipped} already there`);
+        if (r.failed) bits.push(`${r.failed} failed`);
+        // Refresh FIRST: a successful first add just created the area, so the
+        // bar is up before the message lands in its status slot.
+        await this.refreshStaging();
+        this.stagingStatus = bits.join(' · ');
+      } catch (e) {
+        this._stagingFeedback(`Add to staging error: ${e.message}`);
+      } finally {
+        this.refreshIcons();
+      }
+    },
+    addSelectedToStaging() {
+      const byKey = Object.fromEntries(this.results.map(r => [this.selKey(r), r]));
+      return this.addToStaging(this.selected.map(k => byKey[k]));
+    },
+    async emptyStaging() {
+      if (!confirm('Empty the staging area? Staged copies are removed (originals are untouched).')) return;
+      try {
+        const resp = await fetch('/api/restore/staging', {method: 'DELETE'});
+        if (resp.ok) {
+          // The refresh below flips exists=false and clears this again —
+          // the disappearing bar IS the success feedback.
+          this.stagingStatus = 'Staging emptied';
+          this.pushPanelOpen = false;
+        } else {
+          this.stagingStatus = `Empty failed: ${resp.status}`;
+        }
+        await this.refreshStaging();
+      } catch (e) {
+        this.stagingStatus = `Empty failed: ${e.message}`;
+      } finally {
+        this.refreshIcons();
+      }
+    },
+    async pushStaging() {
+      if (this.pushing) return;  // overlapping pushes would double-submit
+      this.pushing = true;
+      try {
+        const dest = this.pushDestination === 'origin' ? 'origin' : this.pushOverrideId;
+        if (!dest) {
+          this.stagingStatus = 'Pick a destination mailbox';
+          return;
+        }
+        const resp = await fetch('/api/restore/staging/push', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({destination: dest, folder_mode: this.pushFolderMode}),
+        });
+        if (!resp.ok) {
+          this.stagingStatus = `Push failed: ${resp.status}`;
+          return;
+        }
+        const r = await resp.json();
+        const bits = [];
+        if (r.job_ids.length) {
+          bits.push(`Started ${r.job_ids.length} push job${r.job_ids.length === 1 ? '' : 's'}`);
+        }
+        if (r.skipped_targets.length) {
+          bits.push(`${r.skipped_targets.length} target${r.skipped_targets.length === 1 ? '' : 's'} busy — those messages stay staged`);
+        }
+        this.pushPanelOpen = false;
+        await this.refreshStaging();
+        this.stagingStatus = bits.join(' · ') || 'Nothing to push';
+        if (r.job_ids.length) this._schedulePostPushRefresh();
+      } catch (e) {
+        this.stagingStatus = `Push error: ${e.message}`;
+      } finally {
+        this.pushing = false;
+        this.refreshIcons();
+      }
+    },
+    _schedulePostPushRefresh() {
+      // The bar must reflect job completion (pushed rows leave staging) but
+      // continuous polling is overkill — a few delayed refreshes instead.
+      for (const t of this._stagingTimers) clearTimeout(t);
+      this._stagingTimers = [5000, 15000, 30000].map(
+        ms => setTimeout(() => this.refreshStaging(), ms),
+      );
     },
 
     async loadFolders() {

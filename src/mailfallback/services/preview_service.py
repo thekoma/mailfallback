@@ -56,9 +56,16 @@ def _locate_live_file(account: Account, row: MailIndexMessage) -> str | None:
 
 
 def _snapshot_bytes(
-    db: Session, account: Account, row: MailIndexMessage
+    db: Session,
+    account: Account,
+    row: MailIndexMessage,
+    max_bytes: int = restic_service.DUMP_MAX_BYTES,
 ) -> tuple[bytes, str] | None:
     """Raw message bytes from the newest snapshot that contains the message.
+
+    max_bytes caps each restic dump, which truncates SILENTLY at the cap.
+    The default suits previews (parse a peek); staging passes its own larger
+    cap and treats a cap-sized result as truncated.
 
     Filenames drift: snapshot bits are prefix-matched at backfill time, and
     webmail reads rename the live file (the write-seen ACL adds flags) while
@@ -97,6 +104,7 @@ def _snapshot_bytes(
                         account.id,
                         sid,
                         os.path.join(base, sub, row.maildir_filename),
+                        max_bytes=max_bytes,
                     )
                     if raw:
                         return raw, sid
@@ -110,7 +118,9 @@ def _snapshot_bytes(
                     continue
                 if maildir_filename_prefix(path.rsplit("/", 1)[-1]) != prefix:
                     continue
-                raw = restic_service.dump_file(policy_row.destination, account.id, sid, path)
+                raw = restic_service.dump_file(
+                    policy_row.destination, account.id, sid, path, max_bytes=max_bytes
+                )
                 if raw:
                     return raw, sid
     except Exception:

@@ -1,7 +1,7 @@
 # tests/test_dovecot_api.py
 from datetime import UTC, datetime, timedelta
 
-from mailfallback.models import Account, Recovery, RecoveryStatus, User, UserRole
+from mailfallback.models import Account, Recovery, RecoveryStatus, StagingArea, User, UserRole
 from mailfallback.security import hash_password
 
 API_KEY = "test-key"
@@ -296,3 +296,87 @@ def test_userdb_dedupes_duplicate_recoveries(client, db_session, default_store):
     # All prefixes in the response must be unique (Dovecot's hard requirement)
     prefixes = [n["prefix"] for n in namespaces]
     assert len(prefixes) == len(set(prefixes))
+
+
+def test_userdb_includes_active_staging_namespace(client, db_session, default_store):
+    """A user with an unexpired StagingArea gets the writable Staging/ namespace."""
+    user = _create_user(db_session, default_store)
+    acc = _create_account(db_session, default_store)
+    acc.owners.append(user)
+    db_session.add(
+        StagingArea(
+            user_id=user.id,
+            expires_at=datetime.now(UTC) + timedelta(hours=4),
+        )
+    )
+    db_session.commit()
+
+    resp = client.get("/api/internal/dovecot/userdb/alice", headers=HEADERS)
+    assert resp.status_code == 200
+    namespaces = resp.json()["namespaces"]
+
+    stg_ns = [n for n in namespaces if n["name"].startswith("stg_")]
+    assert len(stg_ns) == 1
+    assert stg_ns[0]["name"] == f"stg_{user.id}"
+    assert stg_ns[0]["prefix"] == "Staging/"
+    assert stg_ns[0]["mail_driver"] == "maildir"
+    assert stg_ns[0]["mail_path"] == "/data/mailboxes/.dovecot-home/alice/staging"
+    assert stg_ns[0]["mail_path"].endswith("/staging")
+    assert stg_ns[0]["inbox"] is False
+
+
+def test_userdb_no_staging_namespace_without_area(client, db_session, default_store):
+    """A user without a StagingArea row gets no stg_ namespace."""
+    user = _create_user(db_session, default_store)
+    acc = _create_account(db_session, default_store)
+    acc.owners.append(user)
+    db_session.commit()
+
+    resp = client.get("/api/internal/dovecot/userdb/alice", headers=HEADERS)
+    assert resp.status_code == 200
+    namespaces = resp.json()["namespaces"]
+    assert [n for n in namespaces if n["name"].startswith("stg_")] == []
+
+
+def test_userdb_excludes_expired_staging_area(client, db_session, default_store):
+    """An expired StagingArea must NOT publish a Staging/ namespace."""
+    user = _create_user(db_session, default_store)
+    acc = _create_account(db_session, default_store)
+    acc.owners.append(user)
+    db_session.add(
+        StagingArea(
+            user_id=user.id,
+            expires_at=datetime.now(UTC) - timedelta(minutes=1),
+        )
+    )
+    db_session.commit()
+
+    resp = client.get("/api/internal/dovecot/userdb/alice", headers=HEADERS)
+    assert resp.status_code == 200
+    namespaces = resp.json()["namespaces"]
+    assert [n for n in namespaces if n["name"].startswith("stg_")] == []
+
+
+def test_userdb_staging_namespace_with_zero_accounts(client, db_session, default_store):
+    """Staging is published even when the user owns no accounts.
+
+    Safe because the Lua userdb (mfb-lua-userdb.lua) UNCONDITIONALLY adds the
+    mfb_root inbox namespace before consuming the API's namespace list, and
+    forces inbox=no on every API-provided namespace -- so Dovecot always has
+    exactly one inbox namespace and a staging-only response cannot break login.
+    """
+    user = _create_user(db_session, default_store)
+    db_session.add(
+        StagingArea(
+            user_id=user.id,
+            expires_at=datetime.now(UTC) + timedelta(hours=4),
+        )
+    )
+    db_session.commit()
+
+    resp = client.get("/api/internal/dovecot/userdb/alice", headers=HEADERS)
+    assert resp.status_code == 200
+    namespaces = resp.json()["namespaces"]
+    assert len(namespaces) == 1
+    assert namespaces[0]["name"] == f"stg_{user.id}"
+    assert namespaces[0]["inbox"] is False

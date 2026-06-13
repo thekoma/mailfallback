@@ -1,6 +1,7 @@
 import contextlib
 import imaplib
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
@@ -8,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.db import SessionLocal
-from mailfallback.models import Account, JobStatus, RestoreJob, User
+from mailfallback.models import Account, JobStatus, RestoreJob, RestoreMode, User
 from mailfallback.security import decrypt_credentials
 from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
 from mailfallback.services.imap_check import connect_imap
@@ -97,18 +98,6 @@ def execute_restore_job(db: Session, job_id: str) -> None:
     tgt_conn = None
     temp_username = None
     try:
-        temp_username, temp_password = create_temp_imap_user(db, [source.id])
-
-        logger.info("Restore %s: connecting to Dovecot as %s", job_id, temp_username)
-        src_conn = connect_imap(
-            settings.dovecot_imap_host,
-            settings.dovecot_imap_port,
-            "NONE",
-            temp_username,
-            temp_password,
-        )
-        logger.info("Restore %s: Dovecot connected OK", job_id)
-
         # OAuth2 upstreams (Gmail/Microsoft) reject access tokens sent via
         # plain LOGIN — they require AUTHENTICATE XOAUTH2.
         if target.auth_type.value == "oauth2":
@@ -120,6 +109,24 @@ def execute_restore_job(db: Session, job_id: str) -> None:
         else:
             tgt_password = target_creds
             tgt_auth_method = "login"
+
+        # Staging pushes read their messages from the requester's staging
+        # Maildir on local disk: no Dovecot source connection, no temp user.
+        if job.restore_mode == RestoreMode.staging_push:
+            _execute_staging_push(db, job, target, tgt_password, tgt_auth_method)
+            return
+
+        temp_username, temp_password = create_temp_imap_user(db, [source.id])
+
+        logger.info("Restore %s: connecting to Dovecot as %s", job_id, temp_username)
+        src_conn = connect_imap(
+            settings.dovecot_imap_host,
+            settings.dovecot_imap_port,
+            "NONE",
+            temp_username,
+            temp_password,
+        )
+        logger.info("Restore %s: Dovecot connected OK", job_id)
 
         logger.info(
             "Restore %s: connecting to target %s:%s as %s",
@@ -197,7 +204,17 @@ def execute_restore_job(db: Session, job_id: str) -> None:
         if temp_username:
             with contextlib.suppress(Exception):
                 delete_temp_imap_user(db, temp_username)
-        db.refresh(job)
+        try:
+            db.refresh(job)
+        except Exception:
+            # Fail-safe twin of _fail_job's rollback: a broken session here
+            # must not leave the job stuck in `running`. Discard the dead
+            # transaction; the attribute access below re-reads from the DB.
+            logger.warning(
+                "Restore %s: job refresh failed in completion handler", job_id, exc_info=True
+            )
+            with contextlib.suppress(Exception):
+                db.rollback()
         if job.status == JobStatus.running:
             if job.restored_messages == 0 and job.failed_messages > 0:
                 job.status = JobStatus.failed
@@ -429,15 +446,9 @@ def _restore_single_message(
         job.failed_messages += 1
         return
 
-    if job.skip_duplicates and existing_ids:
-        import email
-
-        with contextlib.suppress(Exception):
-            parsed = email.message_from_bytes(raw_message)
-            msg_id = parsed.get("Message-ID", "")
-            if msg_id and msg_id in existing_ids:
-                job.skipped_messages += 1
-                return
+    if job.skip_duplicates and _is_duplicate(raw_message, existing_ids):
+        job.skipped_messages += 1
+        return
 
     flags_str = ""
     date_str = None
@@ -485,6 +496,185 @@ def _restore_single_message(
     except (imaplib.IMAP4.error, OSError) as e:
         job.failed_messages += 1
         logger.warning("Restore: APPEND exception for UID %s: %s", uid, e)
+
+
+def _is_duplicate(raw_message, existing_ids):
+    """Shared skip-duplicates check: Message-Id membership against
+    _get_existing_message_ids() output for the destination folder."""
+    if not existing_ids:
+        return False
+    import email
+
+    with contextlib.suppress(Exception):
+        parsed = email.message_from_bytes(raw_message)
+        msg_id = parsed.get("Message-ID", "")
+        return bool(msg_id and msg_id in existing_ids)
+    return False
+
+
+def _locate_staged_file(sdir, filename):
+    """Find a staged file by manifest name, tolerating Dovecot flag renames
+    (same stable-prefix rule as staging reconcile). Returns a path or None."""
+    from mailfallback.services.index_service import maildir_filename_prefix
+
+    # basename(): the manifest is user-influencable JSON — never let a
+    # crafted "filename" traverse out of the staging Maildir.
+    filename = os.path.basename(filename)
+    for sub in ("cur", "new"):
+        cand = os.path.join(sdir, sub, filename)
+        if os.path.exists(cand):
+            return cand
+    want = maildir_filename_prefix(filename)
+    for sub in ("cur", "new"):
+        d = os.path.join(sdir, sub)
+        if not os.path.isdir(d):
+            continue
+        for actual in os.listdir(d):
+            if maildir_filename_prefix(actual) == want:
+                return os.path.join(d, actual)
+    return None
+
+
+def _staged_files_remain(sdir):
+    return any(
+        os.path.isdir(d) and os.listdir(d)
+        for d in (os.path.join(sdir, sub) for sub in ("cur", "new"))
+    )
+
+
+def _execute_staging_push(db, job, target, tgt_password, tgt_auth_method):
+    """Append staged files to the target upstream and clean up what landed.
+
+    selected_uids is reused as the push manifest {destination_folder:
+    [staged_filename, ...]} — keys are already destination folders (mapped
+    by staging_service.push per folder_mode), so neither _map_folder nor
+    namespace stripping applies here. Known limitation (deferred): the
+    separator conversion below does NOT escape folder names that themselves
+    contain the target separator (unlike _map_folder's escape_char) — such
+    a folder lands as an extra hierarchy level. Files are read from the
+    REQUESTER's staging Maildir; there is no source IMAP connection at all.
+
+    Delivered-or-duplicate files count as pushed: rows + files are removed
+    afterwards. Failed files stay staged for a retry; files deleted in
+    webmail meanwhile are skipped (deletions win). Cancellation is honored
+    between files: what already landed upstream is cleaned up, the rest
+    stays staged. The final job status is settled by execute_restore_job's
+    shared completion logic.
+    """
+    # Deferred: staging_service pulls in search/index machinery — keep the
+    # worker import-light and cycle-free at module load.
+    from mailfallback.services import staging_service
+
+    requester = db.query(User).filter(User.id == job.requested_by).first()
+    if not requester:
+        _fail_job(db, job, "Requesting user no longer exists")
+        return
+    sdir = staging_service.staging_dir(requester)
+    manifest: dict[str, list[str]] = job.selected_uids or {}
+    job.total_messages = sum(len(v) for v in manifest.values())
+    db.commit()
+
+    logger.info(
+        "Staging push %s: %d file(s) to %s:%s",
+        job.id,
+        job.total_messages,
+        target.imap_host,
+        target.imap_port,
+    )
+    tgt_conn = connect_imap(
+        target.imap_host,
+        target.imap_port,
+        target.tls_type or "IMAPS",
+        target.imap_user or target.email_address,
+        tgt_password,
+        auth_method=tgt_auth_method,
+    )
+    try:
+        tgt_separator = _get_hierarchy_separator(tgt_conn)
+        pushed: dict[str, str] = {}  # manifest filename -> actual on-disk path
+        for folder, filenames in manifest.items():
+            tgt_folder = folder.replace("/", tgt_separator) if tgt_separator != "/" else folder
+            _ensure_folder(tgt_conn, tgt_folder)
+            existing_ids = (
+                _get_existing_message_ids(tgt_conn, tgt_folder) if job.skip_duplicates else set()
+            )
+            for fn in filenames:
+                if job.id in _cancel_flags:
+                    # Already-APPENDed files are delivered — clean those up
+                    # (delivered-or-duplicate rule), leave the rest staged.
+                    _cleanup_pushed(db, requester, sdir, pushed)
+                    _cancel_job(db, job)
+                    return
+                path = _locate_staged_file(sdir, fn)
+                if path is None:
+                    # Deleted in webmail between push click and job run:
+                    # deletions win — nothing to deliver, nothing to clean.
+                    job.skipped_messages += 1
+                    db.commit()
+                    continue
+                try:
+                    with open(path, "rb") as f:
+                        raw = f.read()
+                    if _is_duplicate(raw, existing_ids):
+                        job.skipped_messages += 1
+                        pushed[fn] = path  # already upstream == done
+                    else:
+                        result, resp = _retry_imap(
+                            tgt_conn.append, f'"{tgt_folder}"', None, None, raw
+                        )
+                        if result == "OK":
+                            job.restored_messages += 1
+                            pushed[fn] = path
+                        else:
+                            job.failed_messages += 1
+                            logger.warning(
+                                "Staging push: APPEND failed for %s: %s %s", fn, result, resp
+                            )
+                except (imaplib.IMAP4.error, OSError) as e:
+                    job.failed_messages += 1
+                    logger.warning("Staging push: APPEND error for %s: %s", fn, e)
+                db.commit()
+        _cleanup_pushed(db, requester, sdir, pushed)
+    finally:
+        with contextlib.suppress(Exception):
+            tgt_conn.logout()
+
+
+def _cleanup_pushed(db, requester, sdir, pushed):
+    """Drop rows + files for pushed (delivered-or-duplicate) messages; the
+    area and its dir die once neither rows nor message files remain.
+    Row matching is flag-rename tolerant (same prefix rule as reconcile);
+    orphan files without rows are left for empty()/cleanup_expired().
+
+    Residual races with a concurrent status-poll reconcile are benign by
+    construction: a double rmtree is ignore_errors, a double area DELETE
+    surfaces as a SAWarning on flush at worst, and a bytes_used lost-update
+    self-heals at the next reconcile (it recomputes from disk). A flush/
+    commit error here still fails the job safely — _fail_job rolls the
+    session back before marking it failed."""
+    from mailfallback.models import StagingArea, StagingMessage
+    from mailfallback.services import staging_service
+    from mailfallback.services.index_service import maildir_filename_prefix
+
+    area = db.query(StagingArea).filter(StagingArea.user_id == requester.id).first()
+    if not area:
+        return
+    if pushed:
+        by_prefix = {maildir_filename_prefix(fn): path for fn, path in pushed.items()}
+        for m in db.query(StagingMessage).filter(StagingMessage.staging_id == area.id).all():
+            path = by_prefix.get(maildir_filename_prefix(m.staged_filename))
+            if path is None:
+                continue
+            with contextlib.suppress(OSError):
+                os.remove(path)
+            area.bytes_used = max(0, area.bytes_used - m.size_bytes)
+            db.delete(m)
+        db.flush()
+    remaining = db.query(StagingMessage).filter(StagingMessage.staging_id == area.id).count()
+    if remaining == 0 and not _staged_files_remain(sdir):
+        staging_service._remove_staging_dir(requester)
+        db.delete(area)
+    db.commit()
 
 
 def _get_hierarchy_separator(conn):
@@ -591,6 +781,13 @@ def _refresh_target_token(creds_json, db, account):
 
 
 def _fail_job(db, job, error_msg):
+    # Fail-safe: a failure may arrive with the session already poisoned (e.g.
+    # a flush that died mid-cleanup leaves it PendingRollback). Roll back
+    # FIRST, or the commit below raises, the executor swallows it, and the
+    # job sticks in `running` forever — blocking every future job to the
+    # same target via the create_restore_job busy check.
+    with contextlib.suppress(Exception):
+        db.rollback()
     job.status = JobStatus.failed
     job.error = error_msg
     job.completed_at = datetime.now(UTC)

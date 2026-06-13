@@ -50,7 +50,8 @@ The main application. On startup it:
 
 ```yaml
 dovecot:
-  image: dovecot/dovecot:latest-2.4
+  # pinned: 2.4.3+ replaces global ACL file with settings blocks — port mfb-acl before bumping
+  image: dovecot/dovecot:2.4.2
   volumes:
     - dovecot_confd:/etc/dovecot/conf.d:ro
     - maildirs:/data/mailboxes
