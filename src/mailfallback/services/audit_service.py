@@ -9,6 +9,8 @@ ACTION_LABELS = {
     "user.toggle": "Toggled user status",
     "user.password_reset": "Reset password",  # pragma: allowlist secret
     "user.migrate": "Started user migration",
+    "user.set_allowed_stores": "Updated allowed stores",
+    "user.set_allowed_repositories": "Updated allowed repositories",
     "store.create": "Created store",
     "store.edit": "Edited store",
     "store.delete": "Deleted store",

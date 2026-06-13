@@ -122,12 +122,19 @@ templates.env.globals["get_theme"] = _get_theme
 templates.env.globals["get_flash"] = _get_flash
 
 
+_LOGIN_ERROR_MESSAGES = {
+    "sso_unreachable": "Could not reach the SSO provider. Please try again.",
+    "sso_failed": "SSO sign-in failed. Please try again.",
+}
+
+
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
+    error = _LOGIN_ERROR_MESSAGES.get(request.query_params.get("error", ""))
     return templates.TemplateResponse(
         request=request,
         name="login.html",
-        context={"oidc_enabled": settings.oidc_enabled, "error": None},
+        context={"oidc_enabled": settings.oidc_enabled, "error": error},
     )
 
 
