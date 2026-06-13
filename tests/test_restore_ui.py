@@ -26,10 +26,12 @@ def test_restore_mailbox_select_lists_accounts_without_backup_policy(
     acct = _setup_separator_test(db_session, default_store, client)
     resp = client.get("/restore")
     assert resp.status_code == 200
-    # The account id must appear in the Mailbox + Destination sidebar selects
-    # (folder/full presets). The search scope select renders its options from
-    # the data island via Alpine x-for, so it adds no Jinja-rendered value.
-    assert resp.text.count(f'value="{acct.id}"') == 2
+    # The account id must appear in the sidebar Mailbox select plus the
+    # "Another mailbox" select of the destination panel partial (included by
+    # the folder AND full presets). The search scope select renders its
+    # options from the data island via Alpine x-for, so it adds no
+    # Jinja-rendered value.
+    assert resp.text.count(f'value="{acct.id}"') == 3
     # ...and in the data island that feeds the scope select and maps account
     # ids to display names.
     assert f'"id": "{acct.id}"' in resp.text
@@ -136,15 +138,17 @@ def test_restore_page_renders_staging_ui(client, db_session, default_store):
     assert 'x-model="pushFolderMode"' in resp.text
     assert 'value="original"' in resp.text
     assert 'value="restored"' in resp.text
-    # Add-to-staging entry points: preview pane + selection action bar.
-    assert resp.text.count("Add to staging") == 2
+    # Add-to-staging entry points: the shared preview pane partial (included
+    # once per search preset: single-mail + attachment) and the ONE shared
+    # selection bar (per-row attachment buttons are gone — selection rules).
+    assert resp.text.count("Add to staging") == 3
     assert "addToStaging([previewRef])" in resp.text
     assert "addSelectedToStaging()" in resp.text
     # Bar actions.
     assert "emptyStaging()" in resp.text
     assert "pushStaging()" in resp.text
     # Staging feedback slot lives in the bar — statusText only renders inside
-    # the single-mail preset, the bar works in every preset.
+    # the two search presets, the bar works in every preset.
     assert 'x-text="stagingStatus"' in resp.text
     # No pre-Alpine flash: bar + panel are cloaked until Alpine boots.
     assert resp.text.count("x-cloak") >= 2
@@ -183,6 +187,489 @@ def test_restore_staging_bar_webmail_link_when_enabled(
     assert resp.status_code == 200
     assert "http://localhost:8001?_task=mail&amp;_mbox=Staging" in resp.text
     assert "Open in webmail" in resp.text
+    # The pane's webmail ghost keeps x-show — ghost buttons carry no
+    # !important display, so x-show works there (measured; the primary-class
+    # actions are the ones that need x-if).
+    assert 'x-show="preview.alive_in_live && !previewIsAttachment"' in resp.text
+
+
+def test_restore_page_renders_attachment_preset(client, db_session, default_store):
+    """The 'An attachment' preset ships its panel: type/size filter chips,
+    results table with download links and XSS-safe snippet rendering, and the
+    single-mail interaction model replicated: row click previews, a checkbox
+    feeds the shared message-level selection, ONE shared bar acts on it."""
+    create_user(db_session, "attui", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "attui", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    # Panel template + filter chips + results table markup.
+    assert "preset === 'attachment'" in resp.text
+    assert "ws-fchip" in resp.text
+    assert "ws-att-table" in resp.text
+    # Filename is a real anchor to the download endpoint (native download).
+    assert "attDownloadUrl(a)" in resp.text
+    # Snippet renders via the marker-split contract — text nodes only,
+    # NEVER x-html (ts_headline output is hostile attachment text).
+    assert "attSnippetParts(a.content_snippet)" in resp.text
+    assert "ws-snip-mark" in resp.text
+    assert "x-html" not in resp.text
+    # Per-row action buttons are GONE: row click previews, the checkbox
+    # selects, the shared bar acts (the user's unification ask).
+    assert "openPreview(a)" in resp.text
+    assert "Preview email" not in resp.text
+    assert "addToStaging([a])" not in resp.text
+    assert "ws-att-actions" not in resp.text
+    # Whole-row preview gesture, same as .ws-result-body: click anywhere on
+    # the row opens/changes the preview, with keyboard parity. The checkbox
+    # cell and the download anchor stop propagation so ticking/downloading
+    # never ALSO swaps the preview. The key handlers carry .self: a bubbled
+    # Enter/Space from the inner checkbox/anchor must keep its native
+    # activation (Alpine wraps .self outside .prevent).
+    tr_at = resp.text.index(
+        "<tr :class=\"{'is-selected': selected.includes(selKey(a)), "
+        "'is-previewing': attIsPreviewing(a)}\""
+    )
+    tr_tag = resp.text[tr_at : resp.text.index(">", tr_at)]
+    assert '@click="openPreview(a)"' in tr_tag
+    assert 'tabindex="0"' in tr_tag
+    assert 'role="button"' in tr_tag
+    assert '@keydown.enter.prevent.self="openPreview(a)"' in tr_tag
+    assert '@keydown.space.prevent.self="openPreview(a)"' in tr_tag
+    assert resp.text.count("@click.stop") == 2  # checkbox cell + download anchor
+    assert '<td class="ws-att-check" @click.stop>' in resp.text
+    # Unified message-level selection: the att checkbox feeds the SAME
+    # `selected` model as the single-mail rows (one checkbox per row each).
+    assert resp.text.count('x-model="selected"') == 2
+    assert resp.text.count(':value="selKey(a)"') == 1
+    assert resp.text.count(':value="selKey(r)"') == 1
+    # ONE shared selection bar, rendered for both search presets, counting
+    # MESSAGES (selectableCount dedupes sibling attachment rows). Its x-show
+    # is the actionBarVisible JS getter — the same predicate the dock
+    # height tracker watches, so slot and render can never disagree.
+    assert resp.text.count('class="ws-action-bar"') == 1
+    assert 'x-show="actionBarVisible"' in resp.text
+    assert "toggleSelectAll($event.target.checked)" in resp.text
+    # Previewed-row marker is shared semantics across both presets.
+    assert "'is-previewing': isPreviewing(r)" in resp.text
+    assert "'is-previewing': attIsPreviewing(a)" in resp.text
+    # Shared search row routes by preset (message vs attachment search).
+    assert "submitSearch()" in resp.text
+    # Empty state copy.
+    assert "No attachments match" in resp.text
+
+
+def test_restore_page_preview_pane_close_and_attachment_actions(client, db_session, default_store):
+    """The shared preview pane carries an explicit close button, shows which
+    attachment it was opened from (selected line + table-row highlight), and
+    swaps 'Open webmail' for a 'Download attachment' anchor in the attachment
+    context. Both results grids stay full-width until a preview opens."""
+    create_user(db_session, "pvui", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "pvui", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    # Close affordance (real button, in both included copies of the partial).
+    assert resp.text.count("ws-preview-close") == 2
+    assert "closePreview()" in resp.text
+    # Attachment-context feedback: selected-attachment line + previewed-row
+    # highlight (is-previewing — is-selected now means CHECKED).
+    assert "ws-preview-attsel" in resp.text
+    assert "previewIsAttachment" in resp.text
+    assert "attIsPreviewing(a)" in resp.text
+    # Attachment-context action: native download of the selected attachment.
+    assert "attDownloadUrl(previewRef)" in resp.text
+    assert "Download attachment" in resp.text
+    # Primary-class pane actions are x-if, NOT x-show: the anti-Pico
+    # `display: inline-flex !important` on ws-btn-primary beats x-show's
+    # inline display:none — message previews kept showing the Download
+    # anchor. Both pane copies; the staging button is the same failure class.
+    assert resp.text.count('x-if="previewIsAttachment"') == 2
+    assert resp.text.count('x-if="previewRef"') == 2
+    assert 'x-show="previewRef"' not in resp.text
+    anchor_at = resp.text.index('<a class="ws-btn-primary ws-preview-download"')
+    anchor_tag = resp.text[anchor_at : resp.text.index(">", anchor_at)]
+    assert "x-show" not in anchor_tag
+    # The pane's attachment chips are real download anchors (both included
+    # copies), built from previewRef ids + the payload's part_index — so
+    # attachments are downloadable from the message-preview context too.
+    assert resp.text.count('<a class="ws-att-chip" title="Download"') == 2
+    assert (
+        "attachmentDownloadUrl(previewRef.account_id, previewRef.message_id_hash, a.part_index)"
+        in resp.text
+    )
+    # Both results grids expand/split dynamically with the preview pane.
+    assert resp.text.count("'has-preview': previewOpen") == 2
+    # Only the action bar still binds has-staging (desktop sticky lift): the
+    # mobile sheet's bottom sums the measured dock vars, no state class.
+    assert resp.text.count("'has-staging': staging.exists") == 1
+
+
+def test_restore_page_folder_preset_multiselect(client, db_session, default_store):
+    """The 'A folder / subset' preset offers a checkbox list of source folders
+    (multi-select) with select-all/none affordances; the submit button stays
+    disabled until at least one folder is checked."""
+    create_user(db_session, "folderui", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "folderui", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    assert "ws-folder-list" in resp.text
+    assert 'x-model="selectedFolders"' in resp.text
+    assert "selectAllFolders(true)" in resp.text
+    assert "selectAllFolders(false)" in resp.text
+    # Submit gating on the checked array.
+    assert "!selectedFolders.length" in resp.text
+    # The old single-folder select is gone.
+    assert 'x-model="selectedFolder"' not in resp.text
+
+
+def test_restore_page_unified_destination_panels(client, db_session, default_store):
+    """Folder + full presets share the destination panel partial (rest* state);
+    the push panel carries the same pattern on push* state. All three offer
+    the Custom folder mode: free-text input (source of truth) + a picker of
+    the destination's existing folders that fills it."""
+    create_user(db_session, "destui", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "destui", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    # The partial renders once per preset (folder + full).
+    assert resp.text.count('class="ws-dest-panel"') == 2
+    assert resp.text.count('x-model="restDestMode"') == 4  # 2 radios x 2 includes
+    assert resp.text.count('x-model="restFolderMode"') == 6  # 3 radios x 2 includes
+    assert resp.text.count('x-model="restCustomFolder"') == 2
+    # Push panel: third folder radio + its own custom input.
+    assert 'x-model="pushCustomFolder"' in resp.text
+    # Custom radio present in all three panels (2 partial includes + push).
+    assert resp.text.count('value="custom"') == 3
+    # Existing-folders pickers fill the input (input stays editable) and KEEP
+    # their selection via their own model (no snap-back-to-placeholder).
+    assert "pickRestFolder()" in resp.text
+    assert "pickPushFolder()" in resp.text
+    assert resp.text.count('x-model="restPickedFolder"') == 2
+    assert 'x-model="pushPickedFolder"' in resp.text
+    # Picker FIRST ("Existing folders"), typed path second — in every panel.
+    assert resp.text.count("Existing folders") == 3
+    assert resp.text.count("or type a new path (created if missing)") == 3
+    assert resp.text.index("Existing folders") < resp.text.index(
+        "or type a new path (created if missing)"
+    )
+    # The fill pulses the input as visible confirmation.
+    assert "'ws-input-pulse': restFolderPulse" in resp.text
+    assert "'ws-input-pulse': pushFolderPulse" in resp.text
+    # The sidebar Destination select is gone — destination lives in the panels.
+    assert 'x-model="destinationId"' not in resp.text
+
+
+def test_restore_page_time_controls_row(client, db_session, default_store):
+    """The single-mail preset loses its sidebar entirely: Time range + Sources
+    live in ONE compact control row under the shared search row — WHEN chips,
+    a Custom… popover hosting the always-alive inline flatpickr (x-show, never
+    x-if), inline Sources/Deep toggles, status right-aligned. The attachment
+    preset reuses the same row (its Type/Size chips queue after WHEN)."""
+    create_user(db_session, "whenui", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "whenui", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    text = resp.text
+    # The old sidebar fields are gone — the aside only serves folder/full.
+    assert "Time range" not in text
+    assert "x-show=\"preset === 'folder' || preset === 'full'\"" in text
+    assert "'ws-grid-nosidebar': preset === 'attachment' || preset === 'single-mail'" in text
+    # WHEN chips render from the timeChips array; exactly-one-active styling.
+    assert 'class="ws-controls"' in text
+    assert '@click="setTimePreset(t.id)"' in text
+    assert "'is-on': timePreset === t.id" in text
+    # Custom… popover: chip label swaps to the applied compact range; the
+    # inline calendar input moved INSIDE; dots hint + Clear/Apply footer;
+    # click-outside closes.
+    assert "ws-when-popover" in text
+    assert 'id="ws-calendar-input"' in text
+    assert text.index('class="ws-when-popover"') < text.index('id="ws-calendar-input"')
+    assert "customLabel" in text
+    assert '@click.outside="customPopoverOpen = false"' in text
+    assert "= snapshot day" in text
+    assert '@click="clearCustomRange()"' in text
+    assert '@click="applyCustomRange()"' in text
+    # Apply is visibly disabled until a pick exists (not a silent no-op).
+    assert ':disabled="!rangeStart"' in text
+    # The popover must never be torn down (flatpickr instance) — no x-if.
+    assert 'x-if="customPopoverOpen"' not in text
+    # Sources + Deep search inline in the row (single-mail only); the deep
+    # hint is a tooltip now — honest copy, compact row. All three are LIVE
+    # like the chips beside them: changing one re-runs the active search.
+    assert 'x-model="includeLive" @change="_requeryActive()"' in text
+    assert 'x-model="includeSnapshots" @change="_requeryActive()"' in text
+    assert 'x-model="deepSearch" @change="_requeryActive()"' in text
+    assert 'title="Also searches message bodies — active mail only, slower"' in text
+    assert "also search message bodies (active mail only, slower)" not in text
+    # Status text right-aligned at the row's edge.
+    assert "ws-controls-status" in text
+
+
+def test_workspace_js_time_chips_default_all_time(client):
+    """All time is the DEFAULT (the 7-day trap is gone); the fixed chips
+    compute range_start client-side with an open end; ONE helper feeds both
+    search payloads; chip switches re-run the active search through the
+    seq-guarded paths."""
+    resp = client.get("/static/js/restore_workspace.js")
+    assert resp.status_code == 200
+    js = resp.text
+    assert "timePreset: 'all'" in js
+    assert "{id: 'all', label: 'All time'}" in js
+    # One range source of truth, sent by BOTH searches (message + attachment).
+    assert js.count("const range = this.currentRange();") == 2
+    assert js.count("range_start: range.start,") == 2
+    assert js.count("range_end: range.end,") == 2
+    # The old per-preset default ranges and the Iso getters are gone.
+    assert "'single-mail': 7" not in js
+    assert "rangeStartIso" not in js
+    assert "rangeEndIso" not in js
+    # Chip clicks re-query whichever search already ran.
+    assert "_requeryActive()" in js
+    # Re-querying with an emptied query box clears stale message results
+    # instead of leaving them under a newly-clicked chip (the attachment
+    # guard's mirror): the clear happens BEFORE any fetch.
+    run_search = js[js.index("async runSearch()") :]
+    assert "_clearMsgState()" in run_search[: run_search.index("await fetch")]
+    # The flatpickr hook only records the PENDING selection; Apply commits.
+    assert "applyCustomRange()" in js
+    assert "clearCustomRange()" in js
+    # Snapshot dots wiring untouched: scope-driven fetch + stale-response guard.
+    assert "fetchSnapshotDates()" in js
+    assert "_datesSeq" in js
+
+
+def test_workspace_css_responsive_grid_and_preview_overlay(client):
+    """CSS anatomy pins for the responsive fixes. Grid items default to
+    min-width:auto — without min-width:0 the results column grows to
+    max-content (page-wide h-scroll, ellipsis never engages). At <=768px the
+    open preview is a fixed bottom-sheet overlay (stacked under 100 results it
+    sat ~9 screens below the clicked row), lifted above the docked staging bar
+    via the action bar's 4.5rem constant. Medium widths keep a preview floor."""
+    resp = client.get("/static/css/style.css")
+    assert resp.status_code == 200
+    css = resp.text
+    # Both split grids let their children shrink below max-content.
+    assert ".ws-results-grid > *,\n.ws-att-grid > * { min-width: 0; }" in css
+    # Bottom-sheet overlay: above staging bar (50), push panel (51) and the
+    # when-popover (60); scrollable, capped height, anchored to the bottom.
+    overlay_sel = (
+        ".ws-results-grid.has-preview .ws-preview,\n  .ws-att-grid.has-preview .ws-preview {"
+    )
+    assert overlay_sel in css
+    block = css[css.index(overlay_sel) :]
+    block = block[: block.index("}")]
+    assert "position: fixed" in block
+    assert "top: auto" in block  # overrides the desktop sticky top
+    # Height cap derives from the dock vars so the close button stays
+    # on-screen on short viewports (dvh: iOS URL bar).
+    assert "max-height: min(80vh, calc(100dvh" in block
+    assert "overflow-y: auto" in block
+    assert "z-index: 70" in block
+    # Dock lifts — derived from the bars' REAL measured heights (the bars
+    # wrap at narrow widths, fixed constants let them cover each other).
+    # The sheet's ONE bottom serves both staging states (vars are 0px while
+    # their bar is hidden); the desktop sticky bar keeps its has-staging lift.
+    assert "bottom: calc(var(--ws-staging-h, 0px) + var(--ws-action-h, 0px) + 1rem)" in block
+    assert ".ws-action-bar.has-staging { bottom: calc(var(--ws-staging-h, 0px) + .5rem); }" in css
+    # Medium widths: results may shrink, preview keeps a usable minimum.
+    assert "grid-template-columns: minmax(0, 1.1fr) minmax(280px, 1fr);" in css
+    # SOURCE ORDER pin: the responsive overrides share specificity (0,2,0)
+    # with the base rules, so the base MUST come first — an .ws-att-grid base
+    # defined after the media blocks survived at mobile (measured: phantom
+    # half-width column under the bottom-sheet preview).
+    att_base = css.index(".ws-att-grid.has-preview { grid-template-columns: 1.1fr 1fr; }")
+    att_mid = css.index(
+        ".ws-att-grid.has-preview { grid-template-columns: minmax(0, 1.1fr) minmax(280px, 1fr); }"
+    )
+    att_mobile = css.index(".ws-att-grid.has-preview { grid-template-columns: 1fr; }")
+    assert att_base < att_mid < att_mobile
+    # The old stacked-pane escape hatch is gone (the overlay replaces it).
+    assert ".ws-preview { position: static; }" not in css
+    # Clickable attachment rows: Pico paints ANY [role=button] (tag-agnostic
+    # attribute selector) — the neutralizer must exist (.ws-result-body lesson).
+    assert '.ws-att-table tbody tr[role="button"]' in css
+
+
+def test_workspace_staging_height_var_drives_bottom_offsets(client):
+    """The bottom dock STACKS on measured slots: --ws-staging-h and
+    --ws-action-h are the bars' ResizeObserver-measured heights (both bars
+    wrap/grow at narrow widths, so the old fixed constants let surfaces cover
+    each other: staging bar over action bar, then preview sheet over action
+    bar). ONE reusable tracker owns both vars (0px while hidden); CSS sums
+    them at every dependent site; z only breaks ties for transient surfaces
+    per the documented ladder."""
+    js = client.get("/static/js/restore_workspace.js").text
+    assert "ResizeObserver" in js
+    # One reusable tracker, applied to both bars — no copy-pasted observers.
+    assert js.count("this._trackHeightVar(") == 2
+    assert "'--ws-staging-h'" in js
+    assert "'--ws-action-h'" in js
+    # Explicit 0px mirror on the visibility flip: RO across display:none is
+    # not guaranteed in every engine, and x-transition delays display:none
+    # past $nextTick on leave. The watched predicates: the staging flag and
+    # the action bar's x-show getter (single source of truth with the
+    # template).
+    assert "this.$watch(visibleProp" in js
+    assert "'staging.exists'" in js
+    assert "'actionBarVisible'" in js
+    assert "get actionBarVisible()" in js
+
+    css = client.get("/static/css/style.css").text
+    # The staging-h + .5rem slot appears exactly thrice: desktop sticky lift,
+    # push-panel anchor, and the MOBILE FIXED action bar (live measurement
+    # showed sticky has no knowable slot — at scroll-bottom it rests at its
+    # flow position, fully inside the sheet's span, so at <=768 the bar is a
+    # fixed dock member).
+    assert css.count("calc(var(--ws-staging-h, 0px) + .5rem)") == 3
+    # The mobile sheet's ONE bottom: .5rem inset + .5rem gap above the bar's
+    # slot, both staging states (vars are 0px while hidden).
+    assert "bottom: calc(var(--ws-staging-h, 0px) + var(--ws-action-h, 0px) + 1rem)" in css
+    # Sheet height cap: the close button stays on-screen on short viewports
+    # (dvh, not vh — iOS URL bar); 3rem = the 1rem lift + 2rem top room.
+    assert (
+        "max-height: min(80vh, calc(100dvh - var(--ws-staging-h, 0px) "
+        "- var(--ws-action-h, 0px) - 3rem))"
+    ) in css
+    # Content padding: staging-only on desktop (the bar is sticky/in-flow
+    # there), BOTH bars at mobile (both fixed = out of flow).
+    assert "padding-bottom: calc(var(--ws-staging-h, 0px) + 1.5rem)" in css
+    assert (
+        "padding-bottom: calc(var(--ws-staging-h, 0px) + var(--ws-action-h, 0px) + 1.5rem)"
+    ) in css
+    # Fallback normalization: every dock member is x-cloaked (or gated on an
+    # Alpine-bound class) pre-Alpine — rem fallbacks painted phantom lifts.
+    assert "--ws-staging-h, 4rem" not in css
+    # The stale magic constants are gone.
+    assert "bottom: 4.5rem" not in css
+    assert "bottom: 64px" not in css
+    # Desktop bar stays sticky (z-40, below the staging bar's 50); the mobile
+    # override is the SECOND .ws-action-bar block: a fixed dock member with
+    # sheet-matching insets and no sticky margin.
+    first = css.index(".ws-action-bar {")
+    desktop_bar = css[first : css.index("}", first)]
+    assert "position: sticky" in desktop_bar
+    assert "z-index: 40" in desktop_bar
+    second = css.index(".ws-action-bar {", first + 1)
+    mobile_bar = css[second : css.index("}", second)]
+    assert "position: fixed" in mobile_bar
+    assert "left: .5rem" in mobile_bar
+    assert "right: .5rem" in mobile_bar
+    assert "bottom: calc(var(--ws-staging-h, 0px) + .5rem)" in mobile_bar
+    assert "margin: 0" in mobile_bar
+    # The desktop sticky lift is scoped OUT of mobile (it would beat the
+    # fixed bottom by specificity when staging exists).
+    assert "@media (min-width: 769px) {" in css
+    # Push panel tops the ladder — a transient surface opened from the
+    # staging bar must overlay the mobile preview sheet (70), not hide
+    # behind it.
+    push_panel = css[css.index(".ws-push-panel {") :]
+    push_panel = push_panel[: push_panel.index("}")]
+    assert "z-index: 80" in push_panel
+    assert "z-index: 51" not in css
+    # The ladder is documented once, where its first z lives — including the
+    # action bar's dual nature (sticky desktop / fixed dock member <=768).
+    assert "content < action bar (40) < staging bar (50) < when-popover (60)" in css
+    assert "< preview sheet (70) < push panel (80)" in css
+    assert "sticky/in-flow on desktop and a FIXED dock member" in css
+
+
+def test_workspace_js_folder_lists_deduped_at_storage(client):
+    """Folder lists are deduped ONCE, where they are stored. Dovecot can LIST
+    the same folder twice (stale dovecot.list.index — measured live on an
+    Outlook account): the duplicate `f.full_name || f.name` x-for key crashes
+    Alpine's keyed loop, which then renders ZERO picker options (the user's
+    'every account loads except this one'). The server dedupes too — the JS
+    helper covers cached or pre-fix responses. Both storage sites go through
+    it: the destination-picker cache and the folder-preset source list."""
+    js = client.get("/static/js/restore_workspace.js").text
+    assert "_uniqueFolders(list)" in js
+    assert "this._destFolderCache[accountId] = this._uniqueFolders(await resp.json())" in js
+    assert "this.folders = this._uniqueFolders(await resp.json())" in js
+
+
+def test_workspace_js_restore_confirms_share_reassurance(client):
+    """Every restore entry point confirms first, closing with the shared
+    non-destructive reassurance line (frozen copy); the staging Empty confirm
+    keeps its own destructive wording (that one DOES delete staged copies)."""
+    resp = client.get("/static/js/restore_workspace.js")
+    assert resp.status_code == 200
+    js = resp.text
+    assert (
+        "Restores never delete anything: existing messages are kept "
+        "and duplicates are skipped." in js
+    )
+    # All four restore ops gate on a confirm BEFORE their first request.
+    for method in [
+        "async restoreSelected()",
+        "async pushStaging()",
+        "async restoreFolder()",
+        "async restoreFull()",
+    ]:
+        body = js[js.index(method) :]
+        assert "confirm(" in body[: body.index("await fetch")], method
+        assert "RESTORE_REASSURANCE" in body[: body.index("await fetch")], method
+    assert "Staged copies are removed" in js  # Empty's destructive confirm, unchanged
+    # Hygiene 400s surface their detail in the panels, not a bare status code.
+    assert "`Push failed: ${await this._errDetail(resp)}`" in js
+    assert js.count("`Failed: ${await this._errDetail(resp)}`") == 2  # folder + full panels
+
+
+def test_workspace_js_attachment_preset_chip_second(client):
+    """The 'An attachment' chip sits SECOND in the presets array (frozen
+    visual contract) with the paperclip icon."""
+    resp = client.get("/static/js/restore_workspace.js")
+    assert resp.status_code == 200
+    js = resp.text
+    assert "'An attachment'" in js
+    assert "paperclip" in js
+    single = js.index("id: 'single-mail'")
+    attachment = js.index("id: 'attachment'")
+    folder = js.index("id: 'folder'")
+    assert single < attachment < folder
+
+
+def test_restore_page_content_toggle_absent_without_tika(client, db_session, default_store):
+    """Tika off (the test default) → no 'Search inside attachments' toggle
+    (copy-must-match-behavior) and the data attribute reads falsy so the JS
+    state stays include_content=False."""
+    create_user(db_session, "attnotika", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "attnotika", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    assert "Search inside attachments" not in resp.text
+    assert 'x-model="attIncludeContent"' not in resp.text
+    assert 'data-tika-enabled=""' in resp.text
+
+
+def test_restore_page_content_toggle_present_with_tika(
+    client, db_session, default_store, monkeypatch
+):
+    """Tika on → the content toggle renders (default ON via the data
+    attribute the JS init reads)."""
+    from mailfallback.config import settings
+
+    monkeypatch.setattr(settings, "tika_enabled", True)
+    create_user(db_session, "atttika", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "atttika", "password": "pass"})
+
+    resp = client.get("/restore")
+
+    assert resp.status_code == 200
+    assert "Search inside attachments" in resp.text
+    assert "text extracted via Tika" in resp.text
+    assert 'x-model="attIncludeContent"' in resp.text
+    assert 'data-tika-enabled="1"' in resp.text
 
 
 def _setup_separator_test(db_session, default_store, client):

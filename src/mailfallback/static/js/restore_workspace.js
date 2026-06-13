@@ -1,8 +1,28 @@
+// Attachment type-filter groups — chip id → extensions (lowercase, no dot,
+// the index's documented `ext` contract). No "Other" chip: the search API
+// only supports ext IN-lists, and a chip that can't filter would lie
+// (copy-must-match-behavior).
+const ATT_EXT_GROUPS = {
+  pdf: ['pdf'],
+  doc: ['doc', 'docx', 'odt', 'rtf', 'txt'],
+  sheet: ['xls', 'xlsx', 'ods', 'csv'],
+  image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'svg'],
+  archive: ['zip', 'rar', '7z', 'tar', 'gz'],
+};
+const ATT_MIN_SIZE_BYTES = 1048576;  // the "> 1 MB" size chip
+
+// Shared confirm() reassurance — every restore entry point leads with an
+// op-specific line and closes with this EXACT copy (frozen contract, see
+// test_workspace_js_restore_confirms_share_reassurance). The staging Empty
+// confirm intentionally does NOT use it: that one deletes staged copies.
+const RESTORE_REASSURANCE = 'Restores never delete anything: existing messages are kept and duplicates are skipped.';
+
 function restoreWorkspace() {
   return {
     // === State ===
     presets: [
       {id: 'single-mail', label: 'A single mail', icon: 'mail'},
+      {id: 'attachment', label: 'An attachment', icon: 'paperclip'},
       {id: 'folder', label: 'A folder / subset', icon: 'folder'},
       {id: 'full', label: 'The whole mailbox', icon: 'alert-triangle'},
     ],
@@ -10,9 +30,22 @@ function restoreWorkspace() {
 
     // Inputs
     accountId: '',
-    destinationId: '',
-    rangeStart: null,           // Date object — managed by flatpickr
-    rangeEnd: null,             // Date object — managed by flatpickr
+    // Time chips — exactly one active; All time is the DEFAULT (no hidden
+    // 7-day trap). 'custom' is only ever set by Apply in the popover.
+    timePreset: 'all',          // '7d'|'30d'|'90d'|'1y'|'all'|'custom'
+    timeChips: [
+      {id: '7d', label: '7d'},
+      {id: '30d', label: '30d'},
+      {id: '90d', label: '90d'},
+      {id: '1y', label: '1y'},
+      {id: 'all', label: 'All time'},
+    ],
+    customLabel: '',            // compact chip label ("4–12 Jun") once applied
+    customPopoverOpen: false,
+    rangeStart: null,           // Date object — flatpickr's PENDING custom pick
+    rangeEnd: null,             // Date object — pending too (see customStart)
+    customStart: null,          // COMMITTED pair — Apply copies the pending
+    customEnd: null,            // pick here; searches/label only ever read these
     snapshotDates: [],          // Array of YYYY-MM-DD strings
     _datesSeq: 0,               // monotonic seq — stale snapshot-dates responses are dropped
     _fp: null,                  // flatpickr instance
@@ -24,15 +57,46 @@ function restoreWorkspace() {
     includeAll: false,          // admin-only: audited cross-user scope escalation
     deepSearch: false,
     partial: false,
-    selectedFolder: '',
+    selectedFolders: [],        // folder-preset multi-select (full IMAP names)
+
+    // Unified destination panel — folder + full presets (one shared state
+    // set: only one panel is visible at a time, and both answer "where do
+    // restored messages go", like the sidebar select they replaced).
+    restDestMode: 'back',       // 'back' (into the source mailbox) | 'other'
+    restDestOtherId: '',
+    restFolderMode: 'original', // 'original' | 'restored' | 'custom'
+    restCustomFolder: '',
+    restPickedFolder: '',       // the picker's own selection — KEPT visible after a pick
+    restFolderPulse: false,     // input highlight while a pick lands
+    _restPickerLastId: '',      // picker account tracking — a dest change resets the pick
+    _destFolderCache: {},       // account id -> mailboxes list (lazy, per panel pickers)
+    _pulseTimers: {},           // per-panel pulse timeouts (restart-safe)
 
     // Async/UI state
     searching: false,
     searched: false,
+    _msgSeq: 0,                 // monotonic seq — stale search responses are dropped
     results: [],
     selected: [],               // selKey(r) strings — unique across accounts
     statusText: '',
     restoring: false,
+
+    // Attachment preset state
+    attGroupDefs: [
+      {id: 'pdf', label: 'PDF'},
+      {id: 'doc', label: 'Documents'},
+      {id: 'sheet', label: 'Sheets'},
+      {id: 'image', label: 'Images'},
+      {id: 'archive', label: 'Archives'},
+    ],
+    attGroups: [],              // selected type-group ids (multi-select)
+    attMinSize: null,           // null | ATT_MIN_SIZE_BYTES
+    attIncludeContent: false,   // default ON when Tika is on (init reads the data attr)
+    attResults: [],
+    attTotal: 0,
+    attSearching: false,
+    attSearched: false,
+    _attSeq: 0,                 // monotonic seq — stale search responses are dropped
 
     // Preview pane state
     preview: null,
@@ -44,11 +108,15 @@ function restoreWorkspace() {
     // Staging bar / push panel state
     staging: {exists: false, count: 0, bytes_used: 0, expires_at: null, max_bytes: 0},
     stagingStatus: '',          // staging feedback — rendered in the bar (statusText
-                                // only renders inside the single-mail preset)
+                                // only renders inside the two search presets)
     pushPanelOpen: false,
     pushDestination: 'origin',  // 'origin' | 'override' (the API gets an account id)
     pushOverrideId: '',
-    pushFolderMode: 'original', // 'original' | 'restored'
+    pushFolderMode: 'original', // 'original' | 'restored' | 'custom'
+    pushCustomFolder: '',
+    pushPickedFolder: '',       // picker selection (kept after pick, see rest*)
+    pushFolderPulse: false,
+    _pushPickerLastId: '',
     pushing: false,             // guards against overlapping pushes
     _stagingTimers: [],         // post-push delayed refreshes — cleared on re-push
 
@@ -63,26 +131,130 @@ function restoreWorkspace() {
     fullStatus: '',
 
     // === Computed ===
-    get rangeStartIso() {
-      if (!this.rangeStart) return null;
-      const d = new Date(this.rangeStart);
-      d.setHours(0, 0, 0, 0);
-      return d.toISOString();
+    // The shared search row's submit button spinner — each search preset
+    // owns its busy flag.
+    get anySearching() {
+      return this.preset === 'attachment' ? this.attSearching : this.searching;
     },
-    get rangeEndIso() {
-      if (!this.rangeEnd) return null;
-      const d = new Date(this.rangeEnd);
-      d.setHours(23, 59, 59, 999);
-      return d.toISOString();
+    // The open preview came from an attachment hit (vs a message row) —
+    // drives the pane's selected-attachment line, the Download action and
+    // the webmail link swap.
+    get previewIsAttachment() {
+      return !!(this.previewRef && this.previewRef.part_index !== undefined);
+    },
+    // Destination pickers: the single account whose existing folders the
+    // custom-folder picker lists. A push to origin targets MANY accounts,
+    // so its picker only renders in override mode (template x-show).
+    get restPickerAccountId() {
+      return this.restDestMode === 'other' ? this.restDestOtherId : this.accountId;
+    },
+    get pushPickerAccountId() {
+      return this.pushDestination === 'override' ? this.pushOverrideId : '';
+    },
+    get restPickerFolders() {
+      return this._destFolderCache[this.restPickerAccountId] || [];
+    },
+    get pushPickerFolders() {
+      return this._destFolderCache[this.pushPickerAccountId] || [];
+    },
+    // === Time range ===
+    // One source of truth for what BOTH searches send: the active chip.
+    // 'all' → null/null (no date filter); fixed chips → now-N days with an
+    // open end; 'custom' → the applied flatpickr pair as whole days.
+    currentRange() {
+      if (this.timePreset === 'custom' && this.customStart) {
+        // COMMITTED pair only — a pick left un-applied in the popover must
+        // never silently change what a re-search sends (the chip label and
+        // the query stay in lockstep).
+        const s = new Date(this.customStart);
+        s.setHours(0, 0, 0, 0);
+        const e = new Date(this.customEnd || this.customStart);
+        e.setHours(23, 59, 59, 999);
+        return {start: s.toISOString(), end: e.toISOString()};
+      }
+      const days = {'7d': 7, '30d': 30, '90d': 90, '1y': 365}[this.timePreset];
+      if (!days) return {start: null, end: null};  // 'all' (or empty custom)
+      const s = new Date();
+      s.setDate(s.getDate() - days);
+      s.setHours(0, 0, 0, 0);
+      return {start: s.toISOString(), end: null};
+    },
+    setTimePreset(id) {
+      this.customPopoverOpen = false;
+      if (this.timePreset === id) return;
+      if (this.timePreset === 'custom') {
+        // Leaving custom: drop the applied pick so the chip reverts to
+        // "Custom…" and a later re-open starts clean.
+        this._resetCustom();
+      }
+      this.timePreset = id;
+      this._requeryActive();
+    },
+    applyCustomRange() {
+      if (!this.rangeStart) return;  // nothing picked yet — Apply is a no-op
+      this.customStart = this.rangeStart;
+      this.customEnd = this.rangeEnd || this.rangeStart;
+      this.customLabel = this._fmtRangeLabel(this.customStart, this.customEnd);
+      this.timePreset = 'custom';
+      this.customPopoverOpen = false;
+      this._requeryActive();
+    },
+    clearCustomRange() {
+      const wasCustom = this.timePreset === 'custom';
+      this._resetCustom();
+      this.customPopoverOpen = false;
+      if (wasCustom) {
+        this.timePreset = 'all';  // Clear reverts to All time
+        this._requeryActive();
+      }
+    },
+    _resetCustom() {
+      this.customLabel = '';
+      this.customStart = null;
+      this.customEnd = null;
+      this.rangeStart = null;
+      this.rangeEnd = null;
+      if (this._fp) this._fp.clear(false);
+    },
+    _fmtRangeLabel(start, end) {
+      // Compact chip label: "12 Jun" / "4–12 Jun" / "28 May – 3 Jun";
+      // cross-year ranges spell the years out.
+      const M = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const s = new Date(start);
+      const e = new Date(end);
+      const sm = M[s.getMonth()];
+      const em = M[e.getMonth()];
+      if (s.getFullYear() !== e.getFullYear()) {
+        return `${s.getDate()} ${sm} ${s.getFullYear()} – ${e.getDate()} ${em} ${e.getFullYear()}`;
+      }
+      if (s.getMonth() !== e.getMonth()) return `${s.getDate()} ${sm} – ${e.getDate()} ${em}`;
+      if (s.getDate() === e.getDate()) return `${s.getDate()} ${sm}`;
+      return `${s.getDate()}–${e.getDate()} ${sm}`;
+    },
+    _requeryActive() {
+      // Chip and source-toggle switches must never leave visible results
+      // stale relative to the controls — same re-query pattern as the
+      // attachment filter chips (the _msgSeq/_attSeq guards drop racing
+      // responses); a no-op until a search ran.
+      if (this.preset === 'attachment') {
+        if (this.attSearched) this.runAttachmentSearch();
+      } else if (this.searched) {
+        this.runSearch();
+      }
     },
 
     // === Lifecycle ===
     init() {
-      // Pick first mailbox
+      // Pick first mailbox. The "Another mailbox" select lives inside x-if
+      // templates (not in the DOM yet), but it renders the SAME Jinja option
+      // list as the sidebar Mailbox select — seed it from there so the
+      // select never displays an option its model doesn't hold.
       const sel = document.querySelector('[x-model="accountId"]');
-      if (sel && sel.options.length > 0) this.accountId = sel.options[0].value;
-      const destSel = document.querySelector('[x-model="destinationId"]');
-      if (destSel && destSel.options.length > 0) this.destinationId = destSel.options[0].value;
+      if (sel && sel.options.length > 0) {
+        this.accountId = sel.options[0].value;
+        this.restDestOtherId = sel.options[0].value;
+      }
 
       // Account names for result badges + scope options (data islands) and
       // webmail link target. The all-accounts island only exists for admins.
@@ -90,24 +262,61 @@ function restoreWorkspace() {
       this.accountsAll = this._parseIsland('ws-accounts-all-data');
       this.accounts = this.accountsAccessible;
       this.webmailUrl = (this.$el && this.$el.dataset.webmailUrl) || '';
+      // Content search defaults ON exactly when its toggle exists (the
+      // template gates both on the same tika_enabled flag).
+      this.attIncludeContent = !!(this.$el && this.$el.dataset.tikaEnabled);
       // Pre-pick a push-override destination so the select isn't empty when
       // the user switches the destination radio to "override".
       if (this.accounts.length) this.pushOverrideId = this.accounts[0].id;
 
       this._initCalendar();
+      this._initDockHeightVars();
       this.refreshIcons();
 
-      // Default range: last 7 days. Set state DIRECTLY (don't rely on
-      // flatpickr's onChange firing during init — it doesn't always).
-      const end = new Date();
-      const start = new Date();
-      start.setDate(start.getDate() - 7);
-      this.rangeStart = start;
-      this.rangeEnd = end;
-      if (this._fp) this._fp.setDate([start, end], false);
-
+      // No default range: timePreset starts at 'all' — searches run unfiltered
+      // until the user narrows them (the old silent 7-day default hid hits).
       this.fetchSnapshotDates();
       this.refreshStaging();
+    },
+
+    _initDockHeightVars() {
+      // The bottom dock STACKS on measured slots, not magic constants: both
+      // bars wrap/grow at narrow widths, so every dependent offset (action
+      // bar above staging bar, preview sheet above both, content padding)
+      // derives from these vars in CSS. The z ladder only breaks ties for
+      // transient surfaces — see the dock comment in style.css.
+      this._trackHeightVar(
+        document.querySelector('.ws-staging-bar'), '--ws-staging-h', 'staging.exists');
+      this._trackHeightVar(
+        document.querySelector('.ws-action-bar'), '--ws-action-h', 'actionBarVisible');
+    },
+
+    _trackHeightVar(el, varName, visibleProp) {
+      // Mirror el's REAL height into a :root CSS var. visibleProp is the
+      // reactive property/getter behind the element's x-show.
+      const root = document.documentElement;
+      const set = px => root.style.setProperty(varName, px + 'px');
+      if (!el) {
+        set(0);
+        return;
+      }
+      // offsetHeight reads 0 while x-show keeps the element display:none.
+      const measure = () => set(Math.ceil(el.offsetHeight));
+      // Observe once at init — the element is always in the DOM (x-show
+      // only toggles display) and the observer tracks wrap/resize growth.
+      if (window.ResizeObserver) {
+        new ResizeObserver(measure).observe(el);
+      }
+      // Belt and braces: not every engine fires RO across display:none
+      // flips, and x-transition delays display:none past $nextTick on
+      // leave — so write an explicit 0px the moment the predicate flips
+      // false (NEVER re-measure through the leave transition: it would
+      // read the still-visible height) and re-measure once shown again.
+      this.$watch(visibleProp, shown => {
+        if (!shown) set(0);
+        else this.$nextTick(measure);
+      });
+      measure();
     },
 
     _parseIsland(id) {
@@ -130,11 +339,12 @@ function restoreWorkspace() {
         dateFormat: 'Y-m-d',
         maxDate: 'today',
         onChange(selectedDates) {
-          if (selectedDates.length === 2) {
+          // PENDING custom selection only — Apply commits it. One date counts
+          // as a single-day range until the second click widens it.
+          if (selectedDates.length >= 1) {
             self.rangeStart = selectedDates[0];
-            self.rangeEnd = selectedDates[1];
+            self.rangeEnd = selectedDates.length === 2 ? selectedDates[1] : selectedDates[0];
           }
-          // selectedDates.length === 1 — mid-range selection, wait for second click
         },
         onDayCreate(dObj, dStr, fp, dayElem) {
           const d = dayElem.dateObj;
@@ -213,7 +423,37 @@ function restoreWorkspace() {
       if (r.date_sent) parts.push(r.date_sent.slice(0, 10));
       return parts.filter(Boolean).join(' · ');
     },
-    selKey(r) { return r.account_id + ':' + r.message_id; },
+    // Selection is keyed at MESSAGE level for BOTH search presets — message
+    // rows and attachment rows each carry account_id + message_id_hash, so
+    // one shared `selected` array (and one selection bar) serves both.
+    // Sibling attachments of one message share the key on purpose: staging
+    // and restore operate on whole messages, never half of one.
+    selKey(r) { return r.account_id + ':' + r.message_id_hash; },
+    _activeRows() {
+      return this.preset === 'attachment' ? this.attResults : this.results;
+    },
+    _selectionByKey() {
+      // key → message ref of the active preset's rows. Object.fromEntries
+      // dedupes sibling attachment rows for free (same message-level key,
+      // same underlying message).
+      return Object.fromEntries(this._activeRows().map(r => [this.selKey(r), r]));
+    },
+    get selectableCount() {
+      // What "select all" would select — MESSAGES, not rows.
+      return new Set(this._activeRows().map(r => this.selKey(r))).size;
+    },
+    get actionBarVisible() {
+      // Single source of truth: the bar's x-show AND its --ws-action-h
+      // height tracker both watch this getter, so the measured dock slot
+      // can never disagree with what is actually rendered.
+      return (this.preset === 'single-mail' || this.preset === 'attachment')
+        && this.selectableCount > 0;
+    },
+    isPreviewing(r) {
+      // The row behind the open preview pane (message-level marker).
+      return this.previewOpen && !!this.previewRef
+        && this.selKey(this.previewRef) === this.selKey(r);
+    },
     async openPreview(r) {
       // Seq guard: rapid row clicks race their fetches — only the latest
       // request may write state, stale responses are dropped.
@@ -238,22 +478,25 @@ function restoreWorkspace() {
         }
       }
     },
+    closePreview() {
+      // Bump the seq so an in-flight openPreview fetch can't reopen the pane
+      // (its guarded writes and finally all no-op on a stale seq).
+      this._previewSeq++;
+      this.previewOpen = false;
+      this.preview = null;
+      this.previewRef = null;
+      this.previewLoading = false;
+    },
 
     // === Actions ===
     applyPreset(id) {
+      // The time chips are SHARED state between the two search presets —
+      // switching preset keeps the active range, it only closes the popover.
       this.preset = id;
-      const days = {'single-mail': 7, 'folder': 30, 'full': 90}[id] || 7;
-      const end = new Date();
-      const start = new Date();
-      start.setDate(start.getDate() - days);
-      this.rangeStart = start;
-      this.rangeEnd = end;
-      if (this._fp) this._fp.setDate([start, end], false);
-      this.results = [];
-      this.selected = [];
-      this.searched = false;
+      this.customPopoverOpen = false;
+      this._clearMsgState();
+      this._clearAttState();
       this.statusText = '';
-      this.partial = false;
       this.preview = null;
       this.previewRef = null;
       this.previewOpen = false;
@@ -265,15 +508,107 @@ function restoreWorkspace() {
       // Source mailbox for the folder/full presets — search results live in
       // the single-mail preset and follow scopeAccountId instead.
       if (this.preset === 'folder') this.loadFolders();
+      // "Back into <source>" destination follows the source: refresh the
+      // custom-folder picker if it is open on the source account.
+      this.ensureRestFolders();
+    },
+
+    // === Unified destination panel (folder + full presets, push panel) ===
+    todayStamp() {
+      // UTC — matches the server-side Restored/<date> stamp on staging pushes.
+      return new Date().toISOString().slice(0, 10);
+    },
+    _uniqueFolders(list) {
+      // Belt and braces over the server-side dedupe (cached or pre-fix
+      // responses elsewhere): Dovecot can LIST the same folder twice
+      // (stale list index, measured on an Outlook account), and a
+      // duplicate name means duplicate x-for keys — Alpine's keyed loop
+      // CRASHES and renders ZERO options. Dedupe once, where lists are
+      // stored; the templates' `f.full_name || f.name` keys stay unique
+      // downstream.
+      const seen = new Set();
+      return (list || []).filter(f => {
+        const key = f.full_name || f.name;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    },
+    async ensureDestFolders(accountId) {
+      // Lazy per-account cache for the "pick from existing folders" selects.
+      if (!accountId || this._destFolderCache[accountId]) return;
+      try {
+        const resp = await fetch(`/api/accounts/${accountId}/mailboxes`);
+        if (resp.ok) this._destFolderCache[accountId] = this._uniqueFolders(await resp.json());
+      } catch (e) { /* picker stays empty — the text input still works */ }
+    },
+    ensureRestFolders() {
+      if (this.restFolderMode !== 'custom') return;
+      // A destination change swaps the folder list — a kept pick from the
+      // old account would leave the select displaying nothing (or a folder
+      // the new destination doesn't have). The typed input stays untouched.
+      if (this._restPickerLastId !== this.restPickerAccountId) {
+        this._restPickerLastId = this.restPickerAccountId;
+        this.restPickedFolder = '';
+      }
+      this.ensureDestFolders(this.restPickerAccountId);
+    },
+    ensurePushFolders() {
+      if (this.pushFolderMode !== 'custom') return;
+      if (this._pushPickerLastId !== this.pushPickerAccountId) {
+        this._pushPickerLastId = this.pushPickerAccountId;
+        this.pushPickedFolder = '';
+      }
+      this.ensureDestFolders(this.pushPickerAccountId);
+    },
+    pickRestFolder() {
+      // The picker KEEPS its selection (x-model) — picking copies into the
+      // text input, which stays the source of truth (freely editable); the
+      // pulse is the visible confirmation that the copy landed.
+      if (!this.restPickedFolder) return;
+      this.restCustomFolder = this.restPickedFolder;
+      this._pulseInput('rest');
+    },
+    pickPushFolder() {
+      if (!this.pushPickedFolder) return;
+      this.pushCustomFolder = this.pushPickedFolder;
+      this._pulseInput('push');
+    },
+    _pulseInput(which) {
+      // Restart-safe: drop the class, re-add next tick (a re-pick re-fires
+      // the CSS highlight), auto-remove after ~600ms.
+      const flag = which + 'FolderPulse';
+      this[flag] = false;
+      clearTimeout(this._pulseTimers[which]);
+      this.$nextTick(() => {
+        this[flag] = true;
+        this._pulseTimers[which] = setTimeout(() => { this[flag] = false; }, 600);
+      });
+    },
+    selectAllFolders(checked) {
+      this.selectedFolders = checked ? this.folders.map(f => f.full_name || f.name) : [];
+    },
+    _restTargetId() {
+      return this.restDestMode === 'other' ? this.restDestOtherId : this.accountId;
+    },
+    _restFolderMapping() {
+      // Anything but "original" is a destination root the worker nests
+      // everything under — including our dated Restored/ and typed paths.
+      if (this.restFolderMode === 'restored') return 'Restored/' + this.todayStamp();
+      if (this.restFolderMode === 'custom') return this.restCustomFolder.trim();
+      return 'original';
+    },
+    _restDestPhrase(target) {
+      return target === this.accountId
+        ? 'back into the same mailbox'
+        : `into "${this.accountName(target)}"`;
     },
 
     onScopeChange() {
       // New scope invalidates the current result set and the calendar dots.
-      this.results = [];
-      this.selected = [];
-      this.searched = false;
+      this._clearMsgState();
+      this._clearAttState();
       this.statusText = '';
-      this.partial = false;
       this.preview = null;
       this.previewRef = null;
       this.previewOpen = false;
@@ -294,8 +629,34 @@ function restoreWorkspace() {
       this.onScopeChange();
     },
 
+    submitSearch() {
+      // The shared search row serves two presets — route by the active one.
+      if (this.preset === 'attachment') return this.runAttachmentSearch();
+      return this.runSearch();
+    },
+
+    _clearMsgState() {
+      this._msgSeq++;  // drop in-flight responses
+      this.results = [];
+      this.selected = [];
+      this.searching = false;
+      this.searched = false;
+      this.partial = false;
+    },
+
     async runSearch() {
-      if (!this.query.trim()) return;
+      if (!this.query.trim()) {
+        // Nothing to ask for — also clears stale results when a chip or
+        // source toggle re-queries after the query box was emptied (the
+        // attachment guard's mirror).
+        this._clearMsgState();
+        this.statusText = '';
+        return;
+      }
+      // Seq guard: a slow (deep) search left in flight must not bleed its
+      // late response into the shared statusText or repopulate results that
+      // a preset/scope switch already cleared — mirror the _attSeq pattern.
+      const seq = ++this._msgSeq;
       this.searching = true;
       this.searched = true;
       this.statusText = 'Searching…';
@@ -307,14 +668,15 @@ function restoreWorkspace() {
       this.previewOpen = false;
       this.refreshIcons();
       try {
+        const range = this.currentRange();
         const resp = await fetch('/api/restore/search', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             query: this.query,
             account_ids: this.scopeAccountId ? [this.scopeAccountId] : null,
-            range_start: this.rangeStartIso,
-            range_end: this.rangeEndIso,
+            range_start: range.start,
+            range_end: range.end,
             include_deleted: this.includeSnapshots,
             deep: this.deepSearch,
             include_all: this.includeAll,
@@ -323,10 +685,11 @@ function restoreWorkspace() {
           }),
         });
         if (!resp.ok) {
-          this.statusText = `Search failed: ${resp.status}`;
+          if (seq === this._msgSeq) this.statusText = `Search failed: ${resp.status}`;
           return;
         }
         const body = await resp.json();
+        if (seq !== this._msgSeq) return;
         let results = body.results || [];
         // Source filters: the index API has no include_live param, so when
         // "Live" is unchecked we drop rows whose ONLY source is live mail
@@ -346,15 +709,171 @@ function restoreWorkspace() {
         this.statusText = `${shown} result${shown === 1 ? '' : 's'}`
           + (body.total > shown ? ` of ${body.total}` : '');
       } catch (e) {
-        this.statusText = `Search error: ${e.message}`;
+        if (seq === this._msgSeq) this.statusText = `Search error: ${e.message}`;
       } finally {
-        this.searching = false;
-        this.refreshIcons();
+        if (seq === this._msgSeq) {
+          this.searching = false;
+          this.refreshIcons();
+        }
+      }
+    },
+
+    // === Attachment search ===
+    _clearAttState() {
+      this._attSeq++;  // drop in-flight responses
+      this.attResults = [];
+      this.attTotal = 0;
+      this.attSearching = false;
+      this.attSearched = false;
+      // Shared selection: keys could reference rows no longer visible.
+      this.selected = [];
+    },
+    toggleAttGroup(id) {
+      this.attGroups = this.attGroups.includes(id)
+        ? this.attGroups.filter(g => g !== id)
+        : [...this.attGroups, id];
+      this.onAttFilterChange();
+    },
+    toggleAttMinSize() {
+      this.attMinSize = this.attMinSize === null ? ATT_MIN_SIZE_BYTES : null;
+      this.onAttFilterChange();
+    },
+    onAttFilterChange() {
+      // Live filters: visible results must never go stale relative to the
+      // chips — re-run once a search happened (the seq guard handles races).
+      if (this.attSearched) this.runAttachmentSearch();
+    },
+    attKey(a) {
+      return a.account_id + ':' + a.message_id_hash + ':' + a.part_index;
+    },
+    attIsPreviewing(a) {
+      // The exact attachment row behind the open preview pane (part-level:
+      // the user clicked THIS row, not its same-message sibling).
+      return this.previewIsAttachment && this.attKey(this.previewRef) === this.attKey(a);
+    },
+    attachmentDownloadUrl(accountId, hashHex, partIndex) {
+      // Shared by the attachment table rows AND the preview pane's chips
+      // (there the ids come from previewRef, part_index from the payload).
+      return `/api/restore/attachments/${accountId}/${hashHex}/${partIndex}/download`
+        + (this.includeAll ? '?include_all=true' : '');
+    },
+    attDownloadUrl(a) {
+      return this.attachmentDownloadUrl(a.account_id, a.message_id_hash, a.part_index);
+    },
+    attIcon(ext) {
+      const e = (ext || '').toLowerCase();
+      if (ATT_EXT_GROUPS.pdf.includes(e) || ATT_EXT_GROUPS.doc.includes(e)) return 'file-text';
+      if (ATT_EXT_GROUPS.sheet.includes(e)) return 'file-spreadsheet';
+      if (ATT_EXT_GROUPS.image.includes(e)) return 'image';
+      if (ATT_EXT_GROUPS.archive.includes(e)) return 'archive';
+      return 'file';  // unknown/other types — the generic document glyph
+    },
+    _attNameSplit(a) {
+      // "report.pdf" → ["report", ".pdf"] — the extension renders accented.
+      const name = a.filename || '(unnamed)';
+      const ext = (a.ext || '').toLowerCase();
+      if (ext && name.toLowerCase().endsWith('.' + ext)) {
+        const cut = name.length - ext.length - 1;
+        return [name.slice(0, cut), name.slice(cut)];
+      }
+      return [name, ''];
+    },
+    attNameBase(a) { return this._attNameSplit(a)[0]; },
+    attNameExt(a) { return this._attNameSplit(a)[1]; },
+    attMeta(a) {
+      return [a.from_addr || '?', a.folder_path || ''].filter(Boolean).join(' · ');
+    },
+    attSnippetParts(snippet) {
+      // XSS contract: ts_headline output is HOSTILE text extracted from mail
+      // attachments, carrying [[[/]]] match markers. Split it into segments
+      // the template renders as TEXT nodes (x-text) — never x-html.
+      if (!snippet) return [];
+      const segs = [];
+      let rest = snippet;
+      while (rest) {
+        const open = rest.indexOf('[[[');
+        if (open === -1) {
+          segs.push({mark: false, text: rest});
+          break;
+        }
+        if (open > 0) segs.push({mark: false, text: rest.slice(0, open)});
+        rest = rest.slice(open + 3);
+        const close = rest.indexOf(']]]');
+        if (close === -1) {
+          // Unbalanced marker — render the remainder unhighlighted.
+          segs.push({mark: false, text: rest});
+          break;
+        }
+        segs.push({mark: true, text: rest.slice(0, close)});
+        rest = rest.slice(close + 3);
+      }
+      return segs.filter(s => s.text);
+    },
+    async runAttachmentSearch() {
+      const hasFilters = this.attGroups.length > 0 || this.attMinSize !== null;
+      if (!this.query.trim() && !hasFilters) {
+        // Nothing to ask for — also clears stale results when the last
+        // filter is toggled off with an empty query.
+        this._clearAttState();
+        this.statusText = '';
+        return;
+      }
+      const seq = ++this._attSeq;
+      this.attSearching = true;
+      this.attSearched = true;
+      this.statusText = 'Searching…';
+      this.attResults = [];
+      this.attTotal = 0;
+      this.selected = [];  // new result set — same clearing as runSearch
+      this.preview = null;
+      this.previewRef = null;
+      this.previewOpen = false;
+      this.refreshIcons();
+      try {
+        const exts = this.attGroups.length
+          ? this.attGroups.flatMap(g => ATT_EXT_GROUPS[g] || [])
+          : null;
+        const range = this.currentRange();
+        const resp = await fetch('/api/restore/attachments/search', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            query: this.query,
+            account_ids: this.scopeAccountId ? [this.scopeAccountId] : null,
+            include_all: this.includeAll,
+            exts,
+            min_size: this.attMinSize,
+            include_content: this.attIncludeContent,
+            range_start: range.start,
+            range_end: range.end,
+            page: 1,
+            page_size: 100,
+          }),
+        });
+        if (!resp.ok) {
+          if (seq === this._attSeq) this.statusText = `Search failed: ${resp.status}`;
+          return;
+        }
+        const body = await resp.json();
+        if (seq !== this._attSeq) return;
+        this.attResults = body.results || [];
+        this.attTotal = body.total || 0;
+        // Honest counts: what's visible vs what matched (page_size cap).
+        const shown = this.attResults.length;
+        this.statusText = `${shown} attachment${shown === 1 ? '' : 's'}`
+          + (this.attTotal > shown ? ` of ${this.attTotal}` : '');
+      } catch (e) {
+        if (seq === this._attSeq) this.statusText = `Search error: ${e.message}`;
+      } finally {
+        if (seq === this._attSeq) {
+          this.attSearching = false;
+          this.refreshIcons();
+        }
       }
     },
 
     toggleSelectAll(checked) {
-      this.selected = checked ? this.results.map(r => this.selKey(r)) : [];
+      this.selected = checked ? Object.keys(this._selectionByKey()) : [];
     },
 
     async restoreSelected() {
@@ -362,27 +881,32 @@ function restoreWorkspace() {
       // Message-Ids to live IMAP UIDs, then submit one selection-mode restore
       // job per account with source == target.
       if (this.selected.length === 0) return;
+      const n = this.selected.length;
+      const where = n === 1 ? 'its origin mailbox' : 'their origin mailboxes';
+      if (!confirm(`Restore ${n} selected message${n === 1 ? '' : 's'} to ${where}?\n\n${RESTORE_REASSURANCE}`)) return;
       this.restoring = true;
       this.refreshIcons();
       try {
-        const byKey = Object.fromEntries(this.results.map(r => [this.selKey(r), r]));
+        // Preset-agnostic: rows from the active preset are message refs
+        // (attachment hits carry message_id too — resolve-uids needs it).
+        const byKey = this._selectionByKey();
         const byAccount = {};
         for (const key of this.selected) {
           const r = byKey[key];
-          if (r) (byAccount[r.account_id] ||= []).push(r.message_id);
+          if (r) (byAccount[r.account_id] ||= []).push(r);
         }
         const jobs = [];
         let skippedTotal = 0;
         let failure = '';
         const startedAccounts = new Set();  // accounts whose restore job started
         const missingKeys = new Set();      // keys not in live mail — unrestorable here
-        for (const [accountId, messageIds] of Object.entries(byAccount)) {
+        for (const [accountId, rows] of Object.entries(byAccount)) {
           const res = await fetch('/api/restore/resolve-uids', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
               account_id: accountId,
-              message_ids: messageIds,
+              message_ids: rows.map(r => r.message_id),
               include_all: this.includeAll,
             }),
           });
@@ -392,7 +916,12 @@ function restoreWorkspace() {
           }
           const {resolved, missing} = await res.json();
           skippedTotal += missing.length;
-          for (const mid of missing) missingKeys.add(accountId + ':' + mid);
+          // Map missing Message-Ids back into selKey space (keys are
+          // hash-based; the API reports raw Message-Ids).
+          const missingSet = new Set(missing);
+          for (const r of rows) {
+            if (missingSet.has(r.message_id)) missingKeys.add(this.selKey(r));
+          }
           if (Object.keys(resolved).length === 0) continue;
           // SEAM CONTRACT: `resolved` keys are namespace-prefixed IMAP paths
           // produced by /api/restore/resolve-uids — pass the mapping to
@@ -470,8 +999,9 @@ function restoreWorkspace() {
       // Staging messages go to the bar — single slot, no duplication. But a
       // rejected FIRST add creates no area server-side (verified: the service
       // quota-checks before creating anything), so there is no bar to host
-      // the message — fall back to statusText, which IS rendered in the
-      // single-mail preset where add-to-staging lives.
+      // the message — fall back to statusText, which IS rendered in both
+      // search presets (single-mail + attachment), everywhere an
+      // add-to-staging entry point lives.
       if (this.staging.exists) this.stagingStatus = msg;
       else this.statusText = msg;
     },
@@ -510,7 +1040,9 @@ function restoreWorkspace() {
       }
     },
     addSelectedToStaging() {
-      const byKey = Object.fromEntries(this.results.map(r => [this.selKey(r), r]));
+      // Preset-agnostic: the active rows map to message refs (account_id +
+      // message_id_hash), which is all addToStaging sends.
+      const byKey = this._selectionByKey();
       return this.addToStaging(this.selected.map(k => byKey[k]));
     },
     async emptyStaging() {
@@ -534,20 +1066,34 @@ function restoreWorkspace() {
     },
     async pushStaging() {
       if (this.pushing) return;  // overlapping pushes would double-submit
+      const dest = this.pushDestination === 'origin' ? 'origin' : this.pushOverrideId;
+      if (!dest) {
+        this.stagingStatus = 'Pick a destination mailbox';
+        return;
+      }
+      const customFolder = this.pushFolderMode === 'custom' ? this.pushCustomFolder.trim() : null;
+      if (this.pushFolderMode === 'custom' && !customFolder) {
+        this.stagingStatus = 'Enter a destination folder';  // button disabled too — belt and braces
+        return;
+      }
+      const n = this.staging.count;
+      const where = dest === 'origin'
+        ? (n === 1 ? 'its origin mailbox' : 'their origin mailboxes')
+        : `"${this.accountName(dest)}"`;
+      if (!confirm(`Push ${n} staged message${n === 1 ? '' : 's'} to ${where}?\n\n${RESTORE_REASSURANCE}`)) return;
       this.pushing = true;
       try {
-        const dest = this.pushDestination === 'origin' ? 'origin' : this.pushOverrideId;
-        if (!dest) {
-          this.stagingStatus = 'Pick a destination mailbox';
-          return;
-        }
         const resp = await fetch('/api/restore/staging/push', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({destination: dest, folder_mode: this.pushFolderMode}),
+          body: JSON.stringify({
+            destination: dest,
+            folder_mode: this.pushFolderMode,
+            custom_folder: customFolder,
+          }),
         });
         if (!resp.ok) {
-          this.stagingStatus = `Push failed: ${resp.status}`;
+          this.stagingStatus = `Push failed: ${await this._errDetail(resp)}`;
           return;
         }
         const r = await resp.json();
@@ -577,21 +1123,42 @@ function restoreWorkspace() {
         ms => setTimeout(() => this.refreshStaging(), ms),
       );
     },
+    async _errDetail(resp) {
+      // Hygiene 400s carry an actionable detail ("folder_mapping has empty
+      // or relative path segments") — surface it instead of a bare code.
+      try {
+        const body = await resp.json();
+        if (body && body.detail) {
+          return typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
+        }
+      } catch (e) { /* not JSON — fall through to the status code */ }
+      return `${resp.status}`;
+    },
 
     async loadFolders() {
       if (!this.accountId) return;
       this.folders = [];
+      this.selectedFolders = [];  // stale picks must not survive a reload
       try {
         const resp = await fetch(`/api/accounts/${this.accountId}/mailboxes`);
         if (!resp.ok) return;
-        this.folders = await resp.json();
+        this.folders = this._uniqueFolders(await resp.json());
+        // The source list doubles as the destination picker cache for
+        // restores back into the same mailbox.
+        this._destFolderCache[this.accountId] = this.folders;
       } catch (e) {
         // ignore
       }
     },
 
     async restoreFolder() {
-      if (!this.selectedFolder) return;
+      if (!this.selectedFolders.length) return;
+      const target = this._restTargetId();
+      const mapping = this._restFolderMapping();
+      if (!target || !mapping) return;  // custom mode with empty path — button disabled too
+      const n = this.selectedFolders.length;
+      const first = `Restore ${n} folder${n === 1 ? '' : 's'} from "${this.accountName(this.accountId)}" ${this._restDestPhrase(target)}?`;
+      if (!confirm(`${first}\n\n${RESTORE_REASSURANCE}`)) return;
       this.restoring = true;
       this.refreshIcons();
       try {
@@ -600,15 +1167,16 @@ function restoreWorkspace() {
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             source_account_id: this.accountId,
-            target_account_id: this.destinationId,
+            target_account_id: target,
             restore_mode: 'folder',
-            selected_folders: [this.selectedFolder],
+            selected_folders: this.selectedFolders,
+            folder_mapping: mapping,
           }),
         });
         if (resp.ok) {
           this.folderStatus = `Folder restore started — job ${(await resp.json()).job_id}`;
         } else {
-          this.folderStatus = `Failed: ${resp.status}`;
+          this.folderStatus = `Failed: ${await this._errDetail(resp)}`;
         }
       } finally {
         this.restoring = false;
@@ -617,7 +1185,11 @@ function restoreWorkspace() {
     },
 
     async restoreFull() {
-      if (!confirm('Full restore copies the entire mailbox. Continue?')) return;
+      const target = this._restTargetId();
+      const mapping = this._restFolderMapping();
+      if (!target || !mapping) return;  // custom mode with empty path — button disabled too
+      const first = `Restore the whole mailbox "${this.accountName(this.accountId)}" ${this._restDestPhrase(target)}?`;
+      if (!confirm(`${first}\n\n${RESTORE_REASSURANCE}`)) return;
       this.restoring = true;
       this.refreshIcons();
       try {
@@ -626,14 +1198,15 @@ function restoreWorkspace() {
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             source_account_id: this.accountId,
-            target_account_id: this.destinationId,
+            target_account_id: target,
             restore_mode: 'full',
+            folder_mapping: mapping,
           }),
         });
         if (resp.ok) {
           this.fullStatus = `Full restore started — job ${(await resp.json()).job_id}`;
         } else {
-          this.fullStatus = `Failed: ${resp.status}`;
+          this.fullStatus = `Failed: ${await this._errDetail(resp)}`;
         }
       } finally {
         this.restoring = false;

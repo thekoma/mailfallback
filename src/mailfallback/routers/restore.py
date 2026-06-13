@@ -4,9 +4,12 @@ import email
 import logging
 import re
 from datetime import datetime
+from email import policy
+from email.parser import BytesParser
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
@@ -14,6 +17,7 @@ from mailfallback.dependencies import get_current_user, get_db
 from mailfallback.models import (
     Account,
     BackupPolicy,
+    MailIndexAttachment,
     MailIndexMessage,
     RecoveryStatus,
     RestoreMode,
@@ -58,6 +62,44 @@ class RestoreCreate(BaseModel):
 
 def _sanitize_imap_string(value: str) -> str:
     return re.sub(r'["\\\x00-\x1f]', "", value)
+
+
+CUSTOM_FOLDER_MAX_LEN = 200
+
+# _sanitize_imap_string stops at \x1f (house line — left alone); folder
+# validation also rejects DEL + the C1 control range.
+_CTRL_GAP_RE = re.compile(r"[\x7f-\x9f]")
+
+
+def _validate_custom_folder(value: str | None, field: str = "custom_folder") -> str:
+    """Hygiene for user-named destination folders (staging push custom mode,
+    non-"original" folder_mapping). The string lands verbatim inside a quoted
+    IMAP atom and becomes an on-disk Maildir path, so anything the
+    _sanitize_imap_string class would strip is rejected outright (plus
+    DEL/C1 controls), along with traversal/empty segments and
+    leading/trailing separators. Other non-ASCII (accents, CJK) is fine —
+    the worker mUTF-7-encodes mailbox names at the IMAP boundary. Returns
+    the stripped path."""
+    folder = (value or "").strip()
+    if not folder:
+        raise HTTPException(status_code=400, detail=f"{field} must not be empty")
+    if len(folder) > CUSTOM_FOLDER_MAX_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field} too long (max {CUSTOM_FOLDER_MAX_LEN} characters)",
+        )
+    if _sanitize_imap_string(folder) != folder or _CTRL_GAP_RE.search(folder):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field} contains quotes, backslashes or control characters",
+        )
+    # Leading/trailing "/" produce empty segments — one rule covers them too.
+    if any(not seg.strip() or seg in (".", "..") for seg in folder.split("/")):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field} has empty or relative path segments",
+        )
+    return folder
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +194,8 @@ def api_staging_empty(
 
 class StagingPushRequest(BaseModel):
     destination: str = "origin"  # "origin" | account id
-    folder_mode: str = "original"  # "original" | "restored"
+    folder_mode: str = "original"  # "original" | "restored" | "custom"
+    custom_folder: str | None = None  # required (and validated) when folder_mode == "custom"
 
 
 @router.post("/staging/push")
@@ -167,25 +210,252 @@ def api_staging_push(
     Targets that cannot take a job right now (busy, no credentials, …) come
     back in skipped_targets; their messages stay staged for a later push.
     """
-    if req.folder_mode not in ("original", "restored"):
+    if req.folder_mode not in ("original", "restored", "custom"):
         raise HTTPException(status_code=400, detail="Invalid folder_mode")
+    custom_folder = (
+        _validate_custom_folder(req.custom_folder) if req.folder_mode == "custom" else None
+    )
     if req.destination != "origin" and not account_service.get_account(db, req.destination, user):
         raise HTTPException(status_code=404, detail="Destination account not found")
-    result = staging_service.push(db, user, req.destination, req.folder_mode)
+    result = staging_service.push(
+        db, user, req.destination, req.folder_mode, custom_folder=custom_folder
+    )
+    details = {
+        "jobs": result["job_ids"],
+        "destination": req.destination,
+        "folder_mode": req.folder_mode,
+        "skipped_targets": result["skipped_targets"],
+    }
+    if custom_folder is not None:
+        # Forensics: WHICH folder the custom push targeted — only present in
+        # custom mode (no None noise in the other modes' audit rows).
+        details["custom_folder"] = custom_folder
     log_action(
         db,
         user=user,
         action="staging.push",
         resource_type="staging",
-        details={
-            "jobs": result["job_ids"],
-            "destination": req.destination,
-            "folder_mode": req.folder_mode,
-            "skipped_targets": result["skipped_targets"],
-        },
+        details=details,
         ip_address=request.client.host if request.client else None,
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Attachment search & download — literal routes, registered above the
+# GET /{job_id} catch-all like the staging section.
+# ---------------------------------------------------------------------------
+
+
+class AttachmentSearchRequest(BaseModel):
+    query: str = ""
+    account_ids: list[str] | None = None
+    include_all: bool = False
+    exts: list[str] | None = None
+    min_size: int | None = None
+    max_size: int | None = None
+    include_content: bool = False
+    # Time-chip range — filters on the containing message's date_sent
+    # (NULL-tolerant, same semantics as the message search).
+    range_start: datetime | None = None
+    range_end: datetime | None = None
+    # page=0 would compile to a negative OFFSET (PG errors out at runtime).
+    page: int = Field(1, ge=1)
+    page_size: int = Field(50, ge=1, le=200)
+
+
+@router.post("/attachments/search")
+def api_attachments_search(
+    req: AttachmentSearchRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Search indexed attachments by filename — and by extracted content when
+    Tika is enabled (the service forces filename-only otherwise).
+
+    ``content_search_available`` tells the UI whether the content toggle is
+    meaningful right now (copy-must-match-behavior).
+    """
+    if req.include_all and user.role == UserRole.admin:
+        # Audited escalation — log the attempt itself, before any results.
+        log_action(
+            db,
+            user=user,
+            action="restore.search_all",
+            resource_type="restore",
+            details={
+                "kind": "attachments",
+                "query": req.query,
+                "accounts": len(req.account_ids) if req.account_ids else "all",
+            },
+            ip_address=request.client.host if request.client else None,
+        )
+    result = search_service.search_attachments(
+        db,
+        user=user,
+        query=req.query,
+        account_ids=req.account_ids,
+        include_all=req.include_all,
+        exts=req.exts,
+        min_size=req.min_size,
+        max_size=req.max_size,
+        include_content=req.include_content,
+        range_start=req.range_start,
+        range_end=req.range_end,
+        page=req.page,
+        page_size=req.page_size,
+    )
+    result["content_search_available"] = settings.tika_enabled
+    return result
+
+
+_FILENAME_HEADER_STRIP_RE = re.compile(r'["\\\x00-\x1f\x7f]')
+
+
+def _attachment_disposition(filename: str) -> str:
+    """RFC 6266 Content-Disposition for a hostile-input filename.
+
+    Quotes, backslashes and control chars (CR/LF included) are stripped —
+    no header splitting, no quoted-string escape. The plain ``filename``
+    form replaces what's left of non-ASCII with underscores; ``filename*``
+    carries the real name percent-encoded (RFC 5987).
+    """
+    clean = _FILENAME_HEADER_STRIP_RE.sub("", filename or "") or "attachment"
+    ascii_name = "".join(ch if ch.isascii() else "_" for ch in clean)
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(clean, safe='')}"
+
+
+@router.get("/attachments/{account_id}/{message_id_hash_hex}/{part_index}/download")
+def api_attachment_download(
+    account_id: str,
+    message_id_hash_hex: str,
+    part_index: int,
+    request: Request,
+    include_all: bool = False,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Stream one attachment part as a download, live or from snapshot.
+
+    The triple (account, message hash, part_index) addresses an attachment
+    index row; the raw message comes via the preview locator stack and is
+    re-walked counting ALL non-multipart leaves in walk order — the
+    part_index contract with index_service._parse_attachments.
+
+    ALWAYS application/octet-stream + nosniff: a hostile HTML/SVG attachment
+    must download, never execute on our origin. Every download is audited
+    (attachment.download); the admin include_all escalation needs no second
+    row — the always-on row carries an ``escalated`` flag when the bypass
+    actually fired.
+    """
+    account, escalated = _workspace_account_for_user(db, user, account_id, include_all)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    try:
+        message_id_hash = bytes.fromhex(message_id_hash_hex)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid hash") from None
+    att = (
+        db.query(MailIndexAttachment)
+        .filter(
+            MailIndexAttachment.account_id == account.id,
+            MailIndexAttachment.message_id_hash == message_id_hash,
+            MailIndexAttachment.part_index == part_index,
+        )
+        .first()
+    )
+    if not att:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    msg_row = (
+        db.query(MailIndexMessage)
+        .filter(
+            MailIndexMessage.account_id == account.id,
+            MailIndexMessage.message_id_hash == message_id_hash,
+        )
+        .first()
+    )
+    if not msg_row:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    # Same fetch strategy as staging_service._message_bytes: live file first
+    # (index locator, prefix fallback), else newest snapshot — and a cap-sized
+    # result is presumed truncated and refused (caps must never silently
+    # truncate user-bound bytes).
+    cap = staging_service.STAGING_DUMP_MAX_BYTES
+    raw = None
+    source = "live"
+    if msg_row.deleted_at is None:
+        path = preview_service._locate_live_file(account, msg_row)
+        if path:
+            try:
+                with open(path, "rb") as f:
+                    raw = f.read(cap)
+            except OSError:
+                logger.debug(
+                    "Live read failed for %s; falling back to snapshot",
+                    message_id_hash.hex(),
+                    exc_info=True,
+                )
+    if raw is None:
+        found = preview_service._snapshot_bytes(db, account, msg_row, max_bytes=cap)
+        if found:
+            raw, sid = found
+            source = f"snapshot:{sid}"
+    if raw is None:
+        raise HTTPException(status_code=404, detail="Message bytes not found")
+    if len(raw) >= cap:
+        raise HTTPException(status_code=502, detail="attachment too large to extract")
+
+    part = None
+    try:
+        msg = BytesParser(policy=policy.default).parsebytes(raw)
+        leaf_index = 0
+        for candidate in msg.walk():
+            if candidate.get_content_maintype() == "multipart":
+                continue
+            leaf_index += 1
+            if leaf_index == part_index:
+                part = candidate
+                break
+    except Exception:  # hostile MIME — same tolerance as _parse_attachments
+        part = None
+    if part is None:
+        # Belt and braces: immutable messages can't change MIME shape, but a
+        # truncated/odd parse must 404, not 500.
+        raise HTTPException(status_code=404, detail="Attachment part not found")
+    try:
+        payload = part.get_payload(decode=True)
+    except Exception:  # malformed CTE — same tolerance as _parse_attachments
+        payload = None
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Attachment part not decodable")
+
+    details = {
+        "message_id_hash": message_id_hash.hex(),
+        "part_index": part_index,
+        "source": source,
+    }
+    if escalated:
+        details["escalated"] = True
+    log_action(
+        db,
+        user=user,
+        action="attachment.download",
+        resource_type="attachment",
+        resource_id=account.id,
+        resource_name=att.filename,
+        details=details,
+        ip_address=request.client.host if request.client else None,
+    )
+    return Response(
+        content=payload,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": _attachment_disposition(att.filename),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +474,12 @@ def create_restore(
         # Push manifests must be server-built (staging_service.push reconciles
         # first and scopes filenames); a client-supplied one is refused.
         raise HTTPException(status_code=400, detail="Use /api/restore/staging/push")
+    # Any non-"original" mapping is a custom destination root the worker nests
+    # everything under (including the workspace's "Restored/<date>" and typed
+    # Custom paths) — same hygiene as the staging push custom folder.
+    folder_mapping = body.folder_mapping
+    if folder_mapping != "original":
+        folder_mapping = _validate_custom_folder(folder_mapping, field="folder_mapping")
     source = account_service.get_account(db, body.source_account_id, user)
     if not source:
         raise HTTPException(status_code=404, detail="Source account not found")
@@ -218,7 +494,7 @@ def create_restore(
         target_account_id=body.target_account_id,
         restore_mode=body.restore_mode,
         requested_by=user.id,
-        folder_mapping=body.folder_mapping,
+        folder_mapping=folder_mapping,
         skip_duplicates=body.skip_duplicates,
         selected_folders=body.selected_folders,
         selected_uids=body.selected_uids,
@@ -435,13 +711,27 @@ def list_mailboxes(
             return []
 
         mailboxes = []
+        seen: set[str] = set()
         for item in folder_data:
             if not item or item == b"":
                 continue
-            parsed = _parse_folder_name(item, namespace_prefix)
+            decoded = item.decode() if isinstance(item, bytes) else item
+            # Skip non-selectable folders (parent placeholders like
+            # "[Gmail]") — picking one as a restore destination fails
+            # upstream (mirrors _list_namespace_folders).
+            if "\\Noselect" in decoded:
+                continue
+            parsed = _parse_folder_name(decoded, namespace_prefix)
             if not parsed:
                 continue
             full_name, short_name = parsed
+            # Dovecot can LIST the same folder twice (byte-identical lines —
+            # stale dovecot.list.index, seen in the wild on an Outlook
+            # account). Duplicate names crash the UI's keyed x-for, which
+            # then renders ZERO picker options — dedupe, order-preserving.
+            if full_name in seen:
+                continue
+            seen.add(full_name)
             msg_count = 0
             st, st_data = conn.status(f'"{full_name}"', "(MESSAGES)")
             if st == "OK":
@@ -970,8 +1260,9 @@ class RestoreSearchRequest(BaseModel):
     snapshot_id: str | None = None
     deep: bool = False
     include_all: bool = False
-    page: int = 1
-    page_size: int = 50
+    # page=0 would compile to a negative OFFSET (PG errors out at runtime).
+    page: int = Field(1, ge=1)
+    page_size: int = Field(50, ge=1, le=200)
 
 
 @router.post("/search")

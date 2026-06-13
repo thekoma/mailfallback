@@ -1,0 +1,79 @@
+{# Message preview pane — shared by the single-mail and attachment presets.
+   Included once inside each preset's x-if template (only one preset renders
+   at a time, so the Alpine preview state never paints twice). All fields
+   render via x-text — never x-html (message content is hostile input). #}
+{# The mobile bottom-sheet lift needs no state class: its bottom sums the
+   measured dock vars, which are 0px while their bar is hidden. #}
+<div class="ws-preview" x-show="previewOpen" x-transition>
+  <div class="ws-preview-head">
+    <h4 class="ws-field-label">Preview</h4>
+    <button type="button" class="ws-preview-close" @click="closePreview()"
+            title="Close preview" aria-label="Close preview">
+      <i data-lucide="x" class="icon-sm"></i>
+    </button>
+  </div>
+  {# Attachment context: sibling attachments of the SAME message preview the
+     same content — without this line (and the table-row highlight) clicking
+     another row looks like nothing happened. #}
+  <p class="ws-preview-attsel text-xsmall" x-show="previewIsAttachment">
+    <i data-lucide="paperclip" class="icon-sm icon-inline"></i>
+    <span x-text="previewRef ? (previewRef.filename || '(unnamed)') : ''"></span><span class="text-muted" x-text="previewRef && previewRef.size_bytes != null ? ' · ' + fmtSize(previewRef.size_bytes) : ''"></span>
+  </p>
+  <template x-if="previewLoading"><p class="text-muted text-small">Loading…</p></template>
+  <template x-if="!previewLoading && preview">
+    <div>
+      <div class="ws-preview-subject" x-text="preview.subject || '(no subject)'"></div>
+      <p class="ws-preview-kv">
+        <strong>From</strong> <span x-text="preview.from_addr || '?'"></span>
+        <strong>To</strong> <span x-text="(preview.to_addrs || []).join(', ') || '—'"></span><br>
+        <strong>Date</strong> <span x-text="preview.date_sent ? preview.date_sent.slice(0,16).replace('T',' ') : '—'"></span>
+        <strong>Folder</strong> <span x-text="preview.folder_path"></span>
+        <strong>Source</strong> <span x-text="preview.source"></span>
+      </p>
+      <div class="ws-preview-body" x-text="preview.body_snippet || '(no text)'"></div>
+      <div class="ws-preview-atts" x-show="preview.attachments && preview.attachments.length">
+        <span class="ws-field-label">Attachments</span>
+        {# Real download links (same endpoint as the attachment table):
+           part_index rides in the preview payload, ids come from previewRef.
+           Works in both preview contexts — message rows and attachment rows. #}
+        <template x-for="(a, ai) in preview.attachments" :key="ai">
+          <a class="ws-att-chip" title="Download"
+             :href="(previewRef && a.part_index != null)
+                    ? attachmentDownloadUrl(previewRef.account_id, previewRef.message_id_hash, a.part_index)
+                    : null">
+            <span x-text="a.filename"></span><span class="text-muted" x-text="' · ' + fmtSize(a.size_bytes)"></span>
+          </a>
+        </template>
+      </div>
+      <div class="ws-preview-actions">
+        {# x-if, NOT x-show, for anything wearing ws-btn-primary/-danger:
+           their anti-Pico `display: inline-flex !important` beats x-show's
+           inline display:none, so an x-show'd primary action stays visible
+           (the Download anchor measurably did in message previews). The
+           ghost variants carry no !important display — x-show is fine there. #}
+        <template x-if="previewRef">
+          <button class="ws-btn-primary" @click="addToStaging([previewRef])">
+            <i data-lucide="inbox" class="icon-sm icon-inline"></i> Add to staging
+          </button>
+        </template>
+        {# Attachment context: native download of the selected attachment
+           replaces the webmail link (noise there — webmail is an optional
+           add-on and the user came for the file). #}
+        <template x-if="previewIsAttachment">
+          <a class="ws-btn-primary ws-preview-download"
+             :href="attDownloadUrl(previewRef)">
+            <i data-lucide="download" class="icon-sm icon-inline"></i> Download attachment
+          </a>
+        </template>
+        {% if webmail_enabled and webmail_url %}
+        <a class="ws-btn-ghost ws-preview-webmail" :href="webmailUrl"
+           target="_blank" rel="noopener"
+           x-show="preview.alive_in_live && !previewIsAttachment">Open webmail</a>
+        {% endif %}
+      </div>
+    </div>
+  </template>
+  <template x-if="!previewLoading && !preview">
+    <p class="text-muted text-small">Preview unavailable for this message.</p>
+  </template>
+</div>

@@ -7,10 +7,11 @@ import time
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, literal_column, null, text
+from sqlalchemy.orm import Query, Session
 
 from mailfallback.models import (
+    ATTACHMENTS_FTS_EXPR,
     Account,
     MailIndexAttachment,
     MailIndexMessage,
@@ -23,6 +24,12 @@ from mailfallback.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ts_headline options for attachment content snippets. The [[[ / ]]] markers
+# are a contract with the workspace JS: it splits on them and builds text
+# nodes + <mark> elements — snippets are NEVER rendered as HTML (the content
+# comes from hostile mail attachments).
+ATTACHMENT_HEADLINE_OPTS = "StartSel=[[[,StopSel=]]],MaxWords=18,MinWords=8"
 
 
 def _accessible_account_ids(db: Session, user: User) -> list[str]:
@@ -141,8 +148,16 @@ def search_messages(
         snap_by_msg: dict[tuple[str, bytes], list[str]] = {}
         for acc, h, sid in snap_rows:
             snap_by_msg.setdefault((acc, h), []).append(sid)
+        # Explicit columns, never the entity: content_text (Tika-extracted,
+        # up to 200 KB per row) must not be dragged into every search page.
         att_rows = (
-            db.query(MailIndexAttachment)
+            db.query(
+                MailIndexAttachment.account_id,
+                MailIndexAttachment.message_id_hash,
+                MailIndexAttachment.filename,
+                MailIndexAttachment.ext,
+                MailIndexAttachment.size_bytes,
+            )
             .filter(
                 MailIndexAttachment.account_id.in_(scope),
                 MailIndexAttachment.message_id_hash.in_(hashes),
@@ -152,9 +167,9 @@ def search_messages(
         )
         # part_index order = MIME order, so UI chips match the message layout
         atts_by_msg: dict[tuple[str, bytes], list[dict[str, Any]]] = {}
-        for a in att_rows:
-            atts_by_msg.setdefault((a.account_id, a.message_id_hash), []).append(
-                {"filename": a.filename, "ext": a.ext, "size_bytes": a.size_bytes}
+        for acc_id, msg_hash, filename, ext, size_bytes in att_rows:
+            atts_by_msg.setdefault((acc_id, msg_hash), []).append(
+                {"filename": filename, "ext": ext, "size_bytes": size_bytes}
             )
     else:
         snap_by_msg = {}
@@ -188,6 +203,224 @@ def search_messages(
         "page_size": page_size,
         "partial": partial,
     }
+
+
+def _build_attachment_query(
+    db: Session,
+    *,
+    scope: list[str],
+    query: str,
+    content_mode: bool,
+    exts: list[str] | None,
+    min_size: int | None,
+    max_size: int | None,
+    dialect_name: str,
+    range_start: datetime | None = None,
+    range_end: datetime | None = None,
+) -> Query:
+    """Build the attachment search query: explicit columns, JOIN to messages.
+
+    `dialect_name` is a parameter instead of being read off `db` so tests can
+    compile the PostgreSQL variant of the statement without a PG server.
+    """
+    terms = query.split()
+    if content_mode and terms and dialect_name == "postgresql":
+        # Inline regconfig literal: SQLAlchemy types a plain "simple" string
+        # as REGCONFIG, which has no literal renderer (breaks literal_binds
+        # compiles) — and the inline form matches the PG-docs style anyway.
+        regconfig = literal_column("'simple'")
+        ts_query = func.plainto_tsquery(regconfig, query)
+        snippet_col = func.ts_headline(
+            regconfig,
+            func.coalesce(MailIndexAttachment.content_text, ""),
+            ts_query,
+            ATTACHMENT_HEADLINE_OPTS,
+        ).label("content_snippet")
+        # Filename-only matches must not get a headline (it would render the
+        # first words of unrelated content) — track content hits explicitly.
+        content_matched_col = (
+            func.to_tsvector(regconfig, func.coalesce(MailIndexAttachment.content_text, ""))
+            .op("@@")(ts_query)
+            .label("content_matched")
+        )
+    else:
+        # Also hit with content_mode + empty query (the default UI state once
+        # the content toggle lands): no per-row ts_headline/to_tsvector cost
+        # when there is nothing to highlight.
+        snippet_col = null().label("content_snippet")
+        content_matched_col = null().label("content_matched")
+
+    q = (
+        db.query(
+            MailIndexAttachment.account_id,
+            MailIndexAttachment.message_id_hash,
+            MailIndexAttachment.part_index,
+            MailIndexAttachment.filename,
+            MailIndexAttachment.ext,
+            MailIndexAttachment.size_bytes,
+            # Raw Message-Id: the UI's unified selection restores to origin
+            # via /api/restore/resolve-uids, which takes Message-Ids.
+            MailIndexMessage.message_id,
+            MailIndexMessage.subject,
+            MailIndexMessage.from_addr,
+            MailIndexMessage.folder_path,
+            MailIndexMessage.date_sent,
+            MailIndexMessage.deleted_at,
+            snippet_col,
+            content_matched_col,
+        )
+        .join(
+            MailIndexMessage,
+            (MailIndexMessage.account_id == MailIndexAttachment.account_id)
+            & (MailIndexMessage.message_id_hash == MailIndexAttachment.message_id_hash),
+        )
+        .filter(MailIndexAttachment.account_id.in_(scope))
+    )
+
+    if terms:
+        if content_mode and dialect_name == "postgresql":
+            # PG matches expression indexes structurally: the WHERE clause
+            # must use models.ATTACHMENTS_FTS_EXPR verbatim or the GIN index
+            # (idx_attachments_fts) degrades to a seq scan.
+            match = text(f"{ATTACHMENTS_FTS_EXPR} @@ plainto_tsquery('simple', :fts_q)").bindparams(
+                fts_q=query
+            )
+        elif content_mode:
+            # SQLite fallback: every term must hit filename OR content_text.
+            match = and_(
+                *(
+                    MailIndexAttachment.filename.ilike(f"%{t}%")
+                    | MailIndexAttachment.content_text.ilike(f"%{t}%")
+                    for t in terms
+                )
+            )
+        else:
+            match = and_(*(MailIndexAttachment.filename.ilike(f"%{t}%") for t in terms))
+        q = q.filter(match)
+
+    if exts:
+        q = q.filter(MailIndexAttachment.ext.in_([e.lower().lstrip(".") for e in exts]))
+    # NULL size_bytes is excluded by SQL comparison semantics when a size
+    # filter is set — and included when no size filter is given.
+    if min_size is not None:
+        q = q.filter(MailIndexAttachment.size_bytes >= min_size)
+    if max_size is not None:
+        q = q.filter(MailIndexAttachment.size_bytes <= max_size)
+    # Date range on the JOINED message — NULL date_sent is "unknown date" and
+    # stays in the result set for any range (the search_messages semantics:
+    # a message whose Date: header didn't parse must not disappear).
+    if range_start:
+        q = q.filter(
+            (MailIndexMessage.date_sent >= range_start) | MailIndexMessage.date_sent.is_(None)
+        )
+    if range_end:
+        q = q.filter(
+            (MailIndexMessage.date_sent <= range_end) | MailIndexMessage.date_sent.is_(None)
+        )
+
+    return q.order_by(
+        MailIndexMessage.date_sent.desc().nullslast(),
+        MailIndexAttachment.part_index,
+    )
+
+
+def search_attachments(
+    db: Session,
+    *,
+    user: User,
+    query: str = "",
+    account_ids: list[str] | None = None,
+    include_all: bool = False,
+    exts: list[str] | None = None,
+    min_size: int | None = None,
+    max_size: int | None = None,
+    include_content: bool = False,
+    range_start: datetime | None = None,
+    range_end: datetime | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, Any]:
+    """Search attachment rows by filename — and by extracted content when
+    `include_content` is set AND Tika is enabled (otherwise filename-only).
+
+    `range_start`/`range_end` filter on the containing message's date_sent,
+    NULL-tolerant like `search_messages` (unknown dates kept in any range).
+
+    Scope rules are identical to `search_messages`: accessible accounts
+    (ownership OR groups) for everyone; `include_all=True` widens an ADMIN's
+    scope to every account and callers must audit that escalation. Non-admins:
+    include_all is ignored.
+
+    Returns: {results, total, page, page_size}
+    """
+    from mailfallback.config import settings
+
+    empty = {"results": [], "total": 0, "page": page, "page_size": page_size}
+    visible = _accessible_account_ids(db, user)
+    if include_all and user.role == UserRole.admin:
+        visible = [a_id for (a_id,) in db.query(Account.id).all()]
+    if not visible:
+        return empty
+    scope = [a for a in account_ids if a in visible] if account_ids else visible
+    if not scope:
+        return empty
+
+    content_mode = include_content and settings.tika_enabled
+    q = _build_attachment_query(
+        db,
+        scope=scope,
+        query=query,
+        content_mode=content_mode,
+        exts=exts,
+        min_size=min_size,
+        max_size=max_size,
+        dialect_name=db.bind.dialect.name,
+        range_start=range_start,
+        range_end=range_end,
+    )
+    total = q.count()
+    rows = q.offset((page - 1) * page_size).limit(page_size).all()
+
+    snap_by_msg: dict[tuple[str, bytes], list[str]] = {}
+    if rows:
+        hashes = list({r.message_id_hash for r in rows})
+        snap_rows = (
+            db.query(
+                SnapshotMessage.account_id,
+                SnapshotMessage.message_id_hash,
+                SnapshotMessage.snapshot_id,
+            )
+            .filter(SnapshotMessage.message_id_hash.in_(hashes))
+            .all()
+        )
+        for acc, h, sid in snap_rows:
+            snap_by_msg.setdefault((acc, h), []).append(sid)
+
+    results = []
+    for r in rows:
+        alive = r.deleted_at is None
+        snapshots = sorted(snap_by_msg.get((r.account_id, r.message_id_hash), []))
+        results.append(
+            {
+                "account_id": r.account_id,
+                "message_id_hash": r.message_id_hash.hex(),
+                "message_id": r.message_id,
+                "part_index": r.part_index,
+                "filename": r.filename,
+                "ext": r.ext,
+                "size_bytes": r.size_bytes,
+                "content_snippet": r.content_snippet if r.content_matched else None,
+                "subject": r.subject,
+                "from_addr": r.from_addr,
+                "folder_path": r.folder_path,
+                "date_sent": r.date_sent.isoformat() if r.date_sent else None,
+                "alive_in_live": alive,
+                "snapshots": snapshots,
+                "has_live_or_snapshot": alive or bool(snapshots),
+            }
+        )
+
+    return {"results": results, "total": total, "page": page, "page_size": page_size}
 
 
 def _dovecot_body_search(
