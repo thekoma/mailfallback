@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from mailfallback.models import (
     Account,
+    MailIndexAttachment,
     MailIndexMessage,
     SnapshotMessage,
     User,
@@ -131,8 +132,24 @@ def search_messages(
         snap_by_msg: dict[tuple[str, bytes], list[str]] = {}
         for acc, h, sid in snap_rows:
             snap_by_msg.setdefault((acc, h), []).append(sid)
+        att_rows = (
+            db.query(MailIndexAttachment)
+            .filter(
+                MailIndexAttachment.account_id.in_(scope),
+                MailIndexAttachment.message_id_hash.in_(hashes),
+            )
+            .order_by(MailIndexAttachment.part_index)
+            .all()
+        )
+        # part_index order = MIME order, so UI chips match the message layout
+        atts_by_msg: dict[tuple[str, bytes], list[dict[str, Any]]] = {}
+        for a in att_rows:
+            atts_by_msg.setdefault((a.account_id, a.message_id_hash), []).append(
+                {"filename": a.filename, "ext": a.ext, "size_bytes": a.size_bytes}
+            )
     else:
         snap_by_msg = {}
+        atts_by_msg = {}
 
     results = []
     for r in rows:
@@ -149,6 +166,9 @@ def search_messages(
                 "alive_in_live": r.deleted_at is None,
                 "snapshots": sorted(snap_by_msg.get((r.account_id, r.message_id_hash), [])),
                 "body_matched": (r.message_id_hash in body_hashes) if deep else None,
+                "message_id_hash": r.message_id_hash.hex(),
+                "has_attachments": r.has_attachments,
+                "attachments": atts_by_msg.get((r.account_id, r.message_id_hash), []),
             }
         )
 

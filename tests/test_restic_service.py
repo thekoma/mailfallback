@@ -261,6 +261,60 @@ def test_list_files_parses_restic_ls_json(mock_run, db_session, default_store):
     assert "/INBOX" not in files
 
 
+class TestDumpFile:
+    @patch("mailfallback.services.restic_service.subprocess.run")
+    def test_dump_file_returns_bytes(self, mock_run, s3_destination):
+        s3_destination.insecure_tls = False
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=b"RAW BYTES", stderr=b""
+        )
+
+        out = restic_service.dump_file(s3_destination, "acct-id", "ab12", "/data/m/acct/cur/x:2,S")
+
+        assert out == b"RAW BYTES"
+        cmd = mock_run.call_args.args[0]
+        assert cmd == ["restic", "dump", "ab12", "/data/m/acct/cur/x:2,S"]
+        # binary mode: text=True would corrupt raw message bytes
+        assert "text" not in mock_run.call_args.kwargs
+        env = mock_run.call_args.kwargs["env"]
+        assert env["RESTIC_REPOSITORY"] == "s3:endpoint/bucket/acct-id"
+
+    @patch("mailfallback.services.restic_service.subprocess.run")
+    def test_dump_file_failure_returns_none(self, mock_run, s3_destination):
+        s3_destination.insecure_tls = False
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout=b"", stderr=b"dump error"
+        )
+
+        out = restic_service.dump_file(s3_destination, "acct-id", "ab12", "/x")
+
+        assert out is None
+
+    @patch("mailfallback.services.restic_service.subprocess.run")
+    def test_dump_file_truncates_at_max_bytes(self, mock_run, s3_destination):
+        s3_destination.insecure_tls = False
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=b"A" * 100, stderr=b""
+        )
+
+        out = restic_service.dump_file(s3_destination, "acct-id", "ab12", "/x", max_bytes=10)
+
+        assert out == b"A" * 10
+
+    @patch("mailfallback.services.restic_service.subprocess.run")
+    def test_dump_file_insecure_tls_flag(self, mock_run, s3_destination):
+        s3_destination.insecure_tls = True
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=b"x", stderr=b""
+        )
+
+        restic_service.dump_file(s3_destination, "acct-id", "ab12", "/x")
+
+        cmd = mock_run.call_args.args[0]
+        assert "--insecure-tls" in cmd
+        assert cmd.index("--insecure-tls") < cmd.index("dump")
+
+
 class TestPasswordOverride:
     def test_build_env_uses_override_when_given(self, s3_destination):
         # mock_decrypt (autouse) strips the "enc-" prefix, mirroring decryption

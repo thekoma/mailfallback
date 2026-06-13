@@ -2,11 +2,13 @@
 
 Public functions:
 - upsert_message_set(db, account_id) -> int
+- record_snapshot / prune_snapshot / backfill_snapshots — snapshot bitmap upkeep
+- backfill_attachments(db, account_id) -> int — attachment rows for pre-era index rows
 
-Future tasks add: record_snapshot, prune_snapshot, backfill_snapshots.
-
-The service owns reads from the live Maildir filesystem (header-only via
-email.parser.BytesHeaderParser — body is never touched).
+The service owns reads from the live Maildir filesystem. Header upserts use
+email.parser.BytesHeaderParser (headers only); on first insert of a message
+the file gets one full MIME walk (_parse_attachments) for attachment metadata.
+Maildir files are immutable, so attachments are never re-parsed on later walks.
 
 Known limitations:
 - Messages without a Message-Id header are silently skipped (the index PK
@@ -19,13 +21,14 @@ import logging
 import os
 from datetime import UTC, datetime
 from email import policy
-from email.parser import BytesHeaderParser
+from email.parser import BytesHeaderParser, BytesParser
 from email.utils import getaddresses, parsedate_to_datetime
 
 from sqlalchemy.orm import Session
 
 from mailfallback.models import (
     Account,
+    MailIndexAttachment,
     MailIndexMessage,
     MailIndexRebuildStatus,
 )
@@ -80,6 +83,53 @@ def _parse_headers(path: str) -> dict | None:
     }
 
 
+def _parse_attachments(path: str) -> list[dict] | None:
+    """Full MIME walk of one Maildir file. Returns attachment metadata rows.
+
+    An attachment is a non-multipart leaf with a filename (Content-Disposition
+    or Content-Type name param — policy.default decodes RFC 2047/2231).
+    `part_index` numbers ALL non-multipart leaves in walk order, so a later
+    re-walk can address the same part without ambiguity.
+    `size_bytes` is None when the decoded size is unknown (message/* parts,
+    malformed CTE) — never a fake 0. Returns None on unreadable/unparsable files.
+    """
+    parser = BytesParser(policy=policy.default)
+    try:
+        with open(path, "rb") as f:
+            msg = parser.parse(f)
+    except (OSError, ValueError):
+        return None
+    out: list[dict] = []
+    part_index = 0
+    try:
+        for part in msg.walk():
+            if part.get_content_maintype() == "multipart":
+                continue
+            part_index += 1
+            filename = part.get_filename()
+            if not filename:
+                continue
+            try:
+                # None for non-decodable parts (e.g. message/rfc822)
+                payload = part.get_payload(decode=True)
+            except Exception:  # malformed CTE — keep the row, size unknown
+                payload = None
+            ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            out.append(
+                {
+                    "part_index": part_index,
+                    "filename": filename,
+                    "ext": ext,
+                    "size_bytes": len(payload) if payload is not None else None,
+                    "content_type": part.get_content_type(),
+                }
+            )
+    except Exception:
+        logger.warning("Attachment parse failed for %s", path, exc_info=True)
+        return None
+    return out
+
+
 def _walk_maildir(maildir_root: str):
     """Yield (folder_path, filename, full_path) for every Maildir mail file."""
     for dirpath, _, filenames in os.walk(maildir_root):
@@ -90,6 +140,20 @@ def _walk_maildir(maildir_root: str):
         folder = "INBOX" if rel in ("cur", "new") else (os.path.dirname(rel) or "INBOX")
         for fn in filenames:
             yield folder, fn, os.path.join(dirpath, fn)
+
+
+def maildir_folder_bases(maildir_path: str, folder_path: str) -> tuple[str, ...]:
+    """Candidate filesystem base directories for an indexed folder_path.
+
+    "INBOX" is ambiguous: production mbsync writes a real INBOX/ subdirectory
+    (`Inbox {path}/INBOX` in mbsync_config), but _walk_maildir also maps bare
+    top-level cur/new to folder_path="INBOX". Callers reconstructing a file
+    path from index coordinates must therefore try BOTH bases, in this order.
+    Every other folder (including "INBOX/Sub") maps 1:1 to its subdirectory.
+    """
+    if folder_path == "INBOX":
+        return (os.path.join(maildir_path, "INBOX"), maildir_path)
+    return (os.path.join(maildir_path, folder_path),)
 
 
 def upsert_message_set(db: Session, account_id: str) -> int:
@@ -135,14 +199,27 @@ def upsert_message_set(db: Session, account_id: str) -> int:
                 existing.folder_path = folder
                 existing.maildir_filename = filename
             else:
+                atts = _parse_attachments(full_path)
                 db.add(
                     MailIndexMessage(
                         account_id=account_id,
                         folder_path=folder,
                         maildir_filename=filename,
+                        has_attachments=bool(atts),
+                        # parse failure (None) stays NULL so the backfill
+                        # (attachments_indexed_at IS NULL) retries the file
+                        attachments_indexed_at=now if atts is not None else None,
                         **parsed,
                     )
                 )
+                for a in atts or []:
+                    db.add(
+                        MailIndexAttachment(
+                            account_id=account_id,
+                            message_id_hash=parsed["message_id_hash"],
+                            **a,
+                        )
+                    )
             touched += 1
             # Bound transaction size for big mailboxes (150k+ messages)
             if touched % BATCH_SIZE == 0:
@@ -226,9 +303,13 @@ def prune_snapshot(db: Session, snapshot_id: str) -> int:
     return deleted
 
 
-def _filename_prefix(filename: str) -> str:
+def maildir_filename_prefix(filename: str) -> str:
     """Return the stable prefix of a Maildir filename (everything before the
     flag suffix). E.g. '1234.M5.host:2,RS' -> '1234.M5.host:2,'.
+
+    Flags change on read/seen renames while the prefix stays put — every
+    filename comparison across time (index row vs live dir, index row vs
+    snapshot listing) must apply this helper to BOTH sides.
     """
     if ":2," in filename:
         return filename.split(":2,")[0] + ":2,"
@@ -261,7 +342,7 @@ def backfill_snapshots(db: Session, account_id: str):
         )
         .all()
     )
-    prefix_to_hash = {_filename_prefix(fn): h for h, fn in alive}
+    prefix_to_hash = {maildir_filename_prefix(fn): h for h, fn in alive}
 
     snaps = restic_service.list_snapshots(backup.destination, account_id)
 
@@ -309,7 +390,7 @@ def backfill_snapshots(db: Session, account_id: str):
                 if "/cur/" not in path and "/new/" not in path:
                     continue
                 fn = path.rsplit("/", 1)[-1]
-                h = prefix_to_hash.get(_filename_prefix(fn))
+                h = prefix_to_hash.get(maildir_filename_prefix(fn))
                 if h:
                     seen_hashes.add(h)
             inserted = 0
@@ -349,3 +430,69 @@ def backfill_snapshots(db: Session, account_id: str):
             rs.last_error = str(e)
             db.commit()
         raise
+
+
+def backfill_attachments(db: Session, account_id: str) -> int:
+    """Parse attachments for alive rows that pre-date the attachment index.
+
+    Resumable: only rows with attachments_indexed_at IS NULL are processed.
+    Two failure modes are deliberately distinct:
+    - Maildir file NOT FOUND (deleted, or flag-suffix renamed since the last
+      walk): the row is skipped WITHOUT setting the marker — the next
+      upsert_message_set refreshes maildir_filename or sets deleted_at, so
+      the pending set converges instead of baking has_attachments=False.
+    - File present but unparsable/unreadable: the marker IS set, so one bad
+      file cannot wedge the backfill — it just stays without attachment rows.
+    Idempotent per message: delete-and-reinsert its attachment rows.
+    Returns the number of rows marked processed (skipped rows not counted).
+    """
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not account:
+        raise ValueError(f"Account {account_id} not found")
+
+    pending = (
+        db.query(MailIndexMessage)
+        .filter(
+            MailIndexMessage.account_id == account_id,
+            MailIndexMessage.deleted_at.is_(None),
+            MailIndexMessage.attachments_indexed_at.is_(None),
+        )
+        .all()
+    )
+    processed = 0
+    now = datetime.now(UTC)
+    for row in pending:
+        path = None
+        for base in maildir_folder_bases(account.maildir_path, row.folder_path):
+            for sub in ("cur", "new"):
+                candidate = os.path.join(base, sub, row.maildir_filename)
+                if os.path.exists(candidate):
+                    path = candidate
+                    break
+            if path:
+                break
+        if path is None:
+            # File gone (or flag-suffix renamed): leave the row pending so the
+            # next upsert_message_set reconciles it. Re-checking later costs
+            # only the os.path.exists probes above.
+            continue
+        atts = _parse_attachments(path)
+        db.query(MailIndexAttachment).filter(
+            MailIndexAttachment.account_id == account_id,
+            MailIndexAttachment.message_id_hash == row.message_id_hash,
+        ).delete(synchronize_session=False)
+        for a in atts or []:
+            db.add(
+                MailIndexAttachment(
+                    account_id=account_id,
+                    message_id_hash=row.message_id_hash,
+                    **a,
+                )
+            )
+        row.has_attachments = bool(atts)
+        row.attachments_indexed_at = now
+        processed += 1
+        if processed % BATCH_SIZE == 0:
+            db.commit()
+    db.commit()
+    return processed

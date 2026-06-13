@@ -8,6 +8,7 @@ import pytest
 
 from mailfallback.models import (
     Account,
+    MailIndexAttachment,
     MailIndexMessage,
     User,
     UserRole,
@@ -149,6 +150,61 @@ def test_search_pagination(db_session, search_setup):
     )
     assert len(page1["results"]) == 2
     assert page1["total"] == 3
+
+
+def test_results_include_attachments(db_session, search_setup):
+    """Each hit carries attachment chip data ({filename, ext, size_bytes}) and
+    the hex message_id_hash the preview pane needs to call the preview API."""
+    acct = search_setup["account"]
+    row = MailIndexMessage(
+        account_id=acct.id,
+        message_id_hash=b"\x04" * 20,
+        message_id="<4@h>",
+        subject="report allegato",
+        from_addr="boss@ditta.it",
+        from_name="Boss",
+        date_sent=datetime.now(UTC),
+        folder_path="INBOX",
+        maildir_filename="4.host:2,",
+        has_attachments=True,
+    )
+    db_session.add(row)
+    db_session.add(
+        MailIndexAttachment(
+            account_id=acct.id,
+            message_id_hash=b"\x04" * 20,
+            part_index=2,
+            filename="a.pdf",
+            ext="pdf",
+            size_bytes=10,
+        )
+    )
+    db_session.commit()
+
+    out = search_service.search_messages(
+        db_session,
+        user=search_setup["user"],
+        query="allegato",
+    )
+    assert out["total"] == 1
+    hit = out["results"][0]
+    assert hit["has_attachments"] is True
+    assert hit["attachments"] == [{"filename": "a.pdf", "ext": "pdf", "size_bytes": 10}]
+    # bytes -> hex string contract, consumed by the preview endpoint URL
+    assert hit["message_id_hash"] == row.message_id_hash.hex()
+
+
+def test_results_without_attachments_have_empty_list(db_session, search_setup):
+    """has_attachments=False (the column default) yields attachments == [] so
+    the UI can iterate without guarding for a missing key."""
+    out = search_service.search_messages(
+        db_session,
+        user=search_setup["user"],
+        query="hello",
+    )
+    hit = out["results"][0]
+    assert hit["has_attachments"] is False
+    assert hit["attachments"] == []
 
 
 def _install_fake_dovecot(monkeypatch, conn):
