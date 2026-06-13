@@ -1702,17 +1702,6 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   box-shadow: 0 0 4px rgba(255,255,255,0.6);
 }
 
-.ws-cost {
-  margin: 0;
-  font-size: .75rem;
-  color: var(--ws-text-muted);
-  font-style: normal;
-}
-.ws-cost.is-loading {
-  color: var(--ws-warn);
-  font-style: italic;
-}
-
 /* === Main panel === */
 
 .ws-panel {
@@ -1983,21 +1972,41 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   flex: 1;
   min-width: 0;
 }
+.ws-result-body:focus-visible {
+  outline: 2px solid var(--ws-cyan);
+  outline-offset: 2px;
+  border-radius: .25rem;
+}
+/* Subject/meta are flex rows: the text span ellipsizes, badges keep their
+   size — a long subject can't push the account badge out of view. */
 .ws-result-subject {
   font-weight: 500;
   font-size: .95rem;
   color: var(--ws-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: .4rem;
 }
 .ws-result-meta {
   margin-top: .15rem;
   color: var(--ws-text-muted);
   font-size: .75rem;
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+}
+.ws-result-subject-text,
+.ws-result-meta-text {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.ws-result-subject .ws-badge,
+.ws-result-meta .ws-badge,
+.ws-result-subject .ws-att-mark {
+  flex: 0 0 auto;
 }
 
 /* Provenance badges */
@@ -2025,6 +2034,77 @@ table.resizable th, table.resizable td { overflow: hidden; text-overflow: ellips
   background: rgba(167, 139, 250, 0.15);
   color: var(--ws-purple);
   border: 1px solid rgba(167, 139, 250, 0.3);
+}
+
+/* === Workspace: cross-account results + preview pane === */
+.ws-results-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 1rem; align-items: start; }
+.ws-badge-acct { background: var(--mfb-badge-syncing-bg); color: var(--mfb-badge-syncing-color); border: 1px solid var(--mfb-badge-syncing-border); }
+.ws-badge-gone { background: transparent; color: var(--ws-text-dim); border: 1px solid var(--ws-border); }
+.ws-att-mark { color: var(--ws-text-muted); }
+.ws-atts { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-top: 0.25rem; }
+.ws-att-chip { background: var(--ws-input-bg); border: 1px solid var(--ws-border); border-radius: 6px; padding: 0 0.5rem; font-size: 0.72rem; color: var(--ws-text-muted); white-space: nowrap; }
+.ws-preview { background: var(--ws-card); border: 1px solid var(--ws-border); border-radius: 10px; padding: 0.6rem 1rem 1rem; position: sticky; top: 1rem; }
+.ws-preview-subject { font-weight: 650; margin-bottom: 0.3rem; }
+.ws-preview-kv { font-size: 0.8rem; color: var(--ws-text-muted); line-height: 1.5; }
+.ws-preview-kv strong { color: var(--ws-text); font-weight: 600; margin-right: 0.2rem; }
+.ws-preview-kv strong + span { margin-right: 0.7rem; }
+.ws-preview-body { font-size: 0.85rem; line-height: 1.55; max-height: 16rem; overflow: hidden; position: relative; }
+.ws-preview-body::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2.2rem; background: linear-gradient(transparent, var(--ws-card)); }
+.ws-preview-atts { border: 1px dashed var(--ws-border); border-radius: 8px; padding: 0.5rem 0.7rem; margin-top: 0.7rem; display: flex; gap: 0.3rem; flex-wrap: wrap; align-items: center; }
+.ws-preview-webmail { margin-top: 0.7rem; display: inline-block; }
+/* Pico paints [role="button"] as a primary button; the result body is a
+   click/keyboard target inside the row card, not a button — neutralize. */
+.ws-result-body[role="button"] {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  text-align: left;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  box-shadow: none;
+}
+/* Scope select shares the search-input field treatment (Pico defaults would
+   add bottom margin and theme colors that break the flex row). */
+.ws-root .ws-search-row .ws-scope {
+  flex: 0 0 auto;
+  width: auto !important;
+  max-width: 230px;
+  margin: 0;
+  padding: .65rem .8rem;
+  font-size: .9rem;
+  background: var(--ws-card);
+  border: 1px solid var(--ws-border);
+  border-radius: .5rem;
+  color: var(--ws-text);
+}
+/* Ghost button — used by the preview's "Open full in webmail" link. */
+.ws-root .ws-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .5rem 1rem;
+  font-size: .85rem;
+  font-weight: 600;
+  border-radius: .5rem;
+  border: 1px solid var(--ws-border);
+  background: transparent;
+  color: var(--ws-text);
+  cursor: pointer;
+  text-decoration: none;
+  transition: all .15s;
+}
+.ws-root .ws-btn-ghost:hover {
+  border-color: var(--ws-cyan);
+  color: var(--ws-cyan);
+  background: var(--ws-cyan-soft);
+  text-decoration: none;
+}
+@media (max-width: 768px) {
+  .ws-results-grid { grid-template-columns: 1fr; }
+  .ws-preview { position: static; }
 }
 
 /* Action bar */

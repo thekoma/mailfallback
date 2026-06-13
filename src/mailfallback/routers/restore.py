@@ -11,9 +11,15 @@ from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_current_user, get_db
-from mailfallback.models import BackupPolicy, RecoveryStatus, User
+from mailfallback.models import BackupPolicy, MailIndexMessage, RecoveryStatus, User
 from mailfallback.routers.dovecot import account_namespace_prefix
-from mailfallback.services import account_service, mount_service, restic_service, search_service
+from mailfallback.services import (
+    account_service,
+    mount_service,
+    preview_service,
+    restic_service,
+    search_service,
+)
 from mailfallback.services.audit_service import log_action
 from mailfallback.services.dovecot_auth import create_temp_imap_user, delete_temp_imap_user
 from mailfallback.services.imap_check import connect_imap
@@ -821,6 +827,119 @@ def api_restore_search(
         page=req.page,
         page_size=req.page_size,
     )
+
+
+@router.get("/preview/{account_id}/{message_id_hash_hex}")
+def api_restore_preview(
+    account_id: str,
+    message_id_hash_hex: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Headers + body snippet of one indexed message, live or from snapshot."""
+    account = account_service.get_account(db, account_id, user)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    try:
+        message_id_hash = bytes.fromhex(message_id_hash_hex)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid hash") from None
+    out = preview_service.get_preview(db, account, message_id_hash)
+    if out is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return out
+
+
+RESOLVE_UIDS_MAX_IDS = 200
+
+
+class ResolveUidsRequest(BaseModel):
+    account_id: str
+    message_ids: list[str]
+
+
+@router.post("/resolve-uids")
+def api_resolve_uids(
+    req: ResolveUidsRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Resolve Message-Ids to live IMAP UIDs, grouped by ready-to-SELECT folder key.
+
+    Restore-to-origin support for the workspace UI: the ``resolved`` mapping is
+    passed VERBATIM as ``selected_uids`` to POST /api/restore (selection mode).
+    Contract with services/restore_worker.py (which trusts the keys verbatim,
+    see _resolve_folders):
+
+    - Keys are namespace-prefixed IMAP paths as the temp Dovecot user sees
+      them — ``account_namespace_prefix(account) + folder_path``, e.g.
+      ``"Name (email) [abcd]/INBOX"``. The worker SELECTs each key as-is on
+      the temp-user connection (bare folder names fail there — B5 note in
+      _legacy_mount_workspace_search) and strips the prefix again for the
+      destination folder (_map_folder).
+    - Values are real IMAP UIDs; the worker filters via UID SEARCH/UID FETCH
+      in selection mode.
+
+    ``missing`` lists requested Message-Ids that resolve to no live message
+    (not indexed, deleted upstream, or not found via IMAP). Entries beyond the
+    first RESOLVE_UIDS_MAX_IDS are ignored entirely (neither resolved nor
+    reported missing). Mirrors the DEPRECATED workspace_search wrapper's
+    per-message resolution, but folder-grouped and server-side.
+    """
+    account = account_service.get_account(db, req.account_id, user)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    message_ids = req.message_ids[:RESOLVE_UIDS_MAX_IDS]
+    rows = (
+        db.query(MailIndexMessage)
+        .filter(
+            MailIndexMessage.account_id == account.id,
+            MailIndexMessage.message_id.in_(message_ids),
+            MailIndexMessage.deleted_at.is_(None),
+        )
+        .all()
+    )
+    by_folder: dict[str, list[str]] = {}
+    for r in rows:
+        by_folder.setdefault(r.folder_path, []).append(r.message_id)
+
+    resolved: dict[str, list[str]] = {}
+    found_msgids: set[str] = set()
+    if by_folder:
+        conn, temp_user = _connect_dovecot_for_account(db, account)
+        try:
+            ns = account_namespace_prefix(account)
+            for folder, msgids in by_folder.items():
+                key = f"{ns}{_sanitize_imap_string(folder)}"
+                typ, _ = conn.select(f'"{key}"', readonly=True)
+                if typ != "OK":
+                    # B5 drift class: a silent fold into `missing` would be
+                    # undiagnosable in production — log which SELECT failed.
+                    logger.warning(
+                        "UID resolution: SELECT %r failed for account %s; "
+                        "%d message-id(s) fold into missing",
+                        key,
+                        account.id,
+                        len(msgids),
+                    )
+                    continue
+                for msgid in msgids:
+                    quoted = _sanitize_imap_string(msgid)
+                    typ, data = conn.uid("SEARCH", "HEADER", "Message-Id", f'"{quoted}"')
+                    if typ == "OK" and data and data[0]:
+                        uids = data[0].decode().split()
+                        if uids:
+                            resolved.setdefault(key, []).append(uids[0])
+                            found_msgids.add(msgid)
+        finally:
+            with contextlib.suppress(Exception):
+                conn.logout()
+            with contextlib.suppress(Exception):
+                delete_temp_imap_user(db, temp_user)
+
+    missing = [m for m in message_ids if m not in found_msgids]
+    return {"resolved": resolved, "missing": missing}
 
 
 class WorkspaceSnapshotCountRequest(BaseModel):

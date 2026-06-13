@@ -109,13 +109,17 @@ def execute_restore_job(db: Session, job_id: str) -> None:
         )
         logger.info("Restore %s: Dovecot connected OK", job_id)
 
+        # OAuth2 upstreams (Gmail/Microsoft) reject access tokens sent via
+        # plain LOGIN — they require AUTHENTICATE XOAUTH2.
         if target.auth_type.value == "oauth2":
             tgt_password = _refresh_target_token(target_creds, db, target)
             if not tgt_password:
                 _fail_job(db, job, "Failed to refresh OAuth2 token for target")
                 return
+            tgt_auth_method = "xoauth2"
         else:
             tgt_password = target_creds
+            tgt_auth_method = "login"
 
         logger.info(
             "Restore %s: connecting to target %s:%s as %s",
@@ -130,6 +134,7 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             target.tls_type or "IMAPS",
             target.imap_user or target.email_address,
             tgt_password,
+            auth_method=tgt_auth_method,
         )
         logger.info("Restore %s: target connected OK", job_id)
 
@@ -165,9 +170,18 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             "tls_type": target.tls_type or "IMAPS",
             "username": target.imap_user or target.email_address,
             "password": tgt_password,
+            "auth_method": tgt_auth_method,
         }
         _execute_restore(
-            db, job, src_conn, tgt_conn, folders, tgt_separator, src_conn_params, tgt_conn_params
+            db,
+            job,
+            src_conn,
+            tgt_conn,
+            folders,
+            tgt_separator,
+            src_conn_params,
+            tgt_conn_params,
+            src_namespace_prefix=_get_namespace_prefix(source),
         )
 
     except (imaplib.IMAP4.error, OSError) as e:
@@ -258,18 +272,26 @@ def _resolve_folders(src_conn, source, job):
 
 
 def _get_namespace_prefix(account):
-    short_id = account.id[-4:]
-    return f"{account.name} ({account.email_address}) [{short_id}]/"
+    # Delegate to the dovecot router's helper so the publisher and consumers
+    # never drift (B5): the worker both LISTs with this prefix and strips it
+    # from restore-to-origin selection keys produced by api_resolve_uids — a
+    # second literal implementation would let the formats diverge silently.
+    # Deferred import: services must not import routers at module load.
+    from mailfallback.routers.dovecot import account_namespace_prefix
+
+    return account_namespace_prefix(account)
 
 
 def _reconnect_target(tgt_conn_params):
     logger.info("Reconnecting to target %s:%s", tgt_conn_params["host"], tgt_conn_params["port"])
+    # src_conn_params (Dovecot) carries no auth_method — default to plain login.
     return connect_imap(
         tgt_conn_params["host"],
         tgt_conn_params["port"],
         tgt_conn_params["tls_type"],
         tgt_conn_params["username"],
         tgt_conn_params["password"],
+        auth_method=tgt_conn_params.get("auth_method", "login"),
     )
 
 
@@ -282,7 +304,14 @@ def _execute_restore(
     tgt_separator="/",
     src_conn_params=None,
     tgt_conn_params=None,
+    src_namespace_prefix="",
 ):
+    # Selection mode (selected_uids set) works with REAL IMAP UIDs: the
+    # resolve-uids endpoint and the workspace search resolve messages via
+    # UID SEARCH, so the filter below must compare against UID SEARCH/FETCH
+    # results. Sequence numbers diverge from UIDs as soon as a folder has
+    # expunge history — a seq-based filter would restore the wrong messages.
+    by_uid = bool(job.selected_uids)
     total = 0
     for full_folder, _ in folders:
         status, data = src_conn.select(f'"{full_folder}"', readonly=True)
@@ -318,7 +347,10 @@ def _execute_restore(
                 list(job.selected_uids.keys()),
             )
 
-        status, data = src_conn.search(None, "ALL")
+        if by_uid:
+            status, data = src_conn.uid("SEARCH", "ALL")
+        else:
+            status, data = src_conn.search(None, "ALL")
         if status != "OK" or not data[0]:
             continue
         uids = data[0].split()
@@ -327,7 +359,9 @@ def _execute_restore(
         )
 
         existing_ids = set()
-        target_folder = _map_folder(short_folder, job.folder_mapping, tgt_separator)
+        target_folder = _map_folder(
+            short_folder, job.folder_mapping, tgt_separator, src_prefix=src_namespace_prefix
+        )
         if job.skip_duplicates:
             existing_ids = _get_existing_message_ids(tgt_conn, target_folder)
 
@@ -342,7 +376,7 @@ def _execute_restore(
 
             try:
                 _restore_single_message(
-                    src_conn, tgt_conn, uid, target_folder, job, existing_ids, db
+                    src_conn, tgt_conn, uid, target_folder, job, existing_ids, db, by_uid=by_uid
                 )
             except (
                 BrokenPipeError,
@@ -358,7 +392,7 @@ def _execute_restore(
                     if tgt_conn_params:
                         tgt_conn = _reconnect_target(tgt_conn_params)
                     _restore_single_message(
-                        src_conn, tgt_conn, uid, target_folder, job, existing_ids, db
+                        src_conn, tgt_conn, uid, target_folder, job, existing_ids, db, by_uid=by_uid
                     )
                 except Exception:
                     job.failed_messages += 1
@@ -378,8 +412,12 @@ def _restore_single_message(
     job,
     existing_ids,
     db,
+    by_uid=False,
 ):
-    status, data = src_conn.fetch(uid, "(RFC822 FLAGS INTERNALDATE)")
+    if by_uid:
+        status, data = src_conn.uid("FETCH", uid, "(RFC822 FLAGS INTERNALDATE)")
+    else:
+        status, data = src_conn.fetch(uid, "(RFC822 FLAGS INTERNALDATE)")
     if status != "OK" or not data or not data[0]:
         job.failed_messages += 1
         return
@@ -464,7 +502,13 @@ def _get_hierarchy_separator(conn):
     return "/"
 
 
-def _map_folder(folder_name, folder_mapping, separator="/", escape_char="_"):
+def _map_folder(folder_name, folder_mapping, separator="/", escape_char="_", src_prefix=""):
+    # Strip the source account's live namespace prefix. Restore-to-origin
+    # selection keys are full IMAP paths as the temp Dovecot user sees them
+    # (e.g. "Name (email) [abcd]/INBOX", see api_resolve_uids); the
+    # destination expects the bare folder name.
+    if src_prefix and folder_name.startswith(src_prefix):
+        folder_name = folder_name[len(src_prefix) :]
     # Strip the Dovecot Recovery namespace prefix when restoring from a
     # snapshot mount. The destination user expects the message in their
     # native folder (e.g., INBOX), not in a synthetic Recovery-prefixed

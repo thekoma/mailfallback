@@ -23,6 +23,10 @@ def app() -> int:
         "backfill-snapshots", help="Populate snapshot_messages for existing snapshots"
     )
     p_backfill.add_argument("account_id")
+    p_backfill_atts = index_sub.add_parser(
+        "backfill-attachments", help="Parse attachments for index rows that pre-date them"
+    )
+    p_backfill_atts.add_argument("account_id")
 
     args = parser.parse_args()
     if args.cmd == "index":

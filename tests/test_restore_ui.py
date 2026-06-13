@@ -1,6 +1,6 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from mailfallback.models import Account, User, UserRole
+from mailfallback.models import Account, AuthType, User, UserRole
 from mailfallback.services.user_service import create_user
 
 
@@ -20,14 +20,17 @@ def test_restore_page_renders(client, db_session, default_store):
 def test_restore_mailbox_select_lists_accounts_without_backup_policy(
     client, db_session, default_store
 ):
-    """The Mailbox search dropdown must list every owned account, not just the
-    ones with a BackupPolicy — otherwise the workspace search silently posts
-    account_id="" and always returns zero results."""
+    """Every account select must list every owned account, not just the ones
+    with a BackupPolicy — otherwise searches/restores silently target
+    account_id="" and always come up empty."""
     acct = _setup_separator_test(db_session, default_store, client)
     resp = client.get("/restore")
     assert resp.status_code == 200
-    # The account id must appear in BOTH the Mailbox and Destination selects.
-    assert resp.text.count(f'value="{acct.id}"') == 2
+    # The account id must appear in the search scope select AND the
+    # Mailbox + Destination sidebar selects (folder/full presets).
+    assert resp.text.count(f'value="{acct.id}"') == 3
+    # ...and in the data island that maps account ids to display names.
+    assert f'"id": "{acct.id}"' in resp.text
 
 
 def _setup_separator_test(db_session, default_store, client):
@@ -112,6 +115,43 @@ def test_separator_warning_slash_separator(client, db_session, default_store):
     assert resp.status_code == 200
     assert "hidden" in resp.text
     assert "warning-box" not in resp.text
+
+
+def test_separator_warning_oauth2_destination_uses_xoauth2(client, db_session, default_store):
+    """The destination probe must connect with XOAUTH2 for oauth2 accounts —
+    Gmail/Microsoft reject the refreshed access token via plain LOGIN, which
+    silently degraded this warning to the 'Could not connect' info box."""
+    acct = _setup_separator_test(db_session, default_store, client)
+    acct.auth_type = AuthType.oauth2
+    db_session.commit()
+
+    mock_conn = MagicMock()
+    mock_conn.list.return_value = ("OK", [b'(\\NoSelect) "/" ""'])
+    mock_conn.logout.return_value = None
+
+    with (
+        patch(
+            "mailfallback.routers.ui_restore.decrypt_credentials",
+            return_value='{"provider": "google", "refresh_token": "rt"}',
+        ),
+        patch(
+            "mailfallback.services.oauth2.refresh_google_token",
+            new=AsyncMock(return_value="ya29.sep-token"),
+        ),
+        patch(
+            "mailfallback.services.imap_check.connect_imap",
+            return_value=mock_conn,
+        ) as mock_connect,
+    ):
+        resp = client.get(f"/restore/partials/separator-warning?target_account_id={acct.id}")
+
+    assert resp.status_code == 200
+    assert "Could not connect" not in resp.text
+    mock_connect.assert_called_once()
+    call = mock_connect.call_args
+    assert call.kwargs.get("auth_method") == "xoauth2", call
+    password = call.args[4] if len(call.args) > 4 else call.kwargs.get("password")
+    assert password == "ya29.sep-token", call
 
 
 def test_separator_warning_connection_error(client, db_session, default_store):

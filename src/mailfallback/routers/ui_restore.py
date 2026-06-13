@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -105,6 +106,11 @@ def restore_page(request: Request, db: Session = Depends(get_db)):
             "protected": protected,
             "unprotected": unprotected,
             "all_accounts": all_accounts,
+            # Data island for the Alpine workspace component. `<` is escaped so a
+            # hostile account name can't break out of the <script> data island.
+            "accounts_json": json.dumps(
+                [{"id": a.id, "name": a.name, "email": a.email_address or ""} for a in all_accounts]
+            ).replace("<", "\\u003c"),
             "health": health,
             "total_snapshots": total_snapshots,
             "most_recent_snapshot": most_recent,
@@ -364,6 +370,8 @@ def restore_separator_warning_partial(
     error = None
     try:
         creds = decrypt_credentials(account.credentials, settings.secret_key)
+        # OAuth2 destinations (Gmail/Microsoft) reject access tokens sent via
+        # plain LOGIN — connect with AUTHENTICATE XOAUTH2, like restore_worker.
         if account.auth_type.value == "oauth2":
             import asyncio
             import json
@@ -383,8 +391,10 @@ def restore_separator_warning_partial(
                 password = asyncio.run(refresh_fn(refresh_token))
             else:
                 password = token_data.get("access_token", "")
+            auth_method = "xoauth2"
         else:
             password = creds
+            auth_method = "login"
 
         conn = connect_imap(
             account.imap_host,
@@ -393,6 +403,7 @@ def restore_separator_warning_partial(
             account.imap_user or account.email_address,
             password,
             timeout=10,
+            auth_method=auth_method,
         )
         try:
             import re
