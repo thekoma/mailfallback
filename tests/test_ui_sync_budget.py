@@ -386,9 +386,11 @@ def test_first_sync_panel_pico_progress_and_recap(client, db_session, default_st
     # Pico native progress (house pattern), value/max.
     assert "<progress" in text
     assert 'value="44"' in text and 'max="100"' in text
-    # Recap card: three labelled items.
+    # Recap card: three labelled items. No folder total set on this account
+    # -> the Folders value is the bare advancing count (no "/ N").
     assert "sync-recap" in text
     assert "Folders" in text and "342" in text
+    assert "342 / " not in text
     assert "Messages" in text and "75,844" in text and "169,403" in text
     assert "Downloaded" in text  # done_bytes humanized
     # Summary line (44% bolded per the mockup) + ETA + priority note.
@@ -453,3 +455,58 @@ def test_account_live_status_forwards_done_bytes(db_session, default_store):
     finally:
         _clear_progress()
     assert ls["done_bytes"] == 75_844 * 1024
+
+
+def test_first_sync_recap_folders_shows_total_when_known(client, db_session, default_store):
+    """When the STATUS pass stored initial_sync_total_folders, the recap's
+    Folders value is symmetric with Messages: 'X / Y' (muted denominator)."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from mailfallback.routers import ui_accounts
+
+    _login(client, db_session, default_store)
+    account = _mk_account(
+        db_session,
+        default_store,
+        maildir_path="/data/mailboxes/uibud_ft",
+        sync_state=SyncState.syncing,
+        initial_sync_total_messages=169_403,
+        initial_sync_total_folders=1_024,
+    )
+    _seed_progress(account, pct=44.0, done=75_844)
+    snap = SimpleNamespace(
+        current_folder="SoTeHa/Inbox",
+        folder_index=342,
+        folder_total_estimate=1,
+        per_folder=[],
+        phase="syncing",
+    )
+    real = ui_accounts._compute_hero_state
+
+    def fake_state(acc, db):
+        _s, _sn, lj = real(acc, db)
+        return "first-sync", snap, lj
+
+    try:
+        with patch.object(ui_accounts, "_compute_hero_state", fake_state):
+            resp = client.get(f"/accounts/{account.id}/partials/sync-panel")
+    finally:
+        _clear_progress()
+
+    text = resp.text
+    assert "342" in text and "1,024" in text  # advancing count / STATUS total
+    # Same muted-denominator markup as the Messages item.
+    assert text.count("sync-recap-muted") == 2
+
+
+def test_account_live_status_forwards_total_folders(db_session, default_store):
+    from mailfallback.routers.ui import account_live_status
+
+    account = _mk_account(
+        db_session,
+        default_store,
+        maildir_path="/data/mailboxes/uibud_tf",
+        initial_sync_total_folders=512,
+    )
+    assert account_live_status(account)["total_folders"] == 512

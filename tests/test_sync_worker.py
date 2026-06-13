@@ -867,6 +867,9 @@ def test_status_pass_persists_total_with_exclusions(tmp_path):
 
     session.refresh(account)
     assert account.initial_sync_total_messages == 41207
+    # Same iterated set feeds the folder total: 5 listed - 2 excluded
+    # - 1 \Noselect = 3 included (INBOX, Sent, "Posta città").
+    assert account.initial_sync_total_folders == 3
     assert fake_conn.status.call_count == 3  # excluded + Noselect cost nothing
     # The literal-named folder was STATUSed by its REAL name.
     assert any("Posta città" in str(c) for c in fake_conn.status.call_args_list)

@@ -97,7 +97,7 @@
     <div class="sync-recap mt-05">
         <div class="sync-recap-item">
             <span class="sync-recap-label">Folders</span>
-            <span class="sync-recap-value">{{ folders | number }}</span>
+            <span class="sync-recap-value">{{ folders | number }}{% if live.total_folders %} <span class="sync-recap-muted">/ {{ live.total_folders | number }}</span>{% endif %}</span>
         </div>
         <div class="sync-recap-item">
             <span class="sync-recap-label">Messages</span>

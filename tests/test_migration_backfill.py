@@ -111,3 +111,43 @@ def test_migration_021_backfills_initial_sync(tmp_path, monkeypatch):
     assert rows[1][1] is not None  # backfilled from last_sync_at
     assert [r[2] for r in rows] == [0, 0]  # NOT NULL ledger via server_default
     assert "failure_kind" in job_cols
+
+
+def test_migration_022_adds_total_folders_nullable(tmp_path, monkeypatch):
+    """022 adds accounts.initial_sync_total_folders (nullable, no backfill —
+    NULL = unknown until the next STATUS pass fills it). Existing rows stay
+    NULL after the upgrade."""
+    monkeypatch.delenv("MAILFALLBACK_DATABASE_URL", raising=False)
+    db_url = f"sqlite:///{tmp_path}/mig22.db"
+    cfg = _alembic_config(db_url)
+
+    command.upgrade(cfg, "021")
+
+    engine = sa.create_engine(db_url)
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text("INSERT INTO mail_stores (id, name, path) VALUES ('st1', 's', '/data/x')")
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO accounts (id, name, email_address, provider, imap_host, "
+                "imap_port, auth_type, tls_type, maildir_path, sync_state, "
+                "total_messages, unread_messages, maildir_size_bytes, store_id, "
+                "enabled, suspended, migrating) "
+                "VALUES ('a1', 'a1', '', 'other', 'h', 993, 'app_password', 'IMAPS', "
+                "'/m/a1', 'idle', 0, 0, 0, 'st1', 1, 0, 0)"
+            )
+        )
+    engine.dispose()
+
+    command.upgrade(cfg, "022")
+
+    engine = sa.create_engine(db_url)
+    with engine.connect() as conn:
+        cols = {r[1] for r in conn.execute(sa.text("PRAGMA table_info(accounts)")).fetchall()}
+        val = conn.execute(
+            sa.text("SELECT initial_sync_total_folders FROM accounts WHERE id = 'a1'")
+        ).scalar()
+    engine.dispose()
+    assert "initial_sync_total_folders" in cols
+    assert val is None  # no backfill — unknown until next STATUS pass

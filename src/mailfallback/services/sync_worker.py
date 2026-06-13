@@ -394,14 +394,17 @@ def _folder_excluded(name: str, patterns: list[str]) -> bool:
 
 def _count_upstream_messages(
     account: "Account", password: str | None, access_token: str | None
-) -> int | None:
-    """Upstream STATUS pass — the initial-sync progress denominator.
+) -> tuple[int, int] | None:
+    """Upstream STATUS pass — the initial-sync progress denominators.
 
     LIST every folder on the provider, drop the channel's pattern
     !-exclusions (fnmatch — exact names and globs) and \\Noselect
-    placeholders, STATUS (MESSAGES) the rest, sum. Raises on connection
-    trouble — the CALLER treats any failure as non-fatal (the ETA degrades
-    gracefully without a total). One cheap pass per job, before mbsync.
+    placeholders, STATUS (MESSAGES) the rest, sum. Returns
+    ``(total_messages, total_folders)`` over the SAME iterated set (the
+    folder count is free — we already walk every included folder), or
+    None when the LIST itself fails. Raises on connection trouble — the
+    CALLER treats any failure as non-fatal (the ETA degrades gracefully
+    without a total). One cheap pass per job, before mbsync.
     """
     from mailfallback.services.imap_check import connect_imap
 
@@ -421,6 +424,7 @@ def _count_upstream_messages(
         if typ != "OK" or not data:
             return None
         total = 0
+        folders = 0
         for line in data:
             if not line:
                 continue
@@ -440,6 +444,10 @@ def _count_upstream_messages(
                 continue
             if _folder_excluded(name, excludes):
                 continue
+            # Included folder — counted whether or not STATUS yields a
+            # message number, so the denominator matches the folders mbsync
+            # will actually sync (the advancing folder_index counts these).
+            folders += 1
             st, st_data = conn.status(f'"{name}"', "(MESSAGES)")
             if st != "OK" or not st_data:
                 continue
@@ -447,7 +455,7 @@ def _count_upstream_messages(
             counted = _STATUS_MESSAGES_RE.search(raw)
             if counted:
                 total += int(counted.group(1))
-        return total
+        return total, folders
     finally:
         with contextlib.suppress(Exception):
             conn.logout()
@@ -563,9 +571,9 @@ def execute_sync_job(db: Session, job_id: str) -> None:
         # before mbsync starts (cheap, but it still counts as traffic).
         # NON-FATAL by contract — without a total the ETA degrades.
         try:
-            total = _count_upstream_messages(account, password, status_access_token)
-            if total is not None:
-                account.initial_sync_total_messages = total
+            counts = _count_upstream_messages(account, password, status_access_token)
+            if counts is not None:
+                account.initial_sync_total_messages, account.initial_sync_total_folders = counts
                 db.commit()
         except Exception:
             logger.warning(
