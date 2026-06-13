@@ -187,9 +187,9 @@ def recover_zombie_sync_jobs(db: Session) -> int:
     return recovered
 
 
-def _sample_maildir(path: str, since_ts: float) -> tuple[int, int, int, int]:
+def _sample_maildir(path: str, since_ts: float) -> tuple[int, int, int, int, int]:
     """One walk over the ACCOUNT maildir: (total_msgs, total_bytes,
-    run_msgs, run_bytes).
+    run_msgs, run_bytes, total_folders).
 
     Cumulative totals count every message file under cur/ and new/ —
     restart-proof by construction (re-derived from disk, never accumulated).
@@ -199,15 +199,26 @@ def _sample_maildir(path: str, since_ts: float) -> tuple[int, int, int, int]:
     CopyArrivalDate is ever enabled, mtime becomes the message's arrival
     date and this must switch to st_ctime.
 
+    total_folders = distinct maildir folders PRESENT on disk (a folder =
+    the parent of a cur/new dir, counted once even with both). Created =
+    processed: mbsync makes the dir when it handles the folder, so an
+    EMPTY folder still counts — this matches the STATUS-pass denominator
+    (initial_sync_total_folders counts ALL included folders regardless of
+    message count) and is cumulative/monotonic across resumes, sharing
+    done_msgs' on-disk basis (the recap numerators must agree).
+
     Skipped: tmp/ staging files (parent dir is not cur/new), dotfiles and
     dovecot metadata inside cur/new, and nested .dovecot-home trees (only
     the account's own mail counts).
     """
     total_msgs = total_bytes = run_msgs = run_bytes = 0
+    folders: set[str] = set()
     for dirpath, dirnames, filenames in os.walk(path):
         dirnames[:] = [d for d in dirnames if d != ".dovecot-home"]
         if os.path.basename(dirpath) not in ("cur", "new"):
             continue
+        # The folder is the parent of cur/new; cur + new collapse to one.
+        folders.add(os.path.dirname(dirpath))
         for fname in filenames:
             if fname.startswith((".", "dovecot")):
                 continue
@@ -220,7 +231,7 @@ def _sample_maildir(path: str, since_ts: float) -> tuple[int, int, int, int]:
             if st.st_mtime >= since_ts:
                 run_msgs += 1
                 run_bytes += st.st_size
-    return total_msgs, total_bytes, run_msgs, run_bytes
+    return total_msgs, total_bytes, run_msgs, run_bytes, len(folders)
 
 
 def _new_sampler_state(run_start_ts: float) -> dict:
@@ -247,7 +258,7 @@ def _sampler_tick(job_id: str, account_id: str, maildir_path: str, state: dict) 
     stop: a container death right after the stop never forgets the spend.
     """
     totals = _sample_maildir(maildir_path, state["run_start_ts"])
-    total_msgs, total_bytes, run_msgs, run_bytes = totals
+    total_msgs, total_bytes, run_msgs, run_bytes, total_folders = totals
 
     now_mono = time.monotonic()
     dt = max(1e-6, now_mono - state["last_tick_monotonic"])
@@ -295,6 +306,7 @@ def _sampler_tick(job_id: str, account_id: str, maildir_path: str, state: dict) 
             "account_id": account_id,
             "done_msgs": total_msgs,
             "done_bytes": total_bytes,
+            "done_folders": total_folders,
             "run_msgs": run_msgs,
             "run_bytes": run_bytes,
             "bytes_today": account.bytes_synced_today,

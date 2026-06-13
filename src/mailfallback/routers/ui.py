@@ -130,6 +130,7 @@ def account_live_status(account) -> dict:
         "pct": prog.get("pct"),
         "done_msgs": prog.get("done_msgs"),
         "done_bytes": prog.get("done_bytes"),  # recap "Downloaded" (sampler total)
+        "done_folders": prog.get("done_folders"),  # recap Folders numerator (on-disk)
         "total_msgs": account.initial_sync_total_messages,
         "total_folders": account.initial_sync_total_folders,  # recap Folders denominator
         "bytes_today": prog.get("bytes_today", account.bytes_synced_today),

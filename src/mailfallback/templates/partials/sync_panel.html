@@ -73,7 +73,10 @@
        native <progress>, the app's house pattern (migration/drain/restore).
        No reinvented bar, no dot grid (the broken "Folder N of 1" estimate
        is gone). ── #}
-    {% set folders = snap.folder_index if snap and snap.folder_index else 0 %}
+    {# Folders numerator = CUMULATIVE on-disk count (sampler done_folders),
+       NOT snap.folder_index (this-run log count, resets to 1 every resume)
+       — it must share done_msgs' basis so the two recap numerators agree. #}
+    {% set folders = live.done_folders or 0 %}
     {% set has_data = folders or live.done_msgs is not none or live.done_bytes is not none %}
     {% if not has_data and snap and snap.phase in ("connecting", "authenticating", "listing") %}
     {# Early phase: no counts yet — indeterminate bar + phase label. #}
