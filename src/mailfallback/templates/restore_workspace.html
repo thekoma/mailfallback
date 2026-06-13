@@ -1,6 +1,12 @@
 <div x-data="restoreWorkspace()" x-init="init()" class="ws-root" data-webmail-url="{{ webmail_url }}">
-  {# Data island (data, not code): account id → name/email for the Alpine component #}
+  {# Data island (data, not code): account id → name/email for the Alpine component.
+     Accessible accounts only (ownership OR groups) — the search privacy default. #}
   <script type="application/json" id="ws-accounts-data">{{ accounts_json | safe }}</script>
+  {% if user.role.value == "admin" %}
+  {# Admin-only second island: every account, unlocked by the audited
+     "All users' mailboxes" toggle in the search row. #}
+  <script type="application/json" id="ws-accounts-all-data">{{ all_accounts_json | safe }}</script>
+  {% endif %}
 
   <div class="ws-header">
     <div>
@@ -68,12 +74,20 @@
       <template x-if="preset === 'single-mail'">
         <div class="ws-search">
           <form @submit.prevent="runSearch()" class="ws-search-row">
+            {# Options render from the active dataset (accessible vs all) via
+               Alpine so the admin toggle swap re-renders them. #}
             <select x-model="scopeAccountId" class="ws-scope" @change="onScopeChange()">
-              <option value="">All mailboxes ({{ all_accounts | length }})</option>
-              {% for acct in all_accounts %}
-              <option value="{{ acct.id }}">{{ acct.name }} ({{ acct.email_address or "—" }})</option>
-              {% endfor %}
+              <option value="" x-text="'All mailboxes (' + accounts.length + ')'"></option>
+              <template x-for="a in accounts" :key="a.id">
+                <option :value="a.id" x-text="a.name + ' (' + (a.email || '—') + ')'"></option>
+              </template>
             </select>
+            {% if user.role.value == "admin" %}
+            <label class="ws-inline ws-admin-toggle">
+              <input type="checkbox" role="switch" x-model="includeAll" @change="onIncludeAllChange()">
+              All users' mailboxes <span class="text-muted text-xsmall">— audited</span>
+            </label>
+            {% endif %}
             <input type="text" x-model="query" placeholder="Search subject, sender…" autocomplete="off">
             <button type="submit" class="ws-btn-primary" :disabled="searching">
               <template x-if="!searching">
@@ -179,11 +193,17 @@
                       <span class="ws-att-chip"><span x-text="a.filename"></span><span class="text-muted" x-text="' · ' + fmtSize(a.size_bytes)"></span></span>
                     </template>
                   </div>
-                  {% if webmail_enabled and webmail_url %}
-                  <a class="ws-btn-ghost ws-preview-webmail" :href="webmailUrl"
-                     target="_blank" rel="noopener"
-                     x-show="preview.alive_in_live">Open webmail</a>
-                  {% endif %}
+                  <div class="ws-preview-actions">
+                    <button class="ws-btn-primary" x-show="previewRef"
+                            @click="addToStaging([previewRef])">
+                      <i data-lucide="inbox" class="icon-sm icon-inline"></i> Add to staging
+                    </button>
+                    {% if webmail_enabled and webmail_url %}
+                    <a class="ws-btn-ghost ws-preview-webmail" :href="webmailUrl"
+                       target="_blank" rel="noopener"
+                       x-show="preview.alive_in_live">Open webmail</a>
+                    {% endif %}
+                  </div>
                 </div>
               </template>
               <template x-if="!previewLoading && !preview">
@@ -192,7 +212,8 @@
             </div>
           </div>
 
-          <div class="ws-action-bar" x-show="results.length > 0" x-transition>
+          <div class="ws-action-bar" :class="{'has-staging': staging.exists}"
+               x-show="results.length > 0" x-transition>
             <label class="ws-inline">
               <input type="checkbox"
                      :checked="selected.length === results.length && results.length > 0"
@@ -202,14 +223,21 @@
                 <span x-text="results.length"></span> selected
               </span>
             </label>
-            <button class="ws-btn-primary"
-                    :disabled="selected.length === 0 || restoring"
-                    @click="restoreSelected()">
-              <i :data-lucide="restoring ? 'loader' : 'play'"
-                 :class="{'spin': restoring}"
-                 class="icon-sm icon-inline"></i>
-              <span x-text="restoring ? 'Restoring…' : 'Restore selected →'"></span>
-            </button>
+            <div class="ws-action-buttons">
+              <button class="ws-btn-ghost"
+                      :disabled="selected.length === 0"
+                      @click="addSelectedToStaging()">
+                <i data-lucide="inbox" class="icon-sm icon-inline"></i> Add to staging
+              </button>
+              <button class="ws-btn-primary"
+                      :disabled="selected.length === 0 || restoring"
+                      @click="restoreSelected()">
+                <i :data-lucide="restoring ? 'loader' : 'play'"
+                   :class="{'spin': restoring}"
+                   class="icon-sm icon-inline"></i>
+                <span x-text="restoring ? 'Restoring…' : 'Restore selected →'"></span>
+              </button>
+            </div>
           </div>
         </div>
       </template>
@@ -261,6 +289,62 @@
         </div>
       </template>
     </main>
+  </div>
+
+  {# Docked staging bar — fixed to the bottom edge, visible in every preset
+     while the user's staging area exists. #}
+  <div class="ws-staging-bar" x-show="staging.exists" x-transition x-cloak>
+    <i data-lucide="inbox" class="icon-md"></i>
+    <span class="ws-staging-count"
+          x-text="'Staging — ' + staging.count + ' message' + (staging.count === 1 ? '' : 's')"></span>
+    <span class="ws-staging-meta text-muted text-xsmall"
+          x-text="fmtSize(staging.bytes_used) + ' · expires ' + fmtExpiry(staging.expires_at) + ' · quota ' + (staging.max_bytes ? fmtSize(staging.max_bytes) : '∞')"></span>
+    {# Staging feedback lives here, not in statusText — that one only renders
+       inside the single-mail preset, while the bar works in every preset. #}
+    <span class="ws-staging-status text-xsmall"
+          x-text="stagingStatus" x-show="stagingStatus" :title="stagingStatus"></span>
+    <span class="ws-staging-grow"></span>
+    {% if webmail_enabled and webmail_url %}
+    <a class="ws-btn-ghost" href="{{ webmail_url }}?_task=mail&amp;_mbox=Staging"
+       target="_blank" rel="noopener">Open in webmail</a>
+    {% endif %}
+    <button class="ws-btn-ghost ws-btn-ghost-danger" @click="emptyStaging()">Empty</button>
+    <button class="ws-btn-primary" @click="pushPanelOpen = !pushPanelOpen">Push upstream →</button>
+  </div>
+
+  {# Push options popover — anchored above the staging bar's right edge.
+     Tied to staging.exists too: it must not float without its bar. #}
+  <div class="ws-push-panel" x-show="pushPanelOpen && staging.exists" x-transition x-cloak>
+    <div class="ws-push-group">
+      <span class="ws-field-label">Destination</span>
+      <label class="ws-inline">
+        <input type="radio" value="origin" x-model="pushDestination">
+        Each message back to its origin mailbox
+      </label>
+      <label class="ws-inline">
+        <input type="radio" value="override" x-model="pushDestination">
+        Everything into:
+        <select x-model="pushOverrideId" :disabled="pushDestination !== 'override'">
+          <template x-for="a in accounts" :key="a.id">
+            <option :value="a.id" x-text="a.name + ' (' + (a.email || '—') + ')'"></option>
+          </template>
+        </select>
+      </label>
+    </div>
+    <div class="ws-push-group">
+      <span class="ws-field-label">Folder</span>
+      <label class="ws-inline">
+        <input type="radio" value="original" x-model="pushFolderMode">
+        Original folder (created if missing)
+      </label>
+      <label class="ws-inline">
+        <input type="radio" value="restored" x-model="pushFolderMode">
+        Everything into Restored/&lt;today&gt;
+      </label>
+    </div>
+    <button class="ws-btn-primary" :disabled="pushing" @click="pushStaging()">
+      <span x-text="pushing ? 'Pushing…' : 'Confirm push'"></span>
+    </button>
   </div>
 
   {% include "partials/restore_status_strip.html" ignore missing %}

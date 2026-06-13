@@ -124,7 +124,12 @@ def test_dovecot_acl_content(tmp_path):
     generate_dovecot_config(settings)
 
     acl = (tmp_path / "dovecot" / "dovecot-acl").read_text()
-    assert "* owner lrs" in acl
+    # Exact content, in order: default read-only first, then the writable
+    # per-user Staging/ namespace (restore curation surface). All matching
+    # lines apply and same-identifier rights are unioned; a narrower pattern
+    # can only ADD rights, never remove them (subtraction needs negative
+    # entries). Verified against dovecot 2.4.2 source (acl-global-file.c).
+    assert acl == "* owner lrs\nStaging owner lrwstie\nStaging/* owner lrwstie\n"
 
 
 def test_dovecot_acl_path_in_config(tmp_path):
@@ -161,6 +166,9 @@ def test_webmail_config_generated_when_enabled(tmp_path):
     assert "$config['db_prefix'] = 'rc_'" in content
     assert "$config['use_subscriptions'] = false" in content
     assert "$config['disabled_actions'] = ['mail.compose']" in content
+    # Curation contract: webmail Delete must work inside Staging/ (no Trash
+    # is reachable from read-only account namespaces; blank = delete directly).
+    assert "$config['trash_mbox'] = ''" in content
 
 
 def test_webmail_config_with_oauth(tmp_path):

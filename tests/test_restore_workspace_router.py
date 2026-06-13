@@ -724,6 +724,115 @@ def test_api_restore_search_endpoint(client, db_session, default_store, login_us
     assert body["results"][0]["subject"] == "invoice from acme"
 
 
+def _mk_foreign_indexed_account(db_session, default_store, subject="secret invoice"):
+    """An account owned by a dedicated non-admin user, with one indexed hit."""
+    from mailfallback.models import MailIndexMessage, User, UserRole
+    from mailfallback.security import hash_password
+
+    owner = User(
+        username="foreignowner",
+        password_hash=hash_password("x"),
+        role=UserRole.user,
+        enabled=True,
+        store_id=default_store.id,
+    )
+    db_session.add(owner)
+    acct = Account(name="foreign", store=default_store, maildir_path="/f", imap_host="i")
+    db_session.add(acct)
+    db_session.flush()
+    acct.owners.append(owner)
+    db_session.add(
+        MailIndexMessage(
+            account_id=acct.id,
+            message_id_hash=b"\x30" * 20,
+            message_id="<30@h>",
+            subject=subject,
+            folder_path="INBOX",
+            maildir_filename="1",
+        )
+    )
+    db_session.commit()
+    return acct
+
+
+def test_api_restore_search_include_all_widens_scope_and_audits(
+    client, db_session, default_store, login_user
+):
+    """Admin + include_all=true searches accounts outside their accessible set
+    and writes exactly one restore.search_all audit row per request. Without
+    the flag the same search stays scoped (privacy default) and unaudited."""
+    from mailfallback.models import AuditLog
+
+    _mk_foreign_indexed_account(db_session, default_store)
+
+    login = client.post("/api/auth/login", json={"username": "koma", "password": "x"})
+    assert login.status_code in (200, 303)
+
+    # Privacy default: admin owns nothing — foreign hit invisible, no audit.
+    resp = client.post("/api/restore/search", json={"query": "secret"})
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
+    assert db_session.query(AuditLog).filter_by(action="restore.search_all").count() == 0
+
+    # Audited escalation.
+    resp = client.post("/api/restore/search", json={"query": "secret", "include_all": True})
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 1
+    entry = db_session.query(AuditLog).filter_by(action="restore.search_all").one()
+    assert entry.username == "koma"
+    assert entry.resource_type == "restore"
+    assert entry.details == {"query": "secret", "accounts": "all"}
+
+
+def test_api_restore_search_include_all_ignored_for_non_admin(client, db_session, default_store):
+    from mailfallback.models import AuditLog, User, UserRole
+    from mailfallback.security import hash_password
+
+    pleb = User(
+        username="pleb",
+        password_hash=hash_password("x"),
+        role=UserRole.user,
+        enabled=True,
+        store_id=default_store.id,
+    )
+    db_session.add(pleb)
+    db_session.commit()
+    _mk_foreign_indexed_account(db_session, default_store)
+
+    login = client.post("/api/auth/login", json={"username": "pleb", "password": "x"})
+    assert login.status_code in (200, 303)
+
+    resp = client.post("/api/restore/search", json={"query": "secret", "include_all": True})
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
+    assert db_session.query(AuditLog).filter_by(action="restore.search_all").count() == 0
+
+
+def test_workspace_snapshot_dates_foreign_account_requires_include_all(
+    client, db_session, default_store, login_user
+):
+    """snapshot-dates follows the workspace privacy default: an admin gets 404
+    on a foreign account without include_all, 200 with it. Metadata-only, so
+    no audit row either way."""
+    from mailfallback.models import AuditLog
+
+    acct = _mk_foreign_indexed_account(db_session, default_store)
+
+    login = client.post("/api/auth/login", json={"username": "koma", "password": "x"})
+    assert login.status_code in (200, 303)
+
+    resp = client.post("/api/restore/workspace/snapshot-dates", json={"account_id": acct.id})
+    assert resp.status_code == 404
+
+    resp = client.post(
+        "/api/restore/workspace/snapshot-dates",
+        json={"account_id": acct.id, "include_all": True},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"dates": []}  # no backup policy — gate is what matters
+    assert db_session.query(AuditLog).filter(AuditLog.action.like("restore.%")).count() == 0
+
+
 def test_workspace_search_wrapper_uses_new_search_when_flag_on(
     client, db_session, default_store, login_user, monkeypatch
 ):

@@ -613,3 +613,80 @@ def test_user_allowed_repositories_relationship(db_session):
     db_session.commit()
     db_session.refresh(user)
     assert user.allowed_repositories == []
+
+
+def _make_staging(db_session, default_store, username="stager"):
+    from datetime import UTC, datetime, timedelta
+
+    from mailfallback.models import StagingArea, StagingMessage
+
+    user = User(username=username, role=UserRole.user, store_id=default_store.id)
+    acct = Account(
+        name="src",
+        imap_host="imap.example.com",
+        maildir_path=f"/data/mailboxes/{username}-src",
+        store=default_store,
+    )
+    db_session.add_all([user, acct])
+    db_session.flush()
+
+    area = StagingArea(
+        user_id=user.id,
+        expires_at=datetime.now(UTC) + timedelta(minutes=10080),
+    )
+    db_session.add(area)
+    db_session.flush()
+    msg = StagingMessage(
+        staging_id=area.id,
+        source_account_id=acct.id,
+        message_id_hash=b"\x02" * 20,
+        original_folder="INBOX",
+        staged_filename="1234.M567.host:2,S",
+        size_bytes=2048,
+    )
+    db_session.add(msg)
+    db_session.commit()
+    return user, area, msg
+
+
+def test_staging_area_defaults_and_unique_per_user(db_session, default_store):
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy.exc import IntegrityError
+
+    from mailfallback.models import StagingArea
+
+    user, area, msg = _make_staging(db_session, default_store)
+    db_session.refresh(area)
+    assert area.created_at is not None
+    assert area.max_bytes == 0
+    assert area.bytes_used == 0
+    assert msg.staged_at is not None
+    assert msg.staging.id == area.id
+
+    db_session.add(
+        StagingArea(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(minutes=1))
+    )
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+
+def test_delete_staging_area_cascades_messages(db_session, default_store):
+    from mailfallback.models import StagingArea, StagingMessage
+
+    _, area, _ = _make_staging(db_session, default_store)
+    db_session.delete(area)
+    db_session.commit()
+    assert db_session.query(StagingArea).count() == 0
+    assert db_session.query(StagingMessage).count() == 0
+
+
+def test_delete_user_cascades_staging(db_session, default_store):
+    from mailfallback.models import StagingArea, StagingMessage
+
+    user, _, _ = _make_staging(db_session, default_store)
+    db_session.delete(user)
+    db_session.commit()
+    assert db_session.query(StagingArea).count() == 0
+    assert db_session.query(StagingMessage).count() == 0

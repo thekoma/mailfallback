@@ -3,7 +3,7 @@
 import os
 from email.message import EmailMessage
 
-from mailfallback.models import Account, MailIndexMessage, User, UserRole
+from mailfallback.models import Account, AuditLog, MailIndexMessage, User, UserRole
 from mailfallback.security import hash_password
 from mailfallback.services import index_service
 
@@ -26,11 +26,11 @@ def _msg(msgid, subject="hello"):
     return msg
 
 
-def _mk_user(db_session, default_store, username):
+def _mk_user(db_session, default_store, username, role=UserRole.user):
     u = User(
         username=username,
         password_hash=hash_password("x"),
-        role=UserRole.user,
+        role=role,
         enabled=True,
         store_id=default_store.id,
     )
@@ -87,6 +87,71 @@ def test_non_owner_gets_404(client, db_session, default_store, tmp_path):
     resp = client.get(f"/api/restore/preview/{acc.id}/{row.message_id_hash.hex()}")
 
     assert resp.status_code == 404
+
+
+def test_admin_include_all_previews_foreign_account_and_audits(
+    client, db_session, default_store, tmp_path
+):
+    """The audited escalation: include_all=true lets an admin preview a message
+    in an account outside their accessible set — and writes an audit row."""
+    owner = _mk_user(db_session, default_store, "mario")
+    _mk_user(db_session, default_store, "root", role=UserRole.admin)
+    acc, row = _mk_indexed_account(db_session, default_store, tmp_path, owner=owner)
+    _login(client, "root")
+
+    resp = client.get(f"/api/restore/preview/{acc.id}/{row.message_id_hash.hex()}?include_all=true")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["subject"] == "Conferma ordine"
+    entry = db_session.query(AuditLog).filter_by(action="restore.preview").one()
+    assert entry.username == "root"
+    assert entry.resource_type == "restore"
+    assert entry.resource_id == acc.id
+    assert entry.details == {"message_id_hash": row.message_id_hash.hex()}
+
+
+def test_admin_without_include_all_gets_404_on_foreign_account(
+    client, db_session, default_store, tmp_path
+):
+    """Privacy default: the workspace preview gives admins NO implicit access —
+    without the audited escalation a foreign account 404s, exactly like for a
+    regular user."""
+    owner = _mk_user(db_session, default_store, "mario")
+    _mk_user(db_session, default_store, "root", role=UserRole.admin)
+    acc, row = _mk_indexed_account(db_session, default_store, tmp_path, owner=owner)
+    _login(client, "root")
+
+    resp = client.get(f"/api/restore/preview/{acc.id}/{row.message_id_hash.hex()}")
+
+    assert resp.status_code == 404
+    assert db_session.query(AuditLog).filter_by(action="restore.preview").count() == 0
+
+
+def test_non_admin_include_all_is_ignored(client, db_session, default_store, tmp_path):
+    owner = _mk_user(db_session, default_store, "mario")
+    _mk_user(db_session, default_store, "luigi")  # owns nothing
+    acc, row = _mk_indexed_account(db_session, default_store, tmp_path, owner=owner)
+    _login(client, "luigi")
+
+    resp = client.get(f"/api/restore/preview/{acc.id}/{row.message_id_hash.hex()}?include_all=true")
+
+    assert resp.status_code == 404
+    assert db_session.query(AuditLog).filter_by(action="restore.preview").count() == 0
+
+
+def test_admin_include_all_on_accessible_account_not_audited(
+    client, db_session, default_store, tmp_path
+):
+    """No audit noise: an admin previewing mail they could access anyway
+    (ownership/groups) is not logged, even with the toggle on."""
+    admin = _mk_user(db_session, default_store, "root", role=UserRole.admin)
+    acc, row = _mk_indexed_account(db_session, default_store, tmp_path, owner=admin)
+    _login(client, "root")
+
+    resp = client.get(f"/api/restore/preview/{acc.id}/{row.message_id_hash.hex()}?include_all=true")
+
+    assert resp.status_code == 200, resp.text
+    assert db_session.query(AuditLog).filter_by(action="restore.preview").count() == 0
 
 
 def test_invalid_hash_hex_returns_400(client, db_session, default_store, tmp_path):

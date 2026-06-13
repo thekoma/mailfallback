@@ -10,7 +10,7 @@ MailFallBack can be deployed on Kubernetes. This page provides guidance on adapt
 | Service | Image | Notes |
 |---------|-------|-------|
 | MFB | `ghcr.io/thekoma/mailfallback:main` | Built and pushed by CI on every merge to `main` |
-| Dovecot | `dovecot/dovecot:latest-2.4` | Official Dovecot image |
+| Dovecot | `dovecot/dovecot:2.4.2` | Official Dovecot image; pinned — 2.4.3+ replaces the global ACL file with settings blocks, port mfb-acl before bumping |
 | Roundcube | `roundcube/roundcubemail:latest` | Official Roundcube image |
 | Tika | `apache/tika:latest` | Official Apache Tika image |
 | PostgreSQL | `postgres:18-alpine` | Or use an external/managed database |
@@ -106,7 +106,8 @@ spec:
               mountPath: /confs/webmail
 
         - name: dovecot
-          image: dovecot/dovecot:latest-2.4
+          # pinned: 2.4.3+ replaces global ACL file with settings blocks — port mfb-acl before bumping
+          image: dovecot/dovecot:2.4.2
           ports:
             - containerPort: 31143
             - containerPort: 9900

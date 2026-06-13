@@ -10,7 +10,7 @@ Self-hosted email backup service wrapping mbsync/isync with a web UI. Backs up I
 - **Frontend**: Jinja2 templates, HTMX, Pico CSS, Lucide icons
 - **Database**: PostgreSQL (only supported backend)
 - **Sync**: mbsync/isync (subprocess)
-- **IMAP access**: Dovecot 2.4 (`dovecot/dovecot:latest-2.4`, SQL auth against MFB database)
+- **IMAP access**: Dovecot 2.4 (`dovecot/dovecot:2.4.2` pinned, SQL auth against MFB database)
 - **Webmail**: Roundcube (`roundcube/roundcubemail:latest`, read-only via Dovecot IMAP)
 - **Package manager**: uv (with uv.lock)
 
@@ -151,7 +151,7 @@ Uses **UUID-based paths** with **LAYOUT=fs** and **SubFolders Verbatim**. Folder
 
 ## Dovecot Integration
 
-- Uses **official `dovecot/dovecot:latest-2.4`** image — no custom Dockerfile
+- Uses **official `dovecot/dovecot:2.4.2`** image (pinned: 2.4.3+ replaces the global ACL file with settings blocks — port mfb-acl before bumping) — no custom Dockerfile
 - Config files volume-mounted from `docker/dovecot/conf.d/mfb-*.conf` to `/etc/dovecot/conf.d/`
 - SQL auth queries the MFB `users` and `mail_stores` tables directly via PostgreSQL
 - `auth_mechanisms = plain login` (login required by Roundcube)
