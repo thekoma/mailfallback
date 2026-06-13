@@ -590,3 +590,26 @@ def test_repository_attachment_password_nullable(db_session):
     db_session.commit()
     db_session.refresh(att)
     assert att.restic_password == "enc-override"  # pragma: allowlist secret
+
+
+def test_user_allowed_repositories_relationship(db_session):
+    from mailfallback.models import Repository
+
+    store = MailStore(name="s17", path="/data/m17")
+    db_session.add(store)
+    db_session.flush()
+    user = User(username="u17", password_hash="x", role=UserRole.user, store_id=store.id)
+    repo = Repository(name="r17", backend_type="s3", restic_password="enc")
+    db_session.add_all([user, repo])
+    db_session.flush()
+
+    user.allowed_repositories.append(repo)
+    db_session.commit()
+    db_session.refresh(user)
+
+    assert [r.id for r in user.allowed_repositories] == [repo.id]
+    # deleting the repo removes the grant row
+    db_session.delete(repo)
+    db_session.commit()
+    db_session.refresh(user)
+    assert user.allowed_repositories == []

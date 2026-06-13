@@ -19,7 +19,7 @@ from mailfallback.models import (
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.routers.ui_admin import _transient_repository_from_form
 from mailfallback.security import encrypt_credentials
-from mailfallback.services import restic_service
+from mailfallback.services import config_backup_service, restic_service
 from mailfallback.services.account_service import get_account
 from mailfallback.services.audit_service import log_action
 
@@ -508,6 +508,107 @@ def admin_repo_prefix_detail(
     )
 
 
+def _fetch_and_decrypt_repo(dest: Repository, passphrase: str) -> dict:
+    """Fetch the latest config snapshot from a saved Repository and decrypt it.
+
+    Unlike the System-page DR flow, this reuses the stored (encrypted)
+    credentials instead of rebuilding a transient Repository from form fields.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="mfb-config-restore-") as tmpdir:
+        path = config_backup_service.fetch_latest_config(dest, tmpdir)
+        with open(path, "rb") as f:
+            blob = f.read()
+    return config_backup_service.decrypt_export(blob, passphrase)
+
+
+@router.post("/admin/backup/{dest_id}/config-restore/preview", response_class=HTMLResponse)
+async def admin_repo_config_restore_preview(
+    dest_id: str, request: Request, db: Session = Depends(get_db)
+):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
+    if not dest:
+        return HTMLResponse("Repository not found", status_code=404)
+
+    from starlette.concurrency import run_in_threadpool
+
+    form = await request.form()
+    passphrase = form.get("passphrase", "")
+    error = None
+    counts: dict[str, int] = {}
+    try:
+        data = await run_in_threadpool(_fetch_and_decrypt_repo, dest, passphrase)
+        counts = {name: len(rows) for name, rows in data["tables"].items()}
+    except config_backup_service.ConfigDecryptError as e:
+        error = str(e)
+    except Exception as e:
+        error = str(e)[:200]
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/config_restore_preview.html",
+        context={
+            "error": error,
+            "counts": counts,
+            "form": {"passphrase": passphrase},
+            "confirm_action": f"/admin/backup/{dest.id}/config-restore/confirm",
+        },
+    )
+
+
+@router.post("/admin/backup/{dest_id}/config-restore/confirm")
+async def admin_repo_config_restore_confirm(
+    dest_id: str, request: Request, db: Session = Depends(get_db)
+):
+    user = _get_session_user(request, db)
+    if not user or user.role.value != "admin":
+        return RedirectResponse("/", status_code=303)
+    dest = db.query(Repository).filter(Repository.id == dest_id).first()
+    if not dest:
+        request.session["flash_error"] = "Repository not found"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    from starlette.concurrency import run_in_threadpool
+
+    form = await request.form()
+    passphrase = form.get("passphrase", "")
+    try:
+        data = await run_in_threadpool(_fetch_and_decrypt_repo, dest, passphrase)
+        report = await run_in_threadpool(config_backup_service.import_export, db, data)
+    except Exception as e:
+        request.session["flash_error"] = f"Restore failed: {str(e)[:200]}"
+        return RedirectResponse("/admin/backup", status_code=303)
+
+    imported = sum(report["imported"].values())
+    skipped = sum(report["skipped"].values())
+    log_action(
+        db,
+        user=user,
+        action="config.restore",
+        resource_type="config",
+        resource_id=dest.id,
+        details={
+            "repository": dest.name,
+            "imported": report["imported"],
+            "skipped": report["skipped"],
+            "errors": report["errors"],
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+    msg = f"Configuration restored: {imported} rows imported, {skipped} skipped"
+    if report["errors"]:
+        request.session["flash_error"] = f"{msg}, {len(report['errors'])} errors (see audit log)"
+    else:
+        request.session["flash_success"] = msg
+    from mailfallback.services.scheduler import refresh_scheduler
+
+    refresh_scheduler()
+    return RedirectResponse("/admin/backup", status_code=303)
+
+
 @router.post("/admin/backup/{dest_id}/attach")
 async def admin_repo_attach(dest_id: str, request: Request, db: Session = Depends(get_db)):
     user = _get_session_user(request, db)
@@ -699,6 +800,16 @@ async def account_backup_configure(
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
     backup = db.query(BackupPolicy).filter(BackupPolicy.account_id == account_id).first()
+
+    if user.role.value != "admin":
+        allowed_ids = {r.id for r in user.allowed_repositories}
+        current_id = backup.destination_id if backup else None
+        if destination_id not in allowed_ids and destination_id != current_id:
+            request.session["flash_error"] = (
+                "You are not allowed to use this repository — ask an administrator"
+            )
+            return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+
     if backup:
         backup.destination_id = destination_id
         backup.schedule = schedule

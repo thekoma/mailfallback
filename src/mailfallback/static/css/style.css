@@ -349,6 +349,9 @@ button.icon-btn, a.icon-btn {
 button.icon-btn:hover, a.icon-btn:hover { background: var(--pico-secondary-background); }
 button.icon-btn.danger, a.icon-btn.danger { color: var(--mfb-danger-color); border-color: var(--mfb-danger-color); }
 button.icon-btn.danger:hover, a.icon-btn.danger:hover { background: var(--mfb-danger-bg); }
+/* A disabled danger button should recede, not shout: drop the red outline. */
+button.icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+button.icon-btn.danger:disabled { color: var(--mfb-icon-btn-color); border-color: var(--pico-muted-border-color); background: none; }
 button.icon-btn.primary, a.icon-btn.primary { color: var(--pico-primary); border-color: var(--pico-primary); }
 button.icon-btn.success, a.icon-btn.success { color: var(--mfb-success-color); border-color: var(--mfb-success-color); }
 
@@ -805,6 +808,29 @@ body.page-wide .content { max-width: 1200px; }
 .table-wrap th, .table-wrap td { white-space: nowrap; }
 .table-wrap th.cell-wrap, .table-wrap td.cell-wrap { white-space: normal; }
 .cell-stats { font-variant-numeric: tabular-nums; }
+
+/* === Repository contents panel (nested table inside admin_backup rows) ===
+   UUID prefixes get an ellipsis so the nested table fits the page-wide
+   container; the full value stays available via the title tooltip. */
+.repo-contents code {
+    display: inline-block;
+    max-width: 16ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+}
+.repo-contents input[name="passphrase"] { width: 200px; }
+
+/* === Expanded sub-rows (inline edit / contents panels) ===
+   Same dressing as the accounts recovery sub-row: a faint tint and a dashed
+   top border so the expanded panel reads as belonging to its parent row. */
+tr.expand-row > td {
+    background: rgba(0, 0, 0, 0.02);
+    border-top: 1px dashed var(--pico-muted-border-color);
+    padding: 1rem 1.25rem 1.25rem;
+}
+[data-theme="dark"] tr.expand-row > td { background: rgba(255, 255, 255, 0.025); }
 
 /* === Recovery sub-row in the accounts table === */
 tr.recovery-row td {

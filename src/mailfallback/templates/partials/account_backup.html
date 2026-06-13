@@ -19,7 +19,7 @@
             <label for="backup_dest">Destination</label>
             <select id="backup_dest" name="destination_id" required>
                 {% for dest in backup_destinations %}
-                <option value="{{ dest.id }}">{{ dest.name }} ({{ dest.backend_type.value }})</option>
+                <option value="{{ dest.id }}">{{ dest.name }} ({{ dest.backend_type.value }}){% if dest.id not in allowed_repo_ids %} (current — not in your allowed set){% endif %}</option>
                 {% endfor %}
             </select>
         </div>
@@ -39,7 +39,11 @@
     </button>
 </form>
 {% else %}
+{% if user.role.value == "admin" %}
 <p class="text-muted text-small">No repositories configured. <a href="/admin/backup">Add one</a> first.</p>
+{% else %}
+<p class="text-muted text-small">No repositories available for your user — ask an administrator to grant you access.</p>
+{% endif %}
 {% endif %}
 
 {% else %}
@@ -88,7 +92,7 @@
                 <label for="backup_dest">Destination</label>
                 <select id="backup_dest" name="destination_id" required>
                     {% for dest in backup_destinations %}
-                    <option value="{{ dest.id }}" {% if dest.id == backup_config.destination_id %}selected{% endif %}>{{ dest.name }} ({{ dest.backend_type.value }})</option>
+                    <option value="{{ dest.id }}" {% if dest.id == backup_config.destination_id %}selected{% endif %}>{{ dest.name }} ({{ dest.backend_type.value }}){% if dest.id not in allowed_repo_ids %} (current — not in your allowed set){% endif %}</option>
                     {% endfor %}
                 </select>
             </div>
