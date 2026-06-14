@@ -144,6 +144,39 @@ keys for break-glass recovery). The data-path crypto stays symmetric (fast); the
     Few backup products can offer painless recovery, precisely because the
     upstream mailbox remains the source of truth.
 
+## Pluggable key provider
+
+To keep the open core deployable both on a home server and on managed
+infrastructure without forking, the unlock secret is obtained through a small
+**key-provider interface** rather than hard-coded. The core ships local
+providers; managed providers plug in behind the same contract.
+
+```
+KeyProvider:
+    unwrap_store_key() -> bytes      # return the FS master key at boot
+    rewrap(to_recipient) -> None     # rotate custody without re-encrypting data
+```
+
+Open-core providers (self-host):
+
+| Provider | Custody |
+|---|---|
+| `passphrase` | operator-entered passphrase (KDF) |
+| `age` / `openpgp` | master key wrapped to a public recipient; private key offline / on a token |
+| `tpm` | master key sealed to the host TPM (no secret to type) |
+
+Managed providers (e.g. a hosted/cloud KMS such as Cloud KMS, with HSM-backed
+or external keys) implement the **same interface** and are injected at deploy
+time. The mapping is natural: our "asymmetric envelope" *is* envelope encryption
+— a managed KMS simply holds the wrapping key, with rotation, audit, and
+hardware backing handled for you.
+
+!!! note "Deployment topologies are out of scope here"
+    How the encrypted store, sync jobs, and the IMAP tier are placed on managed
+    infrastructure (and any multi-tenant key hierarchy) is a separate concern
+    and is **not** documented in this open-core repository. This page covers
+    only the single-instance, self-hostable core.
+
 ## Feature impact
 
 | Area | Outcome |
