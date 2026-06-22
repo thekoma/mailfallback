@@ -237,6 +237,13 @@ def recover_stalled_sync_jobs(db: Session) -> int:
     if reaped:
         db.commit()
         logger.warning("Watchdog reaped %d stalled sync job(s)", reaped)
+    if reaped and reaped >= max(1, settings.sync_max_workers - 1):
+        logger.warning(
+            "Watchdog reaped %d/%d worker slots this tick — pool may be starved; "
+            "consider restarting if sync throughput is degraded",
+            reaped,
+            settings.sync_max_workers,
+        )
     return reaped
 
 
@@ -547,6 +554,23 @@ def _pause_account(account: "Account", job: "SyncJob", kind: str, resume_at: dat
     account.sync_paused_until = resume_at
 
 
+def _read_until_deadline(job_id: str, stdout, deadline_s: float, on_line) -> None:
+    """Read mbsync stdout line-by-line until EOF or the wall-clock deadline.
+    On deadline, SIGKILL the proc (stop_sync_job) and return — so a stalled
+    pipe can never wedge the worker thread (incident 2026-06-22)."""
+    start = time.monotonic()
+    while True:
+        if time.monotonic() - start > deadline_s:
+            logger.warning("mbsync job %s exceeded %ss runtime cap — stopping", job_id, deadline_s)
+            with contextlib.suppress(Exception):
+                stop_sync_job(job_id)
+            return
+        line = stdout.readline()
+        if not line:
+            return  # EOF
+        on_line(line.rstrip() if isinstance(line, str) else line.decode(errors="replace").rstrip())
+
+
 def execute_sync_job(db: Session, job_id: str) -> None:
     job = db.query(SyncJob).filter(SyncJob.id == job_id).first()
     if not job:
@@ -769,14 +793,16 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 # here closes the race completely.
                 if job_id in _budget_stops:
                     stop_sync_job(job_id)
-                for line in proc.stdout:
-                    line = line.rstrip()
+
+                def _emit(text):
                     if settings.debug:
-                        logger.debug("[mbsync/%s] %s", account.name, line)
-                    _running_logs[job_id].append(line)
+                        logger.debug("[mbsync/%s] %s", account.name, text)
+                    _running_logs[job_id].append(text)
                     if log_file:
-                        log_file.write(line + "\n")
+                        log_file.write(text + "\n")
                         log_file.flush()
+
+                _read_until_deadline(job_id, proc.stdout, settings.sync_job_max_runtime_s, _emit)
                 proc.wait(timeout=3600)
                 result_code = proc.returncode
                 if result_code != 0:

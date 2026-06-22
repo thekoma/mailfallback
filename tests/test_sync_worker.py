@@ -1,4 +1,5 @@
 # tests/test_sync_worker.py
+import io
 import os
 import threading
 import time
@@ -101,7 +102,7 @@ def test_successful_sync():
     account, job = _make_account_and_job(session)
 
     mock_proc = MagicMock()
-    mock_proc.stdout = iter(["synced ok\n"])
+    mock_proc.stdout = io.StringIO("synced ok\n")
     mock_proc.returncode = 0
     with (
         patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
@@ -123,7 +124,7 @@ def test_failed_sync():
     account, job = _make_account_and_job(session)
 
     mock_proc = MagicMock()
-    mock_proc.stdout = iter(["auth failed\n"])
+    mock_proc.stdout = io.StringIO("auth failed\n")
     mock_proc.returncode = 1
     with (
         patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
@@ -152,7 +153,7 @@ def test_sync_sets_running_state():
         captured_state["account_state"] = account.sync_state
         captured_state["job_status"] = job.status
         mock_proc = MagicMock()
-        mock_proc.stdout = iter(["ok\n"])
+        mock_proc.stdout = io.StringIO("ok\n")
         mock_proc.returncode = 0
         return mock_proc
 
@@ -249,7 +250,7 @@ def test_sync_worker_calls_index_service_after_success(
     mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
     mock_proc = MagicMock()
-    mock_proc.stdout = iter(["ok\n"])
+    mock_proc.stdout = io.StringIO("ok\n")
     mock_proc.returncode = 0
     with (
         patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
@@ -289,7 +290,7 @@ def test_sync_worker_index_failure_does_not_break_sync(
     mock_index.upsert_message_set.side_effect = RuntimeError("indexer kaboom")
 
     mock_proc = MagicMock()
-    mock_proc.stdout = iter(["ok\n"])
+    mock_proc.stdout = io.StringIO("ok\n")
     mock_proc.returncode = 0
     with (
         patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
@@ -500,16 +501,28 @@ def test_worker_runs_sampler_with_own_sessions_and_keeps_progress(tmp_path, monk
     job.status = JobStatus.pending
     session.commit()
 
-    def slow_stdout():
-        yield "syncing\n"
-        # The "download" lands MID-RUN (mtime >= run start) — pre-run files
-        # are deliberately not booked as run bytes.
-        _write(str(tmp_path / "maildir" / "INBOX" / "cur" / "1.msg"), 1234)
-        time.sleep(0.05)  # give the loop at least one interval tick
-        yield "done\n"
+    class _SlowStdout:
+        """Simulate a subprocess stdout that yields lines with a mid-run file write."""
+
+        def __init__(self):
+            self._step = 0
+
+        def readline(self):
+            if self._step == 0:
+                self._step = 1
+                return "syncing\n"
+            elif self._step == 1:
+                self._step = 2
+                # The "download" lands MID-RUN (mtime >= run start) — pre-run files
+                # are deliberately not booked as run bytes.
+                _write(str(tmp_path / "maildir" / "INBOX" / "cur" / "1.msg"), 1234)
+                time.sleep(0.05)  # give the loop at least one interval tick
+                return "done\n"
+            else:
+                return ""  # EOF
 
     mock_proc = MagicMock()
-    mock_proc.stdout = slow_stdout()
+    mock_proc.stdout = _SlowStdout()
     mock_proc.returncode = 0
     with (
         patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
@@ -530,7 +543,7 @@ def test_worker_runs_sampler_with_own_sessions_and_keeps_progress(tmp_path, monk
     session.add(job2)
     session.commit()
     mock_proc2 = MagicMock()
-    mock_proc2.stdout = iter(["ok\n"])
+    mock_proc2.stdout = io.StringIO("ok\n")
     mock_proc2.returncode = 0
     with (
         patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc2),
@@ -549,7 +562,7 @@ def test_worker_runs_sampler_with_own_sessions_and_keeps_progress(tmp_path, monk
 
 def _proc(lines, code=0):
     p = MagicMock()
-    p.stdout = iter([ln + "\n" for ln in lines])
+    p.stdout = io.StringIO("".join(ln + "\n" for ln in lines))
     p.returncode = code
     return p
 
@@ -1361,3 +1374,26 @@ def test_reaper_spares_actively_ticking_job(db_session, oauth_account):
     }  # fresh tick
     assert sync_worker.recover_stalled_sync_jobs(db_session) == 0
     sync_worker._live_progress.pop(job.id, None)
+
+
+def test_read_loop_honors_runtime_deadline(monkeypatch):
+    """A subprocess whose stdout never EOFs must not block past the cap."""
+    import io
+    import time as _t
+
+    from mailfallback.services import sync_worker
+
+    monkeypatch.setattr(sync_worker.settings, "sync_job_max_runtime_s", 1)
+
+    class _NeverEOF(io.RawIOBase):
+        def readline(self):  # always returns, never EOF
+            _t.sleep(0.05)
+            return b"[mbsync] ...\n"
+
+    killed = {}
+    monkeypatch.setattr(sync_worker, "stop_sync_job", lambda jid: killed.setdefault(jid, True))
+    # _read_until_deadline is the extracted helper under test
+    start = _t.monotonic()
+    sync_worker._read_until_deadline("job-z", _NeverEOF(), deadline_s=1, on_line=lambda s: None)
+    assert _t.monotonic() - start < 5  # returned, did not hang
+    assert killed.get("job-z") is True

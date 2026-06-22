@@ -1,4 +1,5 @@
 # tests/test_integration.py
+import io
 import tempfile
 from unittest.mock import MagicMock, patch
 
@@ -80,7 +81,7 @@ def test_full_sync_flow(client, db_session, tmp_store):
     assert resp.json()["status"] == "pending"
 
     mock_proc = MagicMock()
-    mock_proc.stdout = iter(["synced\n"])
+    mock_proc.stdout = io.StringIO("synced\n")
     mock_proc.returncode = 0
     with patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc):
         from mailfallback.services.sync_worker import execute_sync_job
@@ -113,7 +114,7 @@ def test_full_sync_flow_failure(client, db_session, tmp_store):
     job_id = resp.json()["job_id"]
 
     mock_proc = MagicMock()
-    mock_proc.stdout = iter(["auth error\n"])
+    mock_proc.stdout = io.StringIO("auth error\n")
     mock_proc.returncode = 1
     with patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc):
         from mailfallback.services.sync_worker import execute_sync_job
