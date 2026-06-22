@@ -240,6 +240,31 @@ def test_pause_expiry_tick_future_pause_untouched(db_session, default_store):
     submit.assert_not_called()
 
 
+def test_pause_expiry_enqueues_redriven_initial(db_session, oauth_account, monkeypatch):
+    """Integration: after _redrive_or_clear sets an expired pause, the next
+    _run_pause_expiry_tick detects the expired pause and enqueues the job."""
+    from datetime import UTC, datetime, timedelta
+
+    from mailfallback.models import SyncState
+    from mailfallback.services import scheduler as sched
+
+    oauth_account.initial_sync_completed_at = None
+    oauth_account.sync_state = SyncState.idle
+    oauth_account.sync_paused_until = datetime.now(UTC) - timedelta(seconds=1)
+    oauth_account.pause_reason = "interrupted"
+    db_session.commit()
+
+    created = []
+    monkeypatch.setattr(sched, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(
+        sched, "create_sync_job", lambda db, aid, source: created.append(aid) or None
+    )
+    monkeypatch.setattr(sched, "submit_sync_job", lambda jid: None)
+    sched._run_pause_expiry_tick()
+
+    assert created == [oauth_account.id]
+
+
 def test_scheduled_sync_skips_needs_reauth(db_session, oauth_account, monkeypatch):
     """The periodic path must not enqueue an account parked in needs_reauth."""
     from mailfallback.models import SyncState

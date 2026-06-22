@@ -960,9 +960,9 @@ def test_pipeline_depth_injected_only_while_initial_incomplete(tmp_path):
 def test_recover_zombie_closes_running_and_makes_schedulable(tmp_path):
     """A running job from a dead process closes as interrupted (marker
     appended to the log); the syncing account returns to idle and — initial
-    sync incomplete + budget headroom (none configured = unlimited) — any
-    stale pause is CLEARED so the scheduler can resume immediately. The
-    sweep itself never enqueues."""
+    sync incomplete + budget headroom (none configured = unlimited) — an
+    already-expired pause is set so the minute-tick re-enqueues in-process.
+    The sweep itself never enqueues."""
     session = make_session()
     account, job = _mk_maildir_account_and_job(session, tmp_path)
     job.status = JobStatus.running
@@ -983,21 +983,23 @@ def test_recover_zombie_closes_running_and_makes_schedulable(tmp_path):
     assert job.log.startswith("partial output")
     assert "[recovered]" in job.log
     assert account.sync_state == SyncState.idle
-    assert account.sync_paused_until is None
-    assert account.pause_reason is None
+    # incomplete initial + headroom → expired pause for the minute-tick to pick up
+    assert account.pause_reason == "interrupted"
+    assert account.sync_paused_until is not None
+    assert account.sync_paused_until <= datetime.now(UTC).replace(tzinfo=None)
 
 
 def test_recover_zombie_respects_pause_without_headroom(tmp_path):
-    """Initial sync incomplete but today's budget is spent: the pause stays
-    (resuming now would re-burn the provider quota)."""
+    """Initial sync incomplete but today's budget is spent: _redrive_or_clear
+    goes to the else-branch and CLEARS the pause columns — the budget cron
+    will re-set the pause on the next scheduler tick when it re-burns."""
     session = make_session()
     account, job = _mk_maildir_account_and_job(session, tmp_path, daily_sync_budget_mb=1)
     job.status = JobStatus.running
     account.sync_state = SyncState.syncing
     account.traffic_date = datetime.now(UTC).date()
     account.bytes_synced_today = 2 * 1024 * 1024  # over the 1 MiB budget
-    paused_until = datetime.now(UTC) + timedelta(hours=6)
-    account.sync_paused_until = paused_until
+    account.sync_paused_until = datetime.now(UTC) + timedelta(hours=6)
     account.pause_reason = "budget"
     session.commit()
 
@@ -1007,13 +1009,14 @@ def test_recover_zombie_respects_pause_without_headroom(tmp_path):
     session.refresh(job)
     assert job.failure_kind == "interrupted"
     assert account.sync_state == SyncState.idle
-    assert account.pause_reason == "budget"  # untouched
-    assert account.sync_paused_until is not None
+    assert account.sync_paused_until is None
+    assert account.pause_reason is None
 
 
 def test_recover_zombie_stale_traffic_date_is_fresh_budget(tmp_path):
     """Yesterday's ledger does not count against today: a stale traffic_date
-    means full headroom — the pause clears."""
+    means full headroom — incomplete initial sync → expired pause set for
+    the minute-tick to re-enqueue."""
     session = make_session()
     account, job = _mk_maildir_account_and_job(session, tmp_path, daily_sync_budget_mb=1)
     job.status = JobStatus.running
@@ -1026,11 +1029,15 @@ def test_recover_zombie_stale_traffic_date_is_fresh_budget(tmp_path):
     sync_worker.recover_zombie_sync_jobs(session)
 
     session.refresh(account)
-    assert account.sync_paused_until is None
-    assert account.pause_reason is None
+    # headroom (stale date) + incomplete initial → expired pause for minute-tick
+    assert account.pause_reason == "interrupted"
+    assert account.sync_paused_until is not None
+    assert account.sync_paused_until <= datetime.now(UTC).replace(tzinfo=None)
 
 
-def test_recover_zombie_initial_complete_keeps_pause(tmp_path):
+def test_recover_zombie_initial_complete_clears_pause(tmp_path):
+    """Initial sync already complete: _redrive_or_clear goes to else-branch
+    and clears both pause columns — the account's own cron will resume it."""
     session = make_session()
     account, job = _mk_maildir_account_and_job(session, tmp_path, initial_sync_completed_at=DONE)
     job.status = JobStatus.running
@@ -1041,8 +1048,8 @@ def test_recover_zombie_initial_complete_keeps_pause(tmp_path):
     sync_worker.recover_zombie_sync_jobs(session)
 
     session.refresh(account)
-    assert account.pause_reason == "throttle"
-    assert account.sync_paused_until is not None
+    assert account.pause_reason is None
+    assert account.sync_paused_until is None
 
 
 def test_recover_zombie_closes_orphaned_pending_jobs(tmp_path):
@@ -1257,3 +1264,48 @@ def test_run_sync_transient_refresh_stays_error(db_session, oauth_account):
 
     db_session.refresh(oauth_account)
     assert oauth_account.sync_state == SyncState.error
+
+
+# ---------------------------------------------------------------------------
+# _redrive_or_clear / boot-sweep re-drive tests (Task 6)
+# ---------------------------------------------------------------------------
+
+
+def test_boot_sweep_redrives_incomplete_initial(db_session, oauth_account):
+    """Boot sweep on an incomplete initial sync with headroom → expired pause
+    + pause_reason="interrupted" so the minute-tick re-enqueues in-process."""
+    oauth_account.initial_sync_completed_at = None
+    oauth_account.sync_state = SyncState.syncing
+    job = SyncJob(
+        account_id=oauth_account.id, status=JobStatus.running, started_at=datetime.now(UTC)
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    sync_worker.recover_zombie_sync_jobs(db_session)
+
+    db_session.refresh(oauth_account)
+    db_session.refresh(job)
+    assert job.status == JobStatus.failed
+    assert job.failure_kind == "interrupted"
+    assert oauth_account.sync_state == SyncState.idle
+    assert oauth_account.pause_reason == "interrupted"
+    assert oauth_account.sync_paused_until is not None
+    assert oauth_account.sync_paused_until <= datetime.now(UTC).replace(tzinfo=None)
+
+
+def test_boot_sweep_completed_initial_just_clears(db_session, oauth_account):
+    """Boot sweep on a completed initial sync → both pause columns cleared;
+    the account's own cron resumes it on schedule."""
+    oauth_account.initial_sync_completed_at = datetime.now(UTC)
+    job = SyncJob(
+        account_id=oauth_account.id, status=JobStatus.running, started_at=datetime.now(UTC)
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    sync_worker.recover_zombie_sync_jobs(db_session)
+
+    db_session.refresh(oauth_account)
+    assert oauth_account.sync_paused_until is None
+    assert oauth_account.pause_reason is None
