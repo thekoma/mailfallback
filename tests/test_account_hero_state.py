@@ -37,6 +37,17 @@ def test_token_refresh_failure_maps_to_sign_in_needed(db_session, default_store)
     assert state == "sign-in-needed"
 
 
+def test_needs_reauth_hero_is_sign_in_needed(db_session, oauth_account):
+    """needs_reauth must surface the reconnect flow, not the generic error panel."""
+    from mailfallback.models import SyncState
+    from mailfallback.routers.ui_accounts import _compute_hero_state
+
+    oauth_account.sync_state = SyncState.needs_reauth
+    db_session.commit()
+    state, _snap, _job = _compute_hero_state(oauth_account, db_session)
+    assert state == "sign-in-needed"
+
+
 def test_other_errors_still_map_to_error_state(db_session, default_store):
     account = _oauth_account(db_session, default_store)
     account.sync_state = SyncState.error
