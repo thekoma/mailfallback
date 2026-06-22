@@ -1178,3 +1178,66 @@ def test_priority_pass_skipped_when_patterns_exclude_inbox(tmp_path):
 
     assert len(cmds) == 1
     assert cmds[0][-1] == "meter"  # the full channel, no :INBOX box-spec
+
+
+# ---------------------------------------------------------------------------
+# OAuth2 token refresh terminality (Task 3)
+# ---------------------------------------------------------------------------
+
+
+def _oauth_creds():
+    import json
+
+    return json.dumps({"provider": "google", "refresh_token": "rt", "access_token": "old"})
+
+
+def test_refresh_invalid_grant_is_terminal(db_session, oauth_account):
+    from authlib.integrations.base_client.errors import OAuthError
+
+    with patch(
+        "mailfallback.services.oauth2.refresh_google_token",
+        side_effect=OAuthError(error="invalid_grant", description="Bad Request"),
+    ):
+        token, terminal = sync_worker._refresh_oauth_token(
+            _oauth_creds(), db_session, oauth_account
+        )
+    assert token is None
+    assert terminal is True
+
+
+def test_refresh_network_error_not_terminal(db_session, oauth_account):
+    with patch(
+        "mailfallback.services.oauth2.refresh_google_token",
+        side_effect=ConnectionError("boom"),
+    ):
+        token, terminal = sync_worker._refresh_oauth_token(
+            _oauth_creds(), db_session, oauth_account
+        )
+    assert token is None
+    assert terminal is False
+
+
+def test_run_sync_invalid_grant_parks_needs_reauth(db_session, oauth_account):
+    """Terminal token refresh (invalid_grant) sets sync_state=needs_reauth."""
+    job = SyncJob(account_id=oauth_account.id, source="test", status=JobStatus.pending)
+    db_session.add(job)
+    db_session.commit()
+
+    with patch.object(sync_worker, "_refresh_oauth_token", return_value=(None, True)):
+        execute_sync_job(db_session, job.id)
+
+    db_session.refresh(oauth_account)
+    assert oauth_account.sync_state == SyncState.needs_reauth
+
+
+def test_run_sync_transient_refresh_stays_error(db_session, oauth_account):
+    """Non-terminal token refresh failure (network blip) sets sync_state=error."""
+    job = SyncJob(account_id=oauth_account.id, source="test", status=JobStatus.pending)
+    db_session.add(job)
+    db_session.commit()
+
+    with patch.object(sync_worker, "_refresh_oauth_token", return_value=(None, False)):
+        execute_sync_job(db_session, job.id)
+
+    db_session.refresh(oauth_account)
+    assert oauth_account.sync_state == SyncState.error

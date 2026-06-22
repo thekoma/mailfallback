@@ -340,19 +340,27 @@ def _run_sampler(
         logger.warning("Sync sampler final flush failed for job %s", job_id, exc_info=True)
 
 
-def _refresh_oauth_token(creds_json: str, db: Session, account: "Account") -> str | None:
-    """Refresh OAuth2 token and update stored credentials."""
+def _refresh_oauth_token(
+    creds_json: str, db: Session, account: "Account"
+) -> tuple[str | None, bool]:
+    """Refresh OAuth2 token and update stored credentials.
+
+    Returns ``(access_token, terminal)`` where ``terminal=True`` means the
+    failure is confirmed non-recoverable (e.g. ``invalid_grant`` — token
+    revoked/expired, user must re-auth).  ``access_token`` is ``None`` on any
+    failure.
+    """
     import asyncio
     import json
 
     try:
         token_data = json.loads(creds_json)
     except json.JSONDecodeError:
-        return None
+        return None, True  # malformed creds — terminal, nothing to retry
 
     refresh_token = token_data.get("refresh_token", "")
     if not refresh_token:
-        return None
+        return None, True  # no refresh token — terminal, user must re-auth
 
     provider = token_data.get("provider", "google")
     try:
@@ -368,10 +376,13 @@ def _refresh_oauth_token(creds_json: str, db: Session, account: "Account") -> st
 
         account.credentials = encrypt_credentials(json.dumps(token_data), settings.secret_key)
         db.commit()
-        return access_token
-    except Exception:
+        return access_token, False
+    except Exception as exc:
         logger.exception("Failed to refresh OAuth2 token for %s", account.name)
-        return None
+        # invalid_grant = the refresh token is revoked/expired → terminal,
+        # needs user re-auth.  Network/5xx blips are NOT terminal (keep retrying).
+        terminal = "invalid_grant" in str(getattr(exc, "error", "") or exc).lower()
+        return None, terminal
 
 
 _STATUS_MESSAGES_RE = re.compile(r"MESSAGES\s+(\d+)")
@@ -537,13 +548,15 @@ def execute_sync_job(db: Session, job_id: str) -> None:
     if account.credentials:
         creds = decrypt_credentials(account.credentials, settings.secret_key)
         if account.auth_type.value == "oauth2":
-            access_token = _refresh_oauth_token(creds, db, account)
+            access_token, terminal = _refresh_oauth_token(creds, db, account)
             if not access_token:
                 job.status = JobStatus.failed
                 job.log = TOKEN_REFRESH_FAILED
                 job.completed_at = datetime.now(UTC)
-                account.sync_state = SyncState.error
-                account.last_error = job.log
+                account.sync_state = SyncState.needs_reauth if terminal else SyncState.error
+                account.last_error = TOKEN_REFRESH_FAILED
+                account.sync_paused_until = None
+                account.pause_reason = None
                 db.commit()
                 return
             status_access_token = access_token

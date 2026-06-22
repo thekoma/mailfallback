@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 from mailfallback.app import create_app
 from mailfallback.db import Base
 from mailfallback.dependencies import get_db
-from mailfallback.models import MailStore
+from mailfallback.models import AuthType, MailStore
 
 
 @pytest.fixture
@@ -74,6 +74,36 @@ def client(app):
 
     reset_rate_limits()
     return TestClient(app)
+
+
+@pytest.fixture
+def oauth_account(db_session, default_store):
+    """An Account with auth_type=oauth2 and encrypted Google credentials.
+
+    Used to test OAuth2 token refresh paths (invalid_grant detection, etc.)
+    without reaching for a real provider.
+    """
+    import json
+
+    import mailfallback.config as cfg
+    from mailfallback.models import Account
+    from mailfallback.security import encrypt_credentials
+
+    creds_json = json.dumps({"provider": "google", "refresh_token": "rt", "access_token": "old"})
+    account = Account(
+        name="oauth-test",
+        imap_host="imap.gmail.com",
+        imap_user="user@gmail.com",
+        maildir_path="/tmp/test_oauth_maildir",
+        auth_type=AuthType.oauth2,
+        credentials=encrypt_credentials(creds_json, cfg.settings.secret_key),
+        store_id=default_store.id,
+        initial_sync_completed_at=None,
+    )
+    db_session.add(account)
+    db_session.commit()
+    db_session.refresh(account)
+    return account
 
 
 @pytest.fixture
