@@ -898,6 +898,13 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             account.sync_paused_until = None
             account.pause_reason = None
             logger.info("Sync completed for %s", account.name)
+            # Persist the terminal state NOW, before the best-effort post-sync
+            # bookkeeping below. Stats/index work can stall or fail (2026-06-22
+            # incident: a stalled collect_account_stats left the job 'running'
+            # forever because completion was committed only AFTER all
+            # bookkeeping — the watchdog then reaped it in a loop). Committing
+            # here makes completion durable regardless of what follows.
+            db.commit()
             try:
                 from mailfallback.services.stats_service import collect_account_stats
 

@@ -301,6 +301,74 @@ def test_sync_worker_index_failure_does_not_break_sync(
     assert job.status == JobStatus.completed  # NOT failed
 
 
+@patch("mailfallback.services.sync_worker.index_service")
+@patch("mailfallback.services.sync_worker.subprocess.run")
+def test_completion_persisted_before_post_sync_bookkeeping(
+    mock_run, mock_index, db_session, default_store, monkeypatch
+):
+    """A clean sync must COMMIT job.status=completed BEFORE the post-sync
+    bookkeeping (stats/cleanup/index) runs. Regression for the 2026-06-22
+    churn: collect_account_stats stalled, and because completion was only
+    committed AFTER all bookkeeping, the job stayed 'running' forever and
+    the watchdog reaped it in a loop."""
+    from mailfallback.models import Account, AuthType, JobStatus, SyncJob
+    from mailfallback.services import stats_service, sync_worker
+
+    acct = Account(
+        name="order",
+        store=default_store,
+        maildir_path="/tmp/test_commit_order",
+        imap_host="imap.example.com",
+        imap_user="u",
+        credentials=None,
+        auth_type=AuthType.app_password,
+    )
+    db_session.add(acct)
+    db_session.commit()
+    job = SyncJob(account_id=acct.id, source="manual", status=JobStatus.pending)
+    db_session.add(job)
+    db_session.commit()
+    job_id = job.id
+
+    events: list[tuple[str, object]] = []
+    real_commit = db_session.commit
+
+    def tracking_commit():
+        db_session.flush()
+        j = db_session.query(SyncJob).filter_by(id=job_id).first()
+        events.append(("commit", j.status))
+        return real_commit()
+
+    monkeypatch.setattr(db_session, "commit", tracking_commit)
+    monkeypatch.setattr(
+        stats_service,
+        "collect_account_stats",
+        lambda db, account: events.append(("collect", None)),
+    )
+
+    mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    mock_proc = MagicMock()
+    mock_proc.stdout = io.StringIO("ok\n")
+    mock_proc.returncode = 0
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"),
+    ):
+        sync_worker.execute_sync_job(db_session, job_id)
+
+    commit_completed_at = next(
+        (i for i, (k, v) in enumerate(events) if k == "commit" and v == JobStatus.completed),
+        None,
+    )
+    collect_at = next((i for i, (k, _) in enumerate(events) if k == "collect"), None)
+    assert commit_completed_at is not None, f"completed was never committed; events={events}"
+    assert collect_at is not None, "collect_account_stats was never called"
+    assert commit_completed_at < collect_at, (
+        f"completed committed AFTER post-sync bookkeeping (stall would strand the job); "
+        f"events={events}"
+    )
+
+
 def test_sync_blocked_unauthenticated():
     db = MagicMock()
     job = MagicMock()
