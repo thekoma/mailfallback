@@ -990,16 +990,17 @@ def test_recover_zombie_closes_running_and_makes_schedulable(tmp_path):
 
 
 def test_recover_zombie_respects_pause_without_headroom(tmp_path):
-    """Initial sync incomplete but today's budget is spent: _redrive_or_clear
-    goes to the else-branch and CLEARS the pause columns — the budget cron
-    will re-set the pause on the next scheduler tick when it re-burns."""
+    """Initial sync incomplete but today's budget is spent: _redrive_or_keep_pause
+    goes to the else-branch and PRESERVES the existing pause columns — the
+    budget-spent account keeps its computed midnight resume timestamp."""
     session = make_session()
     account, job = _mk_maildir_account_and_job(session, tmp_path, daily_sync_budget_mb=1)
     job.status = JobStatus.running
     account.sync_state = SyncState.syncing
     account.traffic_date = datetime.now(UTC).date()
     account.bytes_synced_today = 2 * 1024 * 1024  # over the 1 MiB budget
-    account.sync_paused_until = datetime.now(UTC) + timedelta(hours=6)
+    pre_pause_until = datetime.now(UTC) + timedelta(hours=6)
+    account.sync_paused_until = pre_pause_until
     account.pause_reason = "budget"
     session.commit()
 
@@ -1009,8 +1010,10 @@ def test_recover_zombie_respects_pause_without_headroom(tmp_path):
     session.refresh(job)
     assert job.failure_kind == "interrupted"
     assert account.sync_state == SyncState.idle
-    assert account.sync_paused_until is None
-    assert account.pause_reason is None
+    # pause preserved — budget-spent account keeps its resume timestamp
+    assert account.pause_reason == "budget"
+    assert account.sync_paused_until is not None
+    assert account.sync_paused_until.replace(tzinfo=UTC) >= pre_pause_until - timedelta(seconds=1)
 
 
 def test_recover_zombie_stale_traffic_date_is_fresh_budget(tmp_path):
@@ -1035,21 +1038,25 @@ def test_recover_zombie_stale_traffic_date_is_fresh_budget(tmp_path):
     assert account.sync_paused_until <= datetime.now(UTC).replace(tzinfo=None)
 
 
-def test_recover_zombie_initial_complete_clears_pause(tmp_path):
-    """Initial sync already complete: _redrive_or_clear goes to else-branch
-    and clears both pause columns — the account's own cron will resume it."""
+def test_recover_zombie_initial_complete_keeps_pause(tmp_path):
+    """Initial sync already complete: _redrive_or_keep_pause goes to the
+    else-branch and PRESERVES the existing pause columns — a throttled account
+    keeps its computed resume time; the scheduler's own cron handles re-drive."""
     session = make_session()
     account, job = _mk_maildir_account_and_job(session, tmp_path, initial_sync_completed_at=DONE)
     job.status = JobStatus.running
-    account.sync_paused_until = datetime.now(UTC) + timedelta(hours=2)
+    pre_pause_until = datetime.now(UTC) + timedelta(hours=2)
+    account.sync_paused_until = pre_pause_until
     account.pause_reason = "throttle"
     session.commit()
 
     sync_worker.recover_zombie_sync_jobs(session)
 
     session.refresh(account)
-    assert account.pause_reason is None
-    assert account.sync_paused_until is None
+    # pause preserved — completed-initial account keeps its existing resume timestamp
+    assert account.pause_reason == "throttle"
+    assert account.sync_paused_until is not None
+    assert account.sync_paused_until.replace(tzinfo=UTC) >= pre_pause_until - timedelta(seconds=1)
 
 
 def test_recover_zombie_closes_orphaned_pending_jobs(tmp_path):

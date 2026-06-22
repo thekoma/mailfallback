@@ -133,17 +133,17 @@ def _budget_headroom_today(account: "Account") -> bool:
     return (account.bytes_synced_today or 0) < budget
 
 
-def _redrive_or_clear(account: "Account") -> None:
-    """After an interrupted job: an INCOMPLETE initial sync with budget
+def _redrive_or_keep_pause(account: "Account") -> None:
+    """After an interrupted job: an INCOMPLETE initial sync WITH budget
     headroom gets an already-expired pause so _run_pause_expiry_tick
-    re-enqueues it in-process (one re-drive path, no boot-time race). A
-    COMPLETED initial sync just clears — its own cron resumes it."""
+    re-enqueues it in-process. Otherwise LEAVE the pause columns untouched —
+    a budget-spent or throttled account keeps its computed resume time
+    (preserves the original 'respect the existing pause' behavior; only the
+    headroom case changes, from clear → re-drive)."""
     if account.initial_sync_completed_at is None and _budget_headroom_today(account):
         account.sync_paused_until = datetime.now(UTC) - timedelta(seconds=1)
         account.pause_reason = "interrupted"
-    else:
-        account.sync_paused_until = None
-        account.pause_reason = None
+    # else: respect the existing pause (budget spent / throttled) — untouched.
 
 
 def recover_zombie_sync_jobs(db: Session) -> int:
@@ -160,10 +160,11 @@ def recover_zombie_sync_jobs(db: Session) -> int:
 
     Each zombie: status=failed, failure_kind="interrupted",
     completed_at=now, a "[recovered]" marker appended to the log. Account
-    side: syncing → idle; then _redrive_or_clear() — for an incomplete
+    side: syncing → idle; then _redrive_or_keep_pause() — for an incomplete
     initial sync with budget headroom, sets an already-expired pause so the
-    minute-tick re-enqueues it in-process; otherwise clears both pause
-    columns. The sweep itself NEVER enqueues (idempotent and
+    minute-tick re-enqueues it in-process; otherwise the pause columns are
+    LEFT UNTOUCHED (budget-spent / throttled accounts keep their resume
+    timestamp). The sweep itself NEVER enqueues (idempotent and
     side-effect-light by design: enqueueing from here would race the
     scheduler that starts right after in the same lifespan).
 
@@ -189,7 +190,7 @@ def recover_zombie_sync_jobs(db: Session) -> int:
             continue
         if account.sync_state == SyncState.syncing:
             account.sync_state = SyncState.idle
-        _redrive_or_clear(account)
+        _redrive_or_keep_pause(account)
     if recovered:
         db.commit()
         logger.info("Recovered %d zombie sync job(s) after restart", recovered)
