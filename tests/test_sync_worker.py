@@ -1316,3 +1316,48 @@ def test_boot_sweep_completed_initial_just_clears(db_session, oauth_account):
     db_session.refresh(oauth_account)
     assert oauth_account.sync_paused_until is None
     assert oauth_account.pause_reason is None
+
+
+# ---------------------------------------------------------------------------
+# recover_stalled_sync_jobs — in-flight watchdog reaper (Task 7)
+# ---------------------------------------------------------------------------
+
+
+def _running_job(db, account, started_minutes_ago):
+    job = SyncJob(
+        account_id=account.id,
+        status=JobStatus.running,
+        started_at=datetime.now(UTC) - timedelta(minutes=started_minutes_ago),
+    )
+    db.add(job)
+    db.commit()
+    return job
+
+
+def test_reaper_closes_stalled_job(db_session, oauth_account):
+    oauth_account.sync_state = SyncState.syncing
+    oauth_account.initial_sync_completed_at = None
+    job = _running_job(db_session, oauth_account, started_minutes_ago=30)  # past grace
+    sync_worker._live_progress.pop(job.id, None)  # no tick => stalled
+    n = sync_worker.recover_stalled_sync_jobs(db_session)
+    db_session.refresh(job)
+    db_session.refresh(oauth_account)
+    assert n == 1 and job.status == JobStatus.failed and job.failure_kind == "interrupted"
+    assert oauth_account.pause_reason == "interrupted"  # re-driven
+
+
+def test_reaper_spares_young_job(db_session, oauth_account):
+    _running_job(db_session, oauth_account, started_minutes_ago=2)  # within grace
+    assert sync_worker.recover_stalled_sync_jobs(db_session) == 0
+
+
+def test_reaper_spares_actively_ticking_job(db_session, oauth_account):
+    import time
+
+    job = _running_job(db_session, oauth_account, started_minutes_ago=30)
+    sync_worker._live_progress[job.id] = {
+        "account_id": oauth_account.id,
+        "updated_ts": time.time(),
+    }  # fresh tick
+    assert sync_worker.recover_stalled_sync_jobs(db_session) == 0
+    sync_worker._live_progress.pop(job.id, None)

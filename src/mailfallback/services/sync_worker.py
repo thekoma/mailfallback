@@ -197,6 +197,49 @@ def recover_zombie_sync_jobs(db: Session) -> int:
     return recovered
 
 
+def recover_stalled_sync_jobs(db: Session) -> int:
+    """Periodic in-flight watchdog: close running jobs whose sampler tick
+    has gone stale (the worker thread wedged) — the boot sweep's sibling for
+    long-lived containers. Stall = older than the grace window AND (no fresh
+    _live_progress tick within the threshold OR no live subprocess)."""
+    now = datetime.now(UTC)
+    grace = timedelta(seconds=settings.sync_stall_grace_s)
+    threshold = settings.sync_stall_threshold_s
+    now_wall = time.time()
+    reaped = 0
+    for job in db.query(SyncJob).filter(SyncJob.status == JobStatus.running).all():
+        started = job.started_at
+        if started is None:
+            continue
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        if now - started < grace:
+            continue
+        prog = _live_progress.get(job.id)
+        fresh_tick = prog is not None and (now_wall - prog.get("updated_ts", 0)) < threshold
+        proc = _running_procs.get(job.id)
+        proc_alive = proc is not None and proc.poll() is None
+        if fresh_tick or proc_alive:
+            continue
+        reaped += 1
+        job.status = JobStatus.failed
+        job.failure_kind = "interrupted"
+        job.completed_at = now
+        marker = "[reaped] stalled with no progress — closed as interrupted"
+        job.log = f"{job.log}\n{marker}" if job.log else marker
+        account = db.query(Account).filter(Account.id == job.account_id).first()
+        if account:
+            if account.sync_state == SyncState.syncing:
+                account.sync_state = SyncState.idle
+            _redrive_or_keep_pause(account)
+        with contextlib.suppress(Exception):
+            stop_sync_job(job.id)  # SIGKILL any lingering proc; frees a pipe-blocked thread
+    if reaped:
+        db.commit()
+        logger.warning("Watchdog reaped %d stalled sync job(s)", reaped)
+    return reaped
+
+
 def _sample_maildir(path: str, since_ts: float) -> tuple[int, int, int, int]:
     """One walk over the ACCOUNT maildir: (total_msgs, total_bytes,
     run_msgs, run_bytes).
