@@ -235,7 +235,9 @@ class Account(Base):
     last_error = Column(Text, nullable=True)
     total_messages = Column(Integer, nullable=False, default=0)
     unread_messages = Column(Integer, nullable=False, default=0)
-    maildir_size_bytes = Column(Integer, nullable=False, default=0)
+    # BigInteger: byte totals exceed INTEGER (~2.1 GB) for large mailboxes
+    # (a 15 GB Gmail account overflowed it, failing the stats UPDATE).
+    maildir_size_bytes = Column(BigInteger, nullable=False, default=0)
     folder_stats = Column(Text, nullable=True)
     # Sync budget / initial-sync regime (migration 021). traffic_date +
     # bytes_synced_today form the per-account daily byte ledger (UTC day,
