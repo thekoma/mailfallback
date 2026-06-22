@@ -302,6 +302,7 @@ def _sampler_tick(job_id: str, account_id: str, maildir_path: str, state: dict) 
             "pct": pct,
             "eta": eta,
             "rate_msgs_per_s": rate,
+            "updated_ts": time.time(),
         }
         db.commit()  # crash-safe ledger: every tick persists (spec §2)
 

@@ -419,6 +419,22 @@ def test_sampler_tick_advances_ledger_and_live_progress(tmp_path, monkeypatch):
     sync_worker._live_progress.pop(job.id, None)
 
 
+def test_sampler_tick_stamps_updated_ts(tmp_path, monkeypatch):
+    """Each _sampler_tick populates _live_progress with updated_ts wall-clock
+    timestamp for watchdog detection of stalled syncs."""
+    session, factory = make_shared_session()
+    monkeypatch.setattr(sync_worker, "SessionLocal", factory)
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    run_start = time.time() - 60
+    _write(str(tmp_path / "maildir" / "INBOX" / "cur" / "1.msg"), 1000)
+
+    state = sync_worker._new_sampler_state(run_start)
+    sync_worker._sampler_tick(job.id, account.id, account.maildir_path, state)
+    prog = sync_worker.get_live_progress(job.id)
+    assert prog is not None and "updated_ts" in prog and prog["updated_ts"] > 0
+    sync_worker._live_progress.pop(job.id, None)
+
+
 def test_sampler_tick_utc_rollover_resets_ledger(tmp_path, monkeypatch):
     """A tick on a new UTC day resets the ledger before booking — yesterday's
     spend never bleeds into today's budget."""
