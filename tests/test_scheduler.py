@@ -241,7 +241,7 @@ def test_pause_expiry_tick_future_pause_untouched(db_session, default_store):
 
 
 def test_pause_expiry_enqueues_redriven_initial(db_session, oauth_account, monkeypatch):
-    """Integration: after _redrive_or_clear sets an expired pause, the next
+    """Integration: after _redrive_or_keep_pause sets an expired pause, the next
     _run_pause_expiry_tick detects the expired pause and enqueues the job."""
     from datetime import UTC, datetime, timedelta
 

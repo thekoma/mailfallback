@@ -556,8 +556,13 @@ def _pause_account(account: "Account", job: "SyncJob", kind: str, resume_at: dat
 
 def _read_until_deadline(job_id: str, stdout, deadline_s: float, on_line) -> None:
     """Read mbsync stdout line-by-line until EOF or the wall-clock deadline.
-    On deadline, SIGKILL the proc (stop_sync_job) and return — so a stalled
-    pipe can never wedge the worker thread (incident 2026-06-22)."""
+
+    The deadline bounds high-frequency/flooding output (the check fires between
+    readline() calls). A silently-blocked readline() — pipe open, no data, no
+    EOF — is NOT bounded by this deadline; that case is unblocked externally by
+    the Task-7 watchdog SIGKILLing the proc (which delivers EOF to the pipe).
+    On deadline expiry here: SIGKILL the proc and return.
+    """
     start = time.monotonic()
     while True:
         if time.monotonic() - start > deadline_s:
@@ -803,7 +808,21 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                         log_file.flush()
 
                 _read_until_deadline(job_id, proc.stdout, settings.sync_job_max_runtime_s, _emit)
-                proc.wait(timeout=3600)
+                # _read_until_deadline may have returned early (deadline fired
+                # and sent SIGKILL). Use a short timeout so proc.wait() itself
+                # cannot re-wedge after the read loop gave up.
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    logger.warning(
+                        "mbsync proc for job %s did not exit 30s after read loop ended"
+                        " — force kill",
+                        job_id,
+                    )
+                    with contextlib.suppress(Exception):
+                        proc.kill()
+                    with contextlib.suppress(subprocess.TimeoutExpired, Exception):
+                        proc.wait(timeout=5)
                 result_code = proc.returncode
                 if result_code != 0:
                     break  # an INBOX-pass failure skips the full pass
@@ -826,6 +845,29 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             if log_file:
                 log_file.close()
 
+        # Budget stop FIRST — it SIGTERMs the proc, so the marker must beat
+        # both the exit code and the signal interpretation. Consume it.
+        budget_stopped = job_id in _budget_stops
+        _budget_stops.discard(job_id)
+        # Known edge (review F3): a budget crossing in the FINAL sampler
+        # flush of a clean exit-0 run lands here as budget_paused — the
+        # 100%-done sync re-labels as paused and completes as a no-op rerun
+        # after the resume. Accepted: the alternative (trusting exit 0 over
+        # the marker) would mislabel real mid-run stops.
+
+        # Guard: if a concurrent actor (the watchdog reaper or boot
+        # crash-sweep) already closed this job while we were blocked on
+        # mbsync I/O, its decision wins — do not overwrite the account/job
+        # state it set (e.g. an interrupted re-drive). The refresh re-reads
+        # from the DB so it sees commits made by a different session.
+        # IMPORTANT: refresh BEFORE any attribute assignments so we do not
+        # accidentally discard them mid-air. We still fall through to the
+        # outer finally (config/token cleanup).
+        db.refresh(job)
+        if job.status != JobStatus.running:
+            logger.info("Job %s already closed by another actor — not relabeling", job_id)
+            return
+
         job.exit_code = result_code
         job.log = result_output
         job.log_path = log_file_path
@@ -843,16 +885,6 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             job.parsed_summary = json.dumps(asdict(snap), default=str)
         except Exception:
             logger.warning("Failed to serialize parsed summary for job %s", job_id)
-
-        # Budget stop FIRST — it SIGTERMs the proc, so the marker must beat
-        # both the exit code and the signal interpretation. Consume it.
-        budget_stopped = job_id in _budget_stops
-        _budget_stops.discard(job_id)
-        # Known edge (review F3): a budget crossing in the FINAL sampler
-        # flush of a clean exit-0 run lands here as budget_paused — the
-        # 100%-done sync re-labels as paused and completes as a no-op rerun
-        # after the resume. Accepted: the alternative (trusting exit 0 over
-        # the marker) would mislabel real mid-run stops.
 
         if result_code == 0 and not budget_stopped:
             job.status = JobStatus.completed

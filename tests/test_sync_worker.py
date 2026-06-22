@@ -1287,7 +1287,7 @@ def test_run_sync_transient_refresh_stays_error(db_session, oauth_account):
 
 
 # ---------------------------------------------------------------------------
-# _redrive_or_clear / boot-sweep re-drive tests (Task 6)
+# _redrive_or_keep_pause / boot-sweep re-drive tests (Task 6)
 # ---------------------------------------------------------------------------
 
 
@@ -1397,3 +1397,57 @@ def test_read_loop_honors_runtime_deadline(monkeypatch):
     sync_worker._read_until_deadline("job-z", _NeverEOF(), deadline_s=1, on_line=lambda s: None)
     assert _t.monotonic() - start < 5  # returned, did not hang
     assert killed.get("job-z") is True
+
+
+# ---------------------------------------------------------------------------
+# FIX 1 regression: watchdog-reaped job must not be relabeled by the worker
+# ---------------------------------------------------------------------------
+
+
+def test_worker_does_not_relabel_externally_closed_job(tmp_path):
+    """Regression: the watchdog reaper (or boot sweep) closes a job while the
+    worker is blocked on mbsync I/O. When the SIGKILL unblocks the worker and
+    it reaches the end-of-job classification, it must NOT overwrite the reaper's
+    decision (e.g. flip the account to error).
+
+    We simulate the race by pre-setting the job to failed/interrupted (as the
+    reaper would) BEFORE the mock proc exits. The worker must detect the
+    non-running status via db.refresh(job) and skip relabeling.
+    """
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    # Pre-start: mark running (the worker normally does this)
+    job.status = JobStatus.running
+    job.started_at = datetime.now(UTC)
+    account.sync_state = SyncState.syncing
+    session.commit()
+
+    def fake_popen(cmd, **kw):
+        # Simulate the watchdog acting while mbsync "runs": close the job and
+        # reset the account to idle with an interrupted re-drive, exactly as
+        # recover_stalled_sync_jobs does.
+        job.status = JobStatus.failed
+        job.failure_kind = "interrupted"
+        job.completed_at = datetime.now(UTC)
+        account.sync_state = SyncState.idle
+        account.sync_paused_until = datetime.now(UTC) - timedelta(seconds=1)
+        account.pause_reason = "interrupted"
+        session.commit()
+        # Return a mock proc that exits with a non-zero code (as if SIGKILL'd).
+        return _proc(["killed"], code=-9)
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", side_effect=fake_popen),
+        PATCH_RC,
+    ):
+        execute_sync_job(session, job.id)
+
+    session.refresh(job)
+    session.refresh(account)
+    # The reaper's decision must be preserved — not relabeled to error.
+    assert job.status == JobStatus.failed
+    assert job.failure_kind == "interrupted"
+    assert account.sync_state == SyncState.idle
+    assert account.pause_reason == "interrupted"
+    # The account must NOT have been flipped to error by the worker's classification.
+    assert account.sync_state != SyncState.error

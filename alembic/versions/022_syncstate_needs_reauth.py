@@ -42,6 +42,12 @@ def upgrade() -> None:
                     "needs_reauth",
                     name="syncstate",
                 ),
+                existing_type=sa.Enum(
+                    "idle",
+                    "syncing",
+                    "error",
+                    name="syncstate",
+                ),
                 existing_nullable=False,
             )
 
