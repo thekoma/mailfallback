@@ -56,5 +56,9 @@ data/
 # Superpowers
 .superpowers/
 
+# Agent working artifacts — not public (kept locally, untracked)
+.claude/
+docs/superpowers/
+
 # MkDocs build output
 site/
