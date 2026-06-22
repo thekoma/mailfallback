@@ -72,7 +72,7 @@
                 <span class="badge badge-error"><i data-lucide="alert-circle" class="icon-sm"></i> error</span>
                 {% elif ls and ls.pause_reason %}
                 {# Self-recovering pause: info tone, never error-red. #}
-                <span class="badge badge-info" title="{{ ls.pause_tooltip }}"><i data-lucide="pause-circle" class="icon-sm"></i> Paused{% if ls.resume_hhmm %} · resumes {{ ls.resume_hhmm }}{% endif %}</span>
+                <span class="badge badge-info" title="{{ ls.pause_tooltip }}"><i data-lucide="pause-circle" class="icon-sm"></i> Paused{% if ls.resume_rel %} · resumes {{ ls.resume_rel }}{% endif %}</span>
                 {% elif ls and ls.initial_sync and account.enabled %}
                 <span class="badge badge-info" title="First full sync incomplete"><i data-lucide="download" class="icon-sm"></i> Initial sync{% if ls.pct is not none %} {{ ls.pct | int }}%{% endif %}</span>
                 {% elif account.enabled %}
