@@ -50,6 +50,7 @@ class SyncState(enum.StrEnum):
     idle = "idle"
     syncing = "syncing"
     error = "error"
+    needs_reauth = "needs_reauth"
 
 
 class JobStatus(enum.StrEnum):
