@@ -252,6 +252,9 @@ class Account(Base):
     pause_reason = Column(String, nullable=True)
     initial_sync_completed_at = Column(DateTime(timezone=True), nullable=True)
     initial_sync_total_messages = Column(Integer, nullable=True)
+    # Folder count from the same STATUS pass that fills total_messages — the
+    # recap denominator (NULL = unknown until the next pass).
+    initial_sync_total_folders = Column(Integer, nullable=True)
     store_id = Column(String, ForeignKey("mail_stores.id"), nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)
     suspended = Column(Boolean, nullable=False, default=False)

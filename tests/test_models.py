@@ -114,6 +114,7 @@ def test_account_sync_budget_columns_defaults():
     assert account.pause_reason is None
     assert account.initial_sync_completed_at is None
     assert account.initial_sync_total_messages is None
+    assert account.initial_sync_total_folders is None
 
 
 def test_sync_job_failure_kind_plain_string():

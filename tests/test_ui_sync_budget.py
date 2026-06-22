@@ -358,12 +358,11 @@ def test_first_sync_panel_pico_progress_and_recap(client, db_session, default_st
         initial_sync_total_messages=169_403,
     )
     _seed_progress(account, pct=44.0, done=75_844, eta="≈ 2 days")
-    # The log parser feeds the advancing folder count + current folder.
     from types import SimpleNamespace
 
     snap = SimpleNamespace(
         current_folder="SoTeHa/Inbox",
-        folder_index=342,
+        folder_index=100,  # log parser: selectable boxes mbsync has opened
         folder_total_estimate=1,  # the broken first-sync estimate — must be ignored
         per_folder=[],
         phase="syncing",
@@ -388,9 +387,12 @@ def test_first_sync_panel_pico_progress_and_recap(client, db_session, default_st
     # Pico native progress (house pattern), value/max.
     assert "<progress" in text
     assert 'value="44"' in text and 'max="100"' in text
-    # Recap card: three labelled items.
+    # Recap card: three labelled items. Folders numerator = the log
+    # parser's folder_index (boxes mbsync opened, same basis as the total);
+    # no total set on this account -> bare count, no "/ N".
     assert "sync-recap" in text
-    assert "Folders" in text and "342" in text
+    assert "Folders" in text and "100" in text
+    assert "100 / " not in text
     assert "Messages" in text and "75,844" in text and "169,403" in text
     assert "Downloaded" in text  # done_bytes humanized
     # Summary line (44% bolded per the mockup) + ETA + priority note.
@@ -455,3 +457,105 @@ def test_account_live_status_forwards_done_bytes(db_session, default_store):
     finally:
         _clear_progress()
     assert ls["done_bytes"] == 75_844 * 1024
+
+
+def test_first_sync_recap_folders_shows_total_when_known(client, db_session, default_store):
+    """When the STATUS pass stored initial_sync_total_folders, the recap's
+    Folders value is symmetric with Messages: 'X / Y' (muted denominator).
+    Numerator = snap.folder_index (log parser), same basis as the total."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from mailfallback.routers import ui_accounts
+
+    _login(client, db_session, default_store)
+    account = _mk_account(
+        db_session,
+        default_store,
+        maildir_path="/data/mailboxes/uibud_ft",
+        sync_state=SyncState.syncing,
+        initial_sync_total_messages=169_403,
+        initial_sync_total_folders=1_024,
+    )
+    _seed_progress(account, pct=44.0, done=75_844)
+    snap = SimpleNamespace(
+        current_folder="SoTeHa/Inbox",
+        folder_index=100,  # log parser: boxes opened so far this walk
+        folder_total_estimate=1,
+        per_folder=[],
+        phase="syncing",
+    )
+    real = ui_accounts._compute_hero_state
+
+    def fake_state(acc, db):
+        _s, _sn, lj = real(acc, db)
+        return "first-sync", snap, lj
+
+    try:
+        with patch.object(ui_accounts, "_compute_hero_state", fake_state):
+            resp = client.get(f"/accounts/{account.id}/partials/sync-panel")
+    finally:
+        _clear_progress()
+
+    text = resp.text
+    # Folders = log folder_index / STATUS total, symmetric with Messages.
+    assert "100" in text and "1,024" in text
+    # Two muted denominators: Folders "/ 1,024" and Messages "/ 169,403".
+    assert text.count("sync-recap-muted") == 2
+
+
+def test_first_sync_recap_folders_clamped_to_total(client, db_session, default_store):
+    """Safety clamp: if the log folder_index somehow exceeds the STATUS
+    total (transient over-count), the recap shows the total — never
+    done > total / >100%."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from mailfallback.routers import ui_accounts
+
+    _login(client, db_session, default_store)
+    account = _mk_account(
+        db_session,
+        default_store,
+        maildir_path="/data/mailboxes/uibud_clamp",
+        sync_state=SyncState.syncing,
+        initial_sync_total_messages=169_403,
+        initial_sync_total_folders=131,
+    )
+    _seed_progress(account, pct=99.0, done=160_000)
+    snap = SimpleNamespace(
+        current_folder="SoTeHa/Inbox",
+        folder_index=222,  # > total (131) — must clamp
+        folder_total_estimate=1,
+        per_folder=[],
+        phase="syncing",
+    )
+    real = ui_accounts._compute_hero_state
+
+    def fake_state(acc, db):
+        _s, _sn, lj = real(acc, db)
+        return "first-sync", snap, lj
+
+    try:
+        with patch.object(ui_accounts, "_compute_hero_state", fake_state):
+            resp = client.get(f"/accounts/{account.id}/partials/sync-panel")
+    finally:
+        _clear_progress()
+
+    text = resp.text
+    # Clamped: numerator shows the total (131), denominator "/ 131" — never
+    # the raw 222 (the markup splits the two with the muted denominator span).
+    assert '<span class="sync-recap-value">131 <span class="sync-recap-muted">/ 131</span>' in text
+    assert "222" not in text
+
+
+def test_account_live_status_forwards_total_folders(db_session, default_store):
+    from mailfallback.routers.ui import account_live_status
+
+    account = _mk_account(
+        db_session,
+        default_store,
+        maildir_path="/data/mailboxes/uibud_tf",
+        initial_sync_total_folders=512,
+    )
+    assert account_live_status(account)["total_folders"] == 512
