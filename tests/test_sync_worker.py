@@ -1,4 +1,5 @@
 # tests/test_sync_worker.py
+import io
 import os
 import threading
 import time
@@ -101,7 +102,7 @@ def test_successful_sync():
     account, job = _make_account_and_job(session)
 
     mock_proc = MagicMock()
-    mock_proc.stdout = iter(["synced ok\n"])
+    mock_proc.stdout = io.StringIO("synced ok\n")
     mock_proc.returncode = 0
     with (
         patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
@@ -123,7 +124,7 @@ def test_failed_sync():
     account, job = _make_account_and_job(session)
 
     mock_proc = MagicMock()
-    mock_proc.stdout = iter(["auth failed\n"])
+    mock_proc.stdout = io.StringIO("auth failed\n")
     mock_proc.returncode = 1
     with (
         patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
@@ -152,7 +153,7 @@ def test_sync_sets_running_state():
         captured_state["account_state"] = account.sync_state
         captured_state["job_status"] = job.status
         mock_proc = MagicMock()
-        mock_proc.stdout = iter(["ok\n"])
+        mock_proc.stdout = io.StringIO("ok\n")
         mock_proc.returncode = 0
         return mock_proc
 
@@ -249,7 +250,7 @@ def test_sync_worker_calls_index_service_after_success(
     mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
     mock_proc = MagicMock()
-    mock_proc.stdout = iter(["ok\n"])
+    mock_proc.stdout = io.StringIO("ok\n")
     mock_proc.returncode = 0
     with (
         patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
@@ -289,7 +290,7 @@ def test_sync_worker_index_failure_does_not_break_sync(
     mock_index.upsert_message_set.side_effect = RuntimeError("indexer kaboom")
 
     mock_proc = MagicMock()
-    mock_proc.stdout = iter(["ok\n"])
+    mock_proc.stdout = io.StringIO("ok\n")
     mock_proc.returncode = 0
     with (
         patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
@@ -419,6 +420,22 @@ def test_sampler_tick_advances_ledger_and_live_progress(tmp_path, monkeypatch):
     sync_worker._live_progress.pop(job.id, None)
 
 
+def test_sampler_tick_stamps_updated_ts(tmp_path, monkeypatch):
+    """Each _sampler_tick populates _live_progress with updated_ts wall-clock
+    timestamp for watchdog detection of stalled syncs."""
+    session, factory = make_shared_session()
+    monkeypatch.setattr(sync_worker, "SessionLocal", factory)
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    run_start = time.time() - 60
+    _write(str(tmp_path / "maildir" / "INBOX" / "cur" / "1.msg"), 1000)
+
+    state = sync_worker._new_sampler_state(run_start)
+    sync_worker._sampler_tick(job.id, account.id, account.maildir_path, state)
+    prog = sync_worker.get_live_progress(job.id)
+    assert prog is not None and "updated_ts" in prog and prog["updated_ts"] > 0
+    sync_worker._live_progress.pop(job.id, None)
+
+
 def test_sampler_tick_utc_rollover_resets_ledger(tmp_path, monkeypatch):
     """A tick on a new UTC day resets the ledger before booking — yesterday's
     spend never bleeds into today's budget."""
@@ -484,16 +501,28 @@ def test_worker_runs_sampler_with_own_sessions_and_keeps_progress(tmp_path, monk
     job.status = JobStatus.pending
     session.commit()
 
-    def slow_stdout():
-        yield "syncing\n"
-        # The "download" lands MID-RUN (mtime >= run start) — pre-run files
-        # are deliberately not booked as run bytes.
-        _write(str(tmp_path / "maildir" / "INBOX" / "cur" / "1.msg"), 1234)
-        time.sleep(0.05)  # give the loop at least one interval tick
-        yield "done\n"
+    class _SlowStdout:
+        """Simulate a subprocess stdout that yields lines with a mid-run file write."""
+
+        def __init__(self):
+            self._step = 0
+
+        def readline(self):
+            if self._step == 0:
+                self._step = 1
+                return "syncing\n"
+            elif self._step == 1:
+                self._step = 2
+                # The "download" lands MID-RUN (mtime >= run start) — pre-run files
+                # are deliberately not booked as run bytes.
+                _write(str(tmp_path / "maildir" / "INBOX" / "cur" / "1.msg"), 1234)
+                time.sleep(0.05)  # give the loop at least one interval tick
+                return "done\n"
+            else:
+                return ""  # EOF
 
     mock_proc = MagicMock()
-    mock_proc.stdout = slow_stdout()
+    mock_proc.stdout = _SlowStdout()
     mock_proc.returncode = 0
     with (
         patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
@@ -514,7 +543,7 @@ def test_worker_runs_sampler_with_own_sessions_and_keeps_progress(tmp_path, monk
     session.add(job2)
     session.commit()
     mock_proc2 = MagicMock()
-    mock_proc2.stdout = iter(["ok\n"])
+    mock_proc2.stdout = io.StringIO("ok\n")
     mock_proc2.returncode = 0
     with (
         patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc2),
@@ -533,7 +562,7 @@ def test_worker_runs_sampler_with_own_sessions_and_keeps_progress(tmp_path, monk
 
 def _proc(lines, code=0):
     p = MagicMock()
-    p.stdout = iter([ln + "\n" for ln in lines])
+    p.stdout = io.StringIO("".join(ln + "\n" for ln in lines))
     p.returncode = code
     return p
 
@@ -944,9 +973,9 @@ def test_pipeline_depth_injected_only_while_initial_incomplete(tmp_path):
 def test_recover_zombie_closes_running_and_makes_schedulable(tmp_path):
     """A running job from a dead process closes as interrupted (marker
     appended to the log); the syncing account returns to idle and — initial
-    sync incomplete + budget headroom (none configured = unlimited) — any
-    stale pause is CLEARED so the scheduler can resume immediately. The
-    sweep itself never enqueues."""
+    sync incomplete + budget headroom (none configured = unlimited) — an
+    already-expired pause is set so the minute-tick re-enqueues in-process.
+    The sweep itself never enqueues."""
     session = make_session()
     account, job = _mk_maildir_account_and_job(session, tmp_path)
     job.status = JobStatus.running
@@ -967,21 +996,24 @@ def test_recover_zombie_closes_running_and_makes_schedulable(tmp_path):
     assert job.log.startswith("partial output")
     assert "[recovered]" in job.log
     assert account.sync_state == SyncState.idle
-    assert account.sync_paused_until is None
-    assert account.pause_reason is None
+    # incomplete initial + headroom → expired pause for the minute-tick to pick up
+    assert account.pause_reason == "interrupted"
+    assert account.sync_paused_until is not None
+    assert account.sync_paused_until <= datetime.now(UTC).replace(tzinfo=None)
 
 
 def test_recover_zombie_respects_pause_without_headroom(tmp_path):
-    """Initial sync incomplete but today's budget is spent: the pause stays
-    (resuming now would re-burn the provider quota)."""
+    """Initial sync incomplete but today's budget is spent: _redrive_or_keep_pause
+    goes to the else-branch and PRESERVES the existing pause columns — the
+    budget-spent account keeps its computed midnight resume timestamp."""
     session = make_session()
     account, job = _mk_maildir_account_and_job(session, tmp_path, daily_sync_budget_mb=1)
     job.status = JobStatus.running
     account.sync_state = SyncState.syncing
     account.traffic_date = datetime.now(UTC).date()
     account.bytes_synced_today = 2 * 1024 * 1024  # over the 1 MiB budget
-    paused_until = datetime.now(UTC) + timedelta(hours=6)
-    account.sync_paused_until = paused_until
+    pre_pause_until = datetime.now(UTC) + timedelta(hours=6)
+    account.sync_paused_until = pre_pause_until
     account.pause_reason = "budget"
     session.commit()
 
@@ -991,13 +1023,16 @@ def test_recover_zombie_respects_pause_without_headroom(tmp_path):
     session.refresh(job)
     assert job.failure_kind == "interrupted"
     assert account.sync_state == SyncState.idle
-    assert account.pause_reason == "budget"  # untouched
+    # pause preserved — budget-spent account keeps its resume timestamp
+    assert account.pause_reason == "budget"
     assert account.sync_paused_until is not None
+    assert account.sync_paused_until.replace(tzinfo=UTC) >= pre_pause_until - timedelta(seconds=1)
 
 
 def test_recover_zombie_stale_traffic_date_is_fresh_budget(tmp_path):
     """Yesterday's ledger does not count against today: a stale traffic_date
-    means full headroom — the pause clears."""
+    means full headroom — incomplete initial sync → expired pause set for
+    the minute-tick to re-enqueue."""
     session = make_session()
     account, job = _mk_maildir_account_and_job(session, tmp_path, daily_sync_budget_mb=1)
     job.status = JobStatus.running
@@ -1010,23 +1045,31 @@ def test_recover_zombie_stale_traffic_date_is_fresh_budget(tmp_path):
     sync_worker.recover_zombie_sync_jobs(session)
 
     session.refresh(account)
-    assert account.sync_paused_until is None
-    assert account.pause_reason is None
+    # headroom (stale date) + incomplete initial → expired pause for minute-tick
+    assert account.pause_reason == "interrupted"
+    assert account.sync_paused_until is not None
+    assert account.sync_paused_until <= datetime.now(UTC).replace(tzinfo=None)
 
 
 def test_recover_zombie_initial_complete_keeps_pause(tmp_path):
+    """Initial sync already complete: _redrive_or_keep_pause goes to the
+    else-branch and PRESERVES the existing pause columns — a throttled account
+    keeps its computed resume time; the scheduler's own cron handles re-drive."""
     session = make_session()
     account, job = _mk_maildir_account_and_job(session, tmp_path, initial_sync_completed_at=DONE)
     job.status = JobStatus.running
-    account.sync_paused_until = datetime.now(UTC) + timedelta(hours=2)
+    pre_pause_until = datetime.now(UTC) + timedelta(hours=2)
+    account.sync_paused_until = pre_pause_until
     account.pause_reason = "throttle"
     session.commit()
 
     sync_worker.recover_zombie_sync_jobs(session)
 
     session.refresh(account)
+    # pause preserved — completed-initial account keeps its existing resume timestamp
     assert account.pause_reason == "throttle"
     assert account.sync_paused_until is not None
+    assert account.sync_paused_until.replace(tzinfo=UTC) >= pre_pause_until - timedelta(seconds=1)
 
 
 def test_recover_zombie_closes_orphaned_pending_jobs(tmp_path):
@@ -1178,3 +1221,233 @@ def test_priority_pass_skipped_when_patterns_exclude_inbox(tmp_path):
 
     assert len(cmds) == 1
     assert cmds[0][-1] == "meter"  # the full channel, no :INBOX box-spec
+
+
+# ---------------------------------------------------------------------------
+# OAuth2 token refresh terminality (Task 3)
+# ---------------------------------------------------------------------------
+
+
+def _oauth_creds():
+    import json
+
+    return json.dumps({"provider": "google", "refresh_token": "rt", "access_token": "old"})
+
+
+def test_refresh_invalid_grant_is_terminal(db_session, oauth_account):
+    from authlib.integrations.base_client.errors import OAuthError
+
+    with patch(
+        "mailfallback.services.oauth2.refresh_google_token",
+        side_effect=OAuthError(error="invalid_grant", description="Bad Request"),
+    ):
+        token, terminal = sync_worker._refresh_oauth_token(
+            _oauth_creds(), db_session, oauth_account
+        )
+    assert token is None
+    assert terminal is True
+
+
+def test_refresh_network_error_not_terminal(db_session, oauth_account):
+    with patch(
+        "mailfallback.services.oauth2.refresh_google_token",
+        side_effect=ConnectionError("boom"),
+    ):
+        token, terminal = sync_worker._refresh_oauth_token(
+            _oauth_creds(), db_session, oauth_account
+        )
+    assert token is None
+    assert terminal is False
+
+
+def test_run_sync_invalid_grant_parks_needs_reauth(db_session, oauth_account):
+    """Terminal token refresh (invalid_grant) sets sync_state=needs_reauth."""
+    job = SyncJob(account_id=oauth_account.id, source="test", status=JobStatus.pending)
+    db_session.add(job)
+    db_session.commit()
+
+    with patch.object(sync_worker, "_refresh_oauth_token", return_value=(None, True)):
+        execute_sync_job(db_session, job.id)
+
+    db_session.refresh(oauth_account)
+    assert oauth_account.sync_state == SyncState.needs_reauth
+
+
+def test_run_sync_transient_refresh_stays_error(db_session, oauth_account):
+    """Non-terminal token refresh failure (network blip) sets sync_state=error."""
+    job = SyncJob(account_id=oauth_account.id, source="test", status=JobStatus.pending)
+    db_session.add(job)
+    db_session.commit()
+
+    with patch.object(sync_worker, "_refresh_oauth_token", return_value=(None, False)):
+        execute_sync_job(db_session, job.id)
+
+    db_session.refresh(oauth_account)
+    assert oauth_account.sync_state == SyncState.error
+
+
+# ---------------------------------------------------------------------------
+# _redrive_or_keep_pause / boot-sweep re-drive tests (Task 6)
+# ---------------------------------------------------------------------------
+
+
+def test_boot_sweep_redrives_incomplete_initial(db_session, oauth_account):
+    """Boot sweep on an incomplete initial sync with headroom → expired pause
+    + pause_reason="interrupted" so the minute-tick re-enqueues in-process."""
+    oauth_account.initial_sync_completed_at = None
+    oauth_account.sync_state = SyncState.syncing
+    job = SyncJob(
+        account_id=oauth_account.id, status=JobStatus.running, started_at=datetime.now(UTC)
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    sync_worker.recover_zombie_sync_jobs(db_session)
+
+    db_session.refresh(oauth_account)
+    db_session.refresh(job)
+    assert job.status == JobStatus.failed
+    assert job.failure_kind == "interrupted"
+    assert oauth_account.sync_state == SyncState.idle
+    assert oauth_account.pause_reason == "interrupted"
+    assert oauth_account.sync_paused_until is not None
+    assert oauth_account.sync_paused_until <= datetime.now(UTC).replace(tzinfo=None)
+
+
+def test_boot_sweep_completed_initial_just_clears(db_session, oauth_account):
+    """Boot sweep on a completed initial sync → both pause columns cleared;
+    the account's own cron resumes it on schedule."""
+    oauth_account.initial_sync_completed_at = datetime.now(UTC)
+    job = SyncJob(
+        account_id=oauth_account.id, status=JobStatus.running, started_at=datetime.now(UTC)
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    sync_worker.recover_zombie_sync_jobs(db_session)
+
+    db_session.refresh(oauth_account)
+    assert oauth_account.sync_paused_until is None
+    assert oauth_account.pause_reason is None
+
+
+# ---------------------------------------------------------------------------
+# recover_stalled_sync_jobs — in-flight watchdog reaper (Task 7)
+# ---------------------------------------------------------------------------
+
+
+def _running_job(db, account, started_minutes_ago):
+    job = SyncJob(
+        account_id=account.id,
+        status=JobStatus.running,
+        started_at=datetime.now(UTC) - timedelta(minutes=started_minutes_ago),
+    )
+    db.add(job)
+    db.commit()
+    return job
+
+
+def test_reaper_closes_stalled_job(db_session, oauth_account):
+    oauth_account.sync_state = SyncState.syncing
+    oauth_account.initial_sync_completed_at = None
+    job = _running_job(db_session, oauth_account, started_minutes_ago=30)  # past grace
+    sync_worker._live_progress.pop(job.id, None)  # no tick => stalled
+    n = sync_worker.recover_stalled_sync_jobs(db_session)
+    db_session.refresh(job)
+    db_session.refresh(oauth_account)
+    assert n == 1 and job.status == JobStatus.failed and job.failure_kind == "interrupted"
+    assert oauth_account.pause_reason == "interrupted"  # re-driven
+
+
+def test_reaper_spares_young_job(db_session, oauth_account):
+    _running_job(db_session, oauth_account, started_minutes_ago=2)  # within grace
+    assert sync_worker.recover_stalled_sync_jobs(db_session) == 0
+
+
+def test_reaper_spares_actively_ticking_job(db_session, oauth_account):
+    import time
+
+    job = _running_job(db_session, oauth_account, started_minutes_ago=30)
+    sync_worker._live_progress[job.id] = {
+        "account_id": oauth_account.id,
+        "updated_ts": time.time(),
+    }  # fresh tick
+    assert sync_worker.recover_stalled_sync_jobs(db_session) == 0
+    sync_worker._live_progress.pop(job.id, None)
+
+
+def test_read_loop_honors_runtime_deadline(monkeypatch):
+    """A subprocess whose stdout never EOFs must not block past the cap."""
+    import io
+    import time as _t
+
+    from mailfallback.services import sync_worker
+
+    monkeypatch.setattr(sync_worker.settings, "sync_job_max_runtime_s", 1)
+
+    class _NeverEOF(io.RawIOBase):
+        def readline(self):  # always returns, never EOF
+            _t.sleep(0.05)
+            return b"[mbsync] ...\n"
+
+    killed = {}
+    monkeypatch.setattr(sync_worker, "stop_sync_job", lambda jid: killed.setdefault(jid, True))
+    # _read_until_deadline is the extracted helper under test
+    start = _t.monotonic()
+    sync_worker._read_until_deadline("job-z", _NeverEOF(), deadline_s=1, on_line=lambda s: None)
+    assert _t.monotonic() - start < 5  # returned, did not hang
+    assert killed.get("job-z") is True
+
+
+# ---------------------------------------------------------------------------
+# FIX 1 regression: watchdog-reaped job must not be relabeled by the worker
+# ---------------------------------------------------------------------------
+
+
+def test_worker_does_not_relabel_externally_closed_job(tmp_path):
+    """Regression: the watchdog reaper (or boot sweep) closes a job while the
+    worker is blocked on mbsync I/O. When the SIGKILL unblocks the worker and
+    it reaches the end-of-job classification, it must NOT overwrite the reaper's
+    decision (e.g. flip the account to error).
+
+    We simulate the race by pre-setting the job to failed/interrupted (as the
+    reaper would) BEFORE the mock proc exits. The worker must detect the
+    non-running status via db.refresh(job) and skip relabeling.
+    """
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    # Pre-start: mark running (the worker normally does this)
+    job.status = JobStatus.running
+    job.started_at = datetime.now(UTC)
+    account.sync_state = SyncState.syncing
+    session.commit()
+
+    def fake_popen(cmd, **kw):
+        # Simulate the watchdog acting while mbsync "runs": close the job and
+        # reset the account to idle with an interrupted re-drive, exactly as
+        # recover_stalled_sync_jobs does.
+        job.status = JobStatus.failed
+        job.failure_kind = "interrupted"
+        job.completed_at = datetime.now(UTC)
+        account.sync_state = SyncState.idle
+        account.sync_paused_until = datetime.now(UTC) - timedelta(seconds=1)
+        account.pause_reason = "interrupted"
+        session.commit()
+        # Return a mock proc that exits with a non-zero code (as if SIGKILL'd).
+        return _proc(["killed"], code=-9)
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", side_effect=fake_popen),
+        PATCH_RC,
+    ):
+        execute_sync_job(session, job.id)
+
+    session.refresh(job)
+    session.refresh(account)
+    # The reaper's decision must be preserved — not relabeled to error.
+    assert job.status == JobStatus.failed
+    assert job.failure_kind == "interrupted"
+    assert account.sync_state == SyncState.idle
+    assert account.pause_reason == "interrupted"
+    # The account must NOT have been flipped to error by the worker's classification.
+    assert account.sync_state != SyncState.error

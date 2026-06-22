@@ -30,6 +30,12 @@ class Settings(BaseSettings):
 
     sync_max_workers: int = 4
     sync_log_dir: str = "/data/logs/sync"
+    # Watchdog / runtime guards (env: MAILFALLBACK_SYNC_*). See
+    # docs/superpowers/specs/2026-06-22-sync-watchdog-and-reauth-design.md.
+    sync_stall_grace_s: int = 900  # min age before a running job is reapable
+    sync_stall_threshold_s: int = 600  # no sampler tick for this long ⇒ stalled
+    sync_watchdog_interval_s: int = 60  # reaper cadence
+    sync_job_max_runtime_s: int = 21600  # hard wall-clock cap per mbsync invocation (6h)
 
     recovery_ephemeral_ttl_minutes: int = 30
     recovery_max_parallel_mounts: int = 5

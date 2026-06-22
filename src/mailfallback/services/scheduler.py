@@ -6,8 +6,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
 
+from mailfallback.config import settings
 from mailfallback.db import SessionLocal
-from mailfallback.models import Account
+from mailfallback.models import Account, SyncState
 from mailfallback.services.sync_service import create_sync_job
 from mailfallback.services.sync_worker import submit_sync_job
 
@@ -45,6 +46,9 @@ def _run_scheduled_sync(account_id: str) -> None:
                     owner.username,
                 )
                 return
+        if account.sync_state == SyncState.needs_reauth:
+            logger.info("Skipping sync for %s — needs re-authorization", account.name)
+            return
         # Self-recovering pause gate (sync-budget spec §6): ANY non-null
         # future pause (budget|throttle|transient) blocks the PERIODIC path
         # only — manual syncs override in the API layer. An EXPIRED pause
@@ -89,6 +93,7 @@ def _run_pause_expiry_tick() -> None:
             eligible = (
                 not account.suspended
                 and account.is_authenticated
+                and account.sync_state != SyncState.needs_reauth
                 and not account.migrating
                 and all(not o.migrating for o in account.owners)
             )
@@ -286,6 +291,26 @@ def start_scheduler(db: Session) -> None:
             # initial sync should grab its budget window as soon as it opens.
             CronTrigger(minute="*"),
             id="pause-expiry",
+            replace_existing=True,
+        )
+    if not any(j.id == "sync-watchdog" for j in scheduler.get_jobs()):
+        from mailfallback.services.sync_worker import recover_stalled_sync_jobs
+
+        def _run_watchdog() -> None:
+            db = SessionLocal()
+            try:
+                recover_stalled_sync_jobs(db)
+            except Exception:
+                logger.exception("Sync watchdog tick failed")
+            finally:
+                db.close()
+
+        scheduler.add_job(
+            _run_watchdog,
+            CronTrigger(second=f"*/{max(1, settings.sync_watchdog_interval_s)}")
+            if settings.sync_watchdog_interval_s < 60
+            else CronTrigger(minute="*"),
+            id="sync-watchdog",
             replace_existing=True,
         )
     if not scheduler.running:

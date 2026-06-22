@@ -80,3 +80,16 @@ def test_recovery_settings_env_override(monkeypatch):
     assert s.recovery_ephemeral_ttl_minutes == 60
     assert s.recovery_max_parallel_mounts == 10
     assert s.recovery_backend == "fuse"
+
+
+def test_watchdog_settings_defaults():
+    s = Settings()
+    assert s.sync_stall_grace_s == 900
+    assert s.sync_stall_threshold_s == 600
+    assert s.sync_watchdog_interval_s == 60
+    assert s.sync_job_max_runtime_s == 21600
+
+
+def test_watchdog_settings_env_override(monkeypatch):
+    monkeypatch.setenv("MAILFALLBACK_SYNC_STALL_THRESHOLD_S", "120")
+    assert Settings().sync_stall_threshold_s == 120

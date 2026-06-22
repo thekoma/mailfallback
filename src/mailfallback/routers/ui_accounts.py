@@ -16,6 +16,7 @@ from mailfallback.models import (
     RepositoryAttachment,
     StoreMigration,
     SyncJob,
+    SyncState,
 )
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.services.account_service import (
@@ -196,6 +197,9 @@ def _compute_hero_state(account, db):
     if account.suspended:
         return "paused", snap, last_job
     if not account.is_authenticated:
+        return "sign-in-needed", snap, last_job
+
+    if account.sync_state == SyncState.needs_reauth:
         return "sign-in-needed", snap, last_job
 
     if account.sync_state.value == "syncing":

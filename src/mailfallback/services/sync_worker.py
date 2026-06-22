@@ -9,7 +9,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -133,6 +133,19 @@ def _budget_headroom_today(account: "Account") -> bool:
     return (account.bytes_synced_today or 0) < budget
 
 
+def _redrive_or_keep_pause(account: "Account") -> None:
+    """After an interrupted job: an INCOMPLETE initial sync WITH budget
+    headroom gets an already-expired pause so _run_pause_expiry_tick
+    re-enqueues it in-process. Otherwise LEAVE the pause columns untouched —
+    a budget-spent or throttled account keeps its computed resume time
+    (preserves the original 'respect the existing pause' behavior; only the
+    headroom case changes, from clear → re-drive)."""
+    if account.initial_sync_completed_at is None and _budget_headroom_today(account):
+        account.sync_paused_until = datetime.now(UTC) - timedelta(seconds=1)
+        account.pause_reason = "interrupted"
+    # else: respect the existing pause (budget spent / throttled) — untouched.
+
+
 def recover_zombie_sync_jobs(db: Session) -> int:
     """Boot-time crash recovery sweep (sync-budget spec §9).
 
@@ -147,9 +160,11 @@ def recover_zombie_sync_jobs(db: Session) -> int:
 
     Each zombie: status=failed, failure_kind="interrupted",
     completed_at=now, a "[recovered]" marker appended to the log. Account
-    side: syncing → idle; if the initial sync is incomplete AND today's
-    budget has headroom, any pause is cleared so the scheduler resumes it
-    naturally — the sweep itself NEVER enqueues (idempotent and
+    side: syncing → idle; then _redrive_or_keep_pause() — for an incomplete
+    initial sync with budget headroom, sets an already-expired pause so the
+    minute-tick re-enqueues it in-process; otherwise the pause columns are
+    LEFT UNTOUCHED (budget-spent / throttled accounts keep their resume
+    timestamp). The sweep itself NEVER enqueues (idempotent and
     side-effect-light by design: enqueueing from here would race the
     scheduler that starts right after in the same lifespan).
 
@@ -175,16 +190,61 @@ def recover_zombie_sync_jobs(db: Session) -> int:
             continue
         if account.sync_state == SyncState.syncing:
             account.sync_state = SyncState.idle
-        if account.initial_sync_completed_at is None and _budget_headroom_today(account):
-            # Schedulable NOW — an interrupted initial sync should not sit
-            # out a pause it no longer needs.
-            account.sync_paused_until = None
-            account.pause_reason = None
-        # else: respect the existing pause (budget spent / throttled).
+        _redrive_or_keep_pause(account)
     if recovered:
         db.commit()
         logger.info("Recovered %d zombie sync job(s) after restart", recovered)
     return recovered
+
+
+def recover_stalled_sync_jobs(db: Session) -> int:
+    """Periodic in-flight watchdog: close running jobs whose sampler tick
+    has gone stale (the worker thread wedged) — the boot sweep's sibling for
+    long-lived containers. Stall = older than the grace window AND (no fresh
+    _live_progress tick within the threshold OR no live subprocess)."""
+    now = datetime.now(UTC)
+    grace = timedelta(seconds=settings.sync_stall_grace_s)
+    threshold = settings.sync_stall_threshold_s
+    now_wall = time.time()
+    reaped = 0
+    for job in db.query(SyncJob).filter(SyncJob.status == JobStatus.running).all():
+        started = job.started_at
+        if started is None:
+            continue
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        if now - started < grace:
+            continue
+        prog = _live_progress.get(job.id)
+        fresh_tick = prog is not None and (now_wall - prog.get("updated_ts", 0)) < threshold
+        proc = _running_procs.get(job.id)
+        proc_alive = proc is not None and proc.poll() is None
+        if fresh_tick or proc_alive:
+            continue
+        reaped += 1
+        job.status = JobStatus.failed
+        job.failure_kind = "interrupted"
+        job.completed_at = now
+        marker = "[reaped] stalled with no progress — closed as interrupted"
+        job.log = f"{job.log}\n{marker}" if job.log else marker
+        account = db.query(Account).filter(Account.id == job.account_id).first()
+        if account:
+            if account.sync_state == SyncState.syncing:
+                account.sync_state = SyncState.idle
+            _redrive_or_keep_pause(account)
+        with contextlib.suppress(Exception):
+            stop_sync_job(job.id)  # SIGKILL any lingering proc; frees a pipe-blocked thread
+    if reaped:
+        db.commit()
+        logger.warning("Watchdog reaped %d stalled sync job(s)", reaped)
+    if reaped and reaped >= max(1, settings.sync_max_workers - 1):
+        logger.warning(
+            "Watchdog reaped %d/%d worker slots this tick — pool may be starved; "
+            "consider restarting if sync throughput is degraded",
+            reaped,
+            settings.sync_max_workers,
+        )
+    return reaped
 
 
 def _sample_maildir(path: str, since_ts: float) -> tuple[int, int, int, int]:
@@ -302,6 +362,7 @@ def _sampler_tick(job_id: str, account_id: str, maildir_path: str, state: dict) 
             "pct": pct,
             "eta": eta,
             "rate_msgs_per_s": rate,
+            "updated_ts": time.time(),
         }
         db.commit()  # crash-safe ledger: every tick persists (spec §2)
 
@@ -340,19 +401,27 @@ def _run_sampler(
         logger.warning("Sync sampler final flush failed for job %s", job_id, exc_info=True)
 
 
-def _refresh_oauth_token(creds_json: str, db: Session, account: "Account") -> str | None:
-    """Refresh OAuth2 token and update stored credentials."""
+def _refresh_oauth_token(
+    creds_json: str, db: Session, account: "Account"
+) -> tuple[str | None, bool]:
+    """Refresh OAuth2 token and update stored credentials.
+
+    Returns ``(access_token, terminal)`` where ``terminal=True`` means the
+    failure is confirmed non-recoverable (e.g. ``invalid_grant`` — token
+    revoked/expired, user must re-auth).  ``access_token`` is ``None`` on any
+    failure.
+    """
     import asyncio
     import json
 
     try:
         token_data = json.loads(creds_json)
     except json.JSONDecodeError:
-        return None
+        return None, True  # malformed creds — terminal, nothing to retry
 
     refresh_token = token_data.get("refresh_token", "")
     if not refresh_token:
-        return None
+        return None, True  # no refresh token — terminal, user must re-auth
 
     provider = token_data.get("provider", "google")
     try:
@@ -368,10 +437,13 @@ def _refresh_oauth_token(creds_json: str, db: Session, account: "Account") -> st
 
         account.credentials = encrypt_credentials(json.dumps(token_data), settings.secret_key)
         db.commit()
-        return access_token
-    except Exception:
+        return access_token, False
+    except Exception as exc:
         logger.exception("Failed to refresh OAuth2 token for %s", account.name)
-        return None
+        # invalid_grant = the refresh token is revoked/expired → terminal,
+        # needs user re-auth.  Network/5xx blips are NOT terminal (keep retrying).
+        terminal = "invalid_grant" in str(getattr(exc, "error", "") or exc).lower()
+        return None, terminal
 
 
 _STATUS_MESSAGES_RE = re.compile(r"MESSAGES\s+(\d+)")
@@ -482,6 +554,28 @@ def _pause_account(account: "Account", job: "SyncJob", kind: str, resume_at: dat
     account.sync_paused_until = resume_at
 
 
+def _read_until_deadline(job_id: str, stdout, deadline_s: float, on_line) -> None:
+    """Read mbsync stdout line-by-line until EOF or the wall-clock deadline.
+
+    The deadline bounds high-frequency/flooding output (the check fires between
+    readline() calls). A silently-blocked readline() — pipe open, no data, no
+    EOF — is NOT bounded by this deadline; that case is unblocked externally by
+    the Task-7 watchdog SIGKILLing the proc (which delivers EOF to the pipe).
+    On deadline expiry here: SIGKILL the proc and return.
+    """
+    start = time.monotonic()
+    while True:
+        if time.monotonic() - start > deadline_s:
+            logger.warning("mbsync job %s exceeded %ss runtime cap — stopping", job_id, deadline_s)
+            with contextlib.suppress(Exception):
+                stop_sync_job(job_id)
+            return
+        line = stdout.readline()
+        if not line:
+            return  # EOF
+        on_line(line.rstrip() if isinstance(line, str) else line.decode(errors="replace").rstrip())
+
+
 def execute_sync_job(db: Session, job_id: str) -> None:
     job = db.query(SyncJob).filter(SyncJob.id == job_id).first()
     if not job:
@@ -537,13 +631,15 @@ def execute_sync_job(db: Session, job_id: str) -> None:
     if account.credentials:
         creds = decrypt_credentials(account.credentials, settings.secret_key)
         if account.auth_type.value == "oauth2":
-            access_token = _refresh_oauth_token(creds, db, account)
+            access_token, terminal = _refresh_oauth_token(creds, db, account)
             if not access_token:
                 job.status = JobStatus.failed
                 job.log = TOKEN_REFRESH_FAILED
                 job.completed_at = datetime.now(UTC)
-                account.sync_state = SyncState.error
-                account.last_error = job.log
+                account.sync_state = SyncState.needs_reauth if terminal else SyncState.error
+                account.last_error = TOKEN_REFRESH_FAILED
+                account.sync_paused_until = None
+                account.pause_reason = None
                 db.commit()
                 return
             status_access_token = access_token
@@ -702,15 +798,31 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 # here closes the race completely.
                 if job_id in _budget_stops:
                     stop_sync_job(job_id)
-                for line in proc.stdout:
-                    line = line.rstrip()
+
+                def _emit(text):
                     if settings.debug:
-                        logger.debug("[mbsync/%s] %s", account.name, line)
-                    _running_logs[job_id].append(line)
+                        logger.debug("[mbsync/%s] %s", account.name, text)
+                    _running_logs[job_id].append(text)
                     if log_file:
-                        log_file.write(line + "\n")
+                        log_file.write(text + "\n")
                         log_file.flush()
-                proc.wait(timeout=3600)
+
+                _read_until_deadline(job_id, proc.stdout, settings.sync_job_max_runtime_s, _emit)
+                # _read_until_deadline may have returned early (deadline fired
+                # and sent SIGKILL). Use a short timeout so proc.wait() itself
+                # cannot re-wedge after the read loop gave up.
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    logger.warning(
+                        "mbsync proc for job %s did not exit 30s after read loop ended"
+                        " — force kill",
+                        job_id,
+                    )
+                    with contextlib.suppress(Exception):
+                        proc.kill()
+                    with contextlib.suppress(subprocess.TimeoutExpired, Exception):
+                        proc.wait(timeout=5)
                 result_code = proc.returncode
                 if result_code != 0:
                     break  # an INBOX-pass failure skips the full pass
@@ -733,6 +845,29 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             if log_file:
                 log_file.close()
 
+        # Budget stop FIRST — it SIGTERMs the proc, so the marker must beat
+        # both the exit code and the signal interpretation. Consume it.
+        budget_stopped = job_id in _budget_stops
+        _budget_stops.discard(job_id)
+        # Known edge (review F3): a budget crossing in the FINAL sampler
+        # flush of a clean exit-0 run lands here as budget_paused — the
+        # 100%-done sync re-labels as paused and completes as a no-op rerun
+        # after the resume. Accepted: the alternative (trusting exit 0 over
+        # the marker) would mislabel real mid-run stops.
+
+        # Guard: if a concurrent actor (the watchdog reaper or boot
+        # crash-sweep) already closed this job while we were blocked on
+        # mbsync I/O, its decision wins — do not overwrite the account/job
+        # state it set (e.g. an interrupted re-drive). The refresh re-reads
+        # from the DB so it sees commits made by a different session.
+        # IMPORTANT: refresh BEFORE any attribute assignments so we do not
+        # accidentally discard them mid-air. We still fall through to the
+        # outer finally (config/token cleanup).
+        db.refresh(job)
+        if job.status != JobStatus.running:
+            logger.info("Job %s already closed by another actor — not relabeling", job_id)
+            return
+
         job.exit_code = result_code
         job.log = result_output
         job.log_path = log_file_path
@@ -750,16 +885,6 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             job.parsed_summary = json.dumps(asdict(snap), default=str)
         except Exception:
             logger.warning("Failed to serialize parsed summary for job %s", job_id)
-
-        # Budget stop FIRST — it SIGTERMs the proc, so the marker must beat
-        # both the exit code and the signal interpretation. Consume it.
-        budget_stopped = job_id in _budget_stops
-        _budget_stops.discard(job_id)
-        # Known edge (review F3): a budget crossing in the FINAL sampler
-        # flush of a clean exit-0 run lands here as budget_paused — the
-        # 100%-done sync re-labels as paused and completes as a no-op rerun
-        # after the resume. Accepted: the alternative (trusting exit 0 over
-        # the marker) would mislabel real mid-run stops.
 
         if result_code == 0 and not budget_stopped:
             job.status = JobStatus.completed

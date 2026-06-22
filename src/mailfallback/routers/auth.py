@@ -124,11 +124,14 @@ def _oauth_failure_redirect(db, request, account_id, reason="failed"):
 
 
 def _resume_after_reauth(db: Session, account: Account) -> None:
-    """Clear the token-refresh error and kick a sync after a successful
+    """Clear the token error/needs_reauth and kick a sync after a successful
     re-authentication — the UI promises sync resumes on reconnect."""
     from mailfallback.models import SyncState
 
-    if account.sync_state == SyncState.error and account.last_error == TOKEN_REFRESH_FAILED:
+    refresh_failed = (
+        account.sync_state == SyncState.error and account.last_error == TOKEN_REFRESH_FAILED
+    )
+    if account.sync_state == SyncState.needs_reauth or refresh_failed:
         account.sync_state = SyncState.idle
         account.last_error = None
         db.commit()
