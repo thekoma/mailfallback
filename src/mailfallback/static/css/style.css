@@ -1299,39 +1299,33 @@ button.primary:focus-visible { outline: 2px solid var(--pico-primary); outline-o
 }
 @media (prefers-reduced-motion: reduce) {
     .pulse-dot { animation: none; }
-    .progress-bar-fill.indeterminate { animation: none; }
 }
 
-/* Progress bar */
-.progress-bar {
-    height: 8px;
-    background: var(--pico-muted-border-color);
-    border-radius: 4px;
-    overflow: hidden;
+/* First-sync recap card (mockup_first_sync_progress_reference): three
+   metrics under the Pico native <progress> bar. Label uppercase muted,
+   value mono (the .kpi-num metric idiom). */
+.sync-recap {
+    display: flex;
+    gap: 1.75rem;
+    flex-wrap: wrap;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: var(--pico-border-radius);
+    background: var(--pico-card-sectioning-background-color);
 }
-.progress-bar-fill {
-    height: 100%;
-    background: var(--hero-accent);
-    border-radius: 4px;
-    transition: width 0.3s ease;
+.sync-recap-item { display: flex; flex-direction: column; gap: 0.15rem; }
+.sync-recap-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--pico-muted-color);
 }
-.progress-bar-fill.indeterminate {
-    width: 100%;
-    background: repeating-linear-gradient(
-        -45deg, var(--hero-accent), var(--hero-accent) 10px,
-        transparent 10px, transparent 20px
-    );
-    background-size: 200% 100%;
-    animation: stripe-slide 1s linear infinite;
+.sync-recap-value {
+    font-family: var(--pico-font-family-monospace);
+    font-size: 1.15rem;
+    font-weight: 650;
 }
-@keyframes stripe-slide { to { background-position: -28px 0; } }
-
-/* Folder chips */
-.folder-chips { display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; }
-.chip { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-.chip.is-done { background: var(--hero-accent); }
-.chip.is-active { border: 2px solid var(--hero-accent); background: transparent; }
-.chip.is-pending { border: 1px solid var(--pico-muted-color); background: transparent; }
+.sync-recap-muted { color: var(--pico-muted-color); font-weight: 400; }
 
 /* Log viewer (terminal dark) */
 .log-viewer {

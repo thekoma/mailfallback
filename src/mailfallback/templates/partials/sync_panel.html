@@ -69,72 +69,72 @@
     {% endif %}
 
     {% if live and live.initial_sync %}
-    {# ── Initial sync overall progress (sampler-fed, spec §8) ── #}
-    <div class="progress-bar">
-        {% if live.pct is not none %}
-        <div class="progress-bar-fill" style="width: {{ live.pct | int }}%"></div>
-        {% else %}
-        <div class="progress-bar-fill indeterminate"></div>
-        {% endif %}
-    </div>
-    <p class="text-small text-muted mt-025">
-        {%- if live.pct is not none %}{{ live.pct | int }}% {% endif -%}
-        {%- if live.done_msgs is not none and live.total_msgs -%}
-        ({{ live.done_msgs | number }} / {{ live.total_msgs | number }} messages)
-        {%- endif -%}
-        {%- if live.eta_label %} · ETA {{ live.eta_label }}{% endif -%}
-        {%- if live.budget_bytes %} · {{ (live.bytes_today or 0) | filesizeformat }} / {{ live.budget_bytes | filesizeformat }} today{% endif -%}
-    </p>
-    <p class="text-xs text-muted">INBOX first, then the archive — newest mail lands first.</p>
-    {% endif %}
-
-    {% if snap and snap.current_folder %}
-    <p>Downloading <strong>{{ snap.current_folder }}</strong></p>
-
-    {% if snap.per_folder %}
-    {% set current = snap.per_folder[-1] %}
-    {% if current.added_total > 0 %}
-    <div class="progress-bar">
-        <div class="progress-bar-fill" style="width: {{ (current.added_done / current.added_total * 100) | int }}%"></div>
-    </div>
-    <p class="text-small text-muted mt-025">{{ current.added_done | number }} / {{ current.added_total | number }} messages</p>
+    {# ── Initial sync overall progress (sampler-fed, spec §8) — Pico
+       native <progress>, the app's house pattern (migration/drain/restore).
+       No reinvented bar, no dot grid (the broken "Folder N of 1" estimate
+       is gone). ── #}
+    {# Folders numerator = snap.folder_index (log parser: boxes mbsync
+       OPENs) — the SAME basis as total_folders (selectable, pattern-
+       filtered). A maildir-DIR count would include \Noselect container
+       dirs ([Gmail], hierarchy nodes) and exceed the total. Clamped to
+       total_folders so the recap never shows done > total (>100%); mbsync
+       re-walks every box each run, so on a resume this climbs 0→total and
+       self-corrects within the walk ("re-checking folders"). #}
+    {% set folder_index = snap.folder_index if snap and snap.folder_index else 0 %}
+    {% set folders = [folder_index, live.total_folders] | min if live.total_folders else folder_index %}
+    {% set has_data = folders or live.done_msgs is not none or live.done_bytes is not none %}
+    {% if not has_data and snap and snap.phase in ("connecting", "authenticating", "listing") %}
+    {# Early phase: no counts yet — indeterminate bar + phase label. #}
+    <p>{{ snap.phase | capitalize }}…</p>
+    <progress></progress>
     {% else %}
-    <div class="progress-bar">
-        <div class="progress-bar-fill indeterminate"></div>
-    </div>
+    {% if live.pct is not none %}
+    <progress value="{{ live.pct | int }}" max="100"></progress>
+    {% else %}
+    <progress></progress>
     {% endif %}
+    <p class="text-small mt-025">
+        {%- if live.pct is not none %}<strong>{{ live.pct | int }}%</strong> · {% endif -%}
+        {%- if live.eta_label %}ETA {{ live.eta_label }} · {% endif -%}
+        INBOX first, then the archive
+    </p>
+
+    {# Recap card — Folders (advancing count, no denominator) · Messages ·
+       Downloaded. Shown once the run has data. #}
+    {% if has_data %}
+    <div class="sync-recap mt-05">
+        <div class="sync-recap-item">
+            <span class="sync-recap-label">Folders</span>
+            <span class="sync-recap-value">{{ folders | number }}{% if live.total_folders %} <span class="sync-recap-muted">/ {{ live.total_folders | number }}</span>{% endif %}</span>
+        </div>
+        <div class="sync-recap-item">
+            <span class="sync-recap-label">Messages</span>
+            <span class="sync-recap-value">{{ (live.done_msgs or 0) | number }}{% if live.total_msgs %} <span class="sync-recap-muted">/ {{ live.total_msgs | number }}</span>{% endif %}</span>
+        </div>
+        <div class="sync-recap-item">
+            <span class="sync-recap-label">Downloaded</span>
+            <span class="sync-recap-value">{{ (live.done_bytes or 0) | filesizeformat }}</span>
+        </div>
+    </div>
     {% endif %}
 
-    {% if snap.folder_total_estimate %}
-    <div class="folder-chips mt-025">
-        {% for f in snap.per_folder %}
-        {% if f.phase == "done" %}
-        <span class="chip is-done" title="{{ f.name }} — done"></span>
-        {% elif loop.last %}
-        <span class="chip is-active" title="{{ f.name }} — in progress"></span>
-        {% else %}
-        <span class="chip is-done" title="{{ f.name }}"></span>
-        {% endif %}
-        {% endfor %}
-        {% for _ in range(snap.folder_total_estimate - snap.per_folder | length) %}
-        <span class="chip is-pending"></span>
-        {% endfor %}
-        <span class="text-xs text-muted">Folder {{ snap.folder_index }} of {{ snap.folder_total_estimate }}</span>
-    </div>
-    {% elif snap.folder_index > 0 %}
-    <p class="text-xs text-muted">Folder {{ snap.folder_index }} of …</p>
+    {# Liveness line — current folder + today's budget burn. #}
+    {% if snap and snap.current_folder %}
+    <p class="text-small text-muted mt-05">Downloading <strong>{{ snap.current_folder }}</strong>{% if live.budget_bytes %} · {{ (live.bytes_today or 0) | filesizeformat }} / {{ live.budget_bytes | filesizeformat }} budget today{% endif %}</p>
     {% endif %}
+    {% endif %}{# /early-phase split #}
+
+    {% elif snap and snap.current_folder %}
+    {# Non-initial (incremental) sync: keep the simple current-folder line. #}
+    <progress></progress>
+    <p class="mt-025">Downloading <strong>{{ snap.current_folder }}</strong></p>
 
     {% elif snap and snap.phase in ("connecting", "authenticating", "listing") %}
     <p>{{ snap.phase | capitalize }}…</p>
-    <div class="progress-bar">
-        <div class="progress-bar-fill indeterminate"></div>
-    </div>
+    <progress></progress>
     {% else %}
     <p>Starting…</p>
-    <div class="progress-bar">
-        <div class="progress-bar-fill indeterminate"></div>
-    </div>
+    <progress></progress>
     {% endif %}
 </div>
 
@@ -274,13 +274,11 @@
         {%- if live and live.resume_rel %} Resumes {{ live.resume_rel }}.{% endif -%}
     </p>
     {% if live and live.initial_sync %}
-    <div class="progress-bar">
-        {% if live.pct is not none %}
-        <div class="progress-bar-fill" style="width: {{ live.pct | int }}%"></div>
-        {% else %}
-        <div class="progress-bar-fill indeterminate"></div>
-        {% endif %}
-    </div>
+    {% if live.pct is not none %}
+    <progress value="{{ live.pct | int }}" max="100"></progress>
+    {% else %}
+    <progress></progress>
+    {% endif %}
     <p class="text-small text-muted mt-025">
         {%- if live.pct is not none %}Initial sync {{ live.pct | int }}% {% endif -%}
         {%- if live.done_msgs is not none and live.total_msgs -%}
@@ -332,14 +330,10 @@
     <p>Moving to a new location. Sync resumes when done.</p>
     {% if migration and migration.total_bytes > 0 %}
     {% set pct = (migration.copied_bytes * 100 / migration.total_bytes) | int %}
-    <div class="progress-bar">
-        <div class="progress-bar-fill" style="width: {{ pct }}%"></div>
-    </div>
+    <progress value="{{ pct }}" max="100"></progress>
     <p class="text-small text-muted mt-025">{{ migration.copied_bytes | filesizeformat }} / {{ migration.total_bytes | filesizeformat }} ({{ pct }}%)</p>
     {% else %}
-    <div class="progress-bar">
-        <div class="progress-bar-fill indeterminate"></div>
-    </div>
+    <progress></progress>
     {% endif %}
 </div>
 
