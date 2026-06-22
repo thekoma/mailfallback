@@ -271,7 +271,7 @@
         {%- elif live and live.pause_reason == "throttle" %}The provider asked us to slow down — the sync resumes with backoff.
         {%- else %}A connection hiccup paused the sync — it retries automatically.
         {%- endif -%}
-        {%- if live and live.resume_hhmm %} Resumes at {{ live.resume_hhmm }}.{% endif -%}
+        {%- if live and live.resume_rel %} Resumes {{ live.resume_rel }}.{% endif -%}
     </p>
     {% if live and live.initial_sync %}
     <div class="progress-bar">

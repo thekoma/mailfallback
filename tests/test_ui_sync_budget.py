@@ -83,7 +83,9 @@ def test_account_live_status_payload_shape(db_session, default_store):
     assert ls["eta_label"] == "≈ 3d"
     assert ls["rate_msgs_per_s"] == 12.5
     assert ls["paused_until"] is not None
-    assert ls["resume_hhmm"] == "02:00"
+    # relative, timezone-independent label (the fixed 2026-06-14 pause is in
+    # the past relative to "now", so it collapses to "shortly")
+    assert ls["resume_rel"] == "shortly"
     assert ls["pause_reason"] == "budget"
     assert ls["pause_tooltip"] == "Daily sync budget reached"
     assert ls["initial_sync"] is True
@@ -108,7 +110,7 @@ def test_account_live_status_without_progress_or_pause(db_session, default_store
     assert ls["budget_bytes"] == 2000 * 1024 * 1024  # google provider default
     assert ls["initial_sync"] is False
     assert ls["pause_reason"] is None
-    assert ls["resume_hhmm"] is None
+    assert ls["resume_rel"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +144,7 @@ def test_accounts_table_paused_chip_with_resume_and_tooltip(client, db_session, 
     resp = client.get("/partials/accounts-table")
 
     assert resp.status_code == 200
-    assert "Paused · resumes 14:00" in resp.text
+    assert "Paused · resumes shortly" in resp.text
     assert 'title="Daily sync budget reached"' in resp.text
     # Self-recovering pause is NOT the red path.
     assert "badge-error" not in resp.text
@@ -219,7 +221,7 @@ def test_detail_paused_panel_shows_resume_and_override(client, db_session, defau
 
     text = resp.text
     assert "Paused — daily budget" in text
-    assert "Resumes at 02:00" in text
+    assert "Resumes shortly." in text
     # Initial-sync progress line survives the pause (last-known state).
     assert "38%" in text
     # Manual override stays available.

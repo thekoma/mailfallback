@@ -76,6 +76,27 @@ def _time_ago(value):
     return f"{delta.days}d ago"
 
 
+def _time_until(value):
+    """Relative time until a future timestamp ("in 7m", "in 3h", "in 2d").
+    Relative by design so it is timezone-independent — a wall-clock format of
+    a UTC value renders 2h off for a UTC+2 user. Naive timestamps are read as
+    UTC (the column stores UTC). Past/now collapses to "shortly"."""
+    if not value:
+        return None
+    now = datetime.now(UTC)
+    ts = value.replace(tzinfo=UTC) if value.tzinfo is None else value
+    secs = (ts - now).total_seconds()
+    if secs <= 0:
+        return "shortly"
+    if secs < 60:
+        return "in <1m"
+    if secs < 3600:
+        return f"in {int(-(-secs // 60))}m"
+    if secs < 86400:
+        return f"in {int(-(-secs // 3600))}h"
+    return f"in {int(-(-secs // 86400))}d"
+
+
 def _time_ago_class(value):
     if not value:
         return "sync-error"
@@ -135,7 +156,7 @@ def account_live_status(account) -> dict:
         "eta_label": eta.get("label"),
         "rate_msgs_per_s": prog.get("rate_msgs_per_s"),
         "paused_until": paused_until,
-        "resume_hhmm": paused_until.strftime("%H:%M") if paused_until else None,
+        "resume_rel": _time_until(paused_until),
         "pause_reason": account.pause_reason,
         "pause_tooltip": PAUSE_TOOLTIPS.get(account.pause_reason),
         "initial_sync": account.initial_sync_completed_at is None,
@@ -246,8 +267,8 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
                 bits[0] += f" {int(ls['pct'])}%"
             if ls["eta_label"]:
                 bits.append(f"ETA {ls['eta_label']}")
-            if ls["resume_hhmm"]:
-                bits.append(f"resumes {ls['resume_hhmm']}")
+            if ls["resume_rel"]:
+                bits.append(f"resumes {ls['resume_rel']}")
             attention.append(
                 {"id": a.id, "name": a.name, "type": "info", "reason": " · ".join(bits)}
             )
