@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:18-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-mailfallback}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-mailfallback}
@@ -17,6 +18,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+    restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:
@@ -39,6 +41,7 @@ services:
   dovecot:
     # pinned: 2.4.3+ replaces global ACL file with settings blocks — port mfb-acl before bumping
     image: dovecot/dovecot:2.4.2
+    restart: unless-stopped
     volumes:
       - dovecot_confd:/etc/dovecot/conf.d:ro
       - maildirs:/data/mailboxes
@@ -60,6 +63,7 @@ services:
 
   webmail:
     image: roundcube/roundcubemail:latest
+    restart: unless-stopped
     ports:
       - "8001:80"
     environment:
@@ -85,6 +89,7 @@ services:
 
   tika:
     image: apache/tika:latest
+    restart: unless-stopped
     ports:
       - "9998:9998"
     profiles:
