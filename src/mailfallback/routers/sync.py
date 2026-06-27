@@ -209,6 +209,7 @@ def job_log_download(
 @router.post("/{account_id}/stop")
 def stop_sync(
     account_id: str,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -229,6 +230,15 @@ def stop_sync(
     stopped = stop_sync_job(running_job.id)
     if not stopped:
         raise HTTPException(status_code=404, detail="Process not found")
+    log_action(
+        db,
+        user=user,
+        action="account.sync_stop",
+        resource_type="account",
+        resource_id=account_id,
+        resource_name=account.email_address,
+        ip_address=request.client.host if request.client else None,
+    )
     return {"ok": True, "job_id": running_job.id}
 
 

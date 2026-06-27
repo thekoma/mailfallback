@@ -69,6 +69,18 @@ async def profile_change_store(request: Request, db: Session = Depends(get_db)):
     if new_store_id not in allowed_ids:
         return RedirectResponse("/profile", status_code=303)
     update_user(db, user.id, store_id=new_store_id)
+    from mailfallback.services.audit_service import log_action
+
+    log_action(
+        db,
+        user=user,
+        action="user.store_change",
+        resource_type="user",
+        resource_id=user.id,
+        resource_name=user.username,
+        ip_address=request.client.host if request.client else None,
+        details={"store_id": new_store_id},
+    )
     return RedirectResponse("/profile", status_code=303)
 
 
@@ -124,6 +136,17 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
             name="profile.html",
             context={**base_context, "error": str(e), "success": None},
         )
+    from mailfallback.services.audit_service import log_action
+
+    log_action(
+        db,
+        user=user,
+        action="user.password_change",
+        resource_type="user",
+        resource_id=user.id,
+        resource_name=user.username,
+        ip_address=request.client.host if request.client else None,
+    )
     return templates.TemplateResponse(
         request=request,
         name="profile.html",
