@@ -50,6 +50,7 @@ def discover(domain: str, user: User = Depends(get_current_user)):
 
 @router.post("/all")
 def trigger_sync_all(
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -69,6 +70,16 @@ def trigger_sync_all(
             submit_sync_job(job.id)
             triggered += 1
     db.commit()
+    # Audit the bulk action (one entry, like single-account sync logs its own).
+    log_action(
+        db,
+        user=user,
+        action="account.sync_all",
+        resource_type="account",
+        resource_name=f"{triggered} account(s)",
+        ip_address=request.client.host if request.client else None,
+        details={"triggered": triggered},
+    )
     return {"ok": True, "triggered": triggered}
 
 
@@ -198,6 +209,7 @@ def job_log_download(
 @router.post("/{account_id}/stop")
 def stop_sync(
     account_id: str,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -218,6 +230,15 @@ def stop_sync(
     stopped = stop_sync_job(running_job.id)
     if not stopped:
         raise HTTPException(status_code=404, detail="Process not found")
+    log_action(
+        db,
+        user=user,
+        action="account.sync_stop",
+        resource_type="account",
+        resource_id=account_id,
+        resource_name=account.email_address,
+        ip_address=request.client.host if request.client else None,
+    )
     return {"ok": True, "job_id": running_job.id}
 
 

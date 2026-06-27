@@ -26,6 +26,27 @@ def test_trigger_sync_api(client, db_session, default_store):
     assert resp2.status_code == 409
 
 
+def test_sync_all_is_audited(client, db_session, default_store):
+    """Bulk 'Sync all' must record an audit-log entry, like single-account
+    sync does (2026-06-27: the action was silently unaudited)."""
+    from mailfallback.models import AuditLog
+
+    user = create_user(db_session, "user1", "pass", UserRole.user, store_id=default_store.id)
+    account = create_account(
+        db_session, "Gmail", "imap.gmail.com", 993, "app_password", store=default_store
+    )
+    assign_owner(db_session, account.id, user.id)
+
+    _login(client, "user1", "pass")
+    resp = client.post("/api/sync/all")
+    assert resp.status_code == 200
+    assert resp.json()["triggered"] >= 1
+
+    rows = db_session.query(AuditLog).filter(AuditLog.action == "account.sync_all").all()
+    assert len(rows) == 1
+    assert rows[0].user_id == user.id
+
+
 def test_get_job_api(client, db_session, default_store):
     user = create_user(db_session, "user1", "pass", UserRole.user, store_id=default_store.id)
     account = create_account(

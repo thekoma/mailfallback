@@ -212,6 +212,17 @@ async def login_submit(request: Request, db: Session = Depends(get_db)):
     request.session["user_id"] = user.id
     if user.preferences:
         request.session["theme"] = user.preferences.get("theme", "light")
+    from mailfallback.services.audit_service import log_action
+
+    log_action(
+        db,
+        user=user,
+        action="user.login",
+        resource_type="user",
+        resource_id=user.id,
+        resource_name=user.username,
+        ip_address=request.client.host if request.client else None,
+    )
     return RedirectResponse("/", status_code=303)
 
 
