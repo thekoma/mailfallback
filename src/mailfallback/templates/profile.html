@@ -56,118 +56,148 @@
     Each channel is a single Apprise URL.
 </p>
 
+{# (value, short badge label, badge class, full checkbox label) #}
+{% set event_options = [
+    ("needs_reauth", "Needs re-auth", "badge-warning", "Needs re-authentication"),
+    ("sync_error", "Sync error", "badge-error", "Sync error"),
+    ("sync_paused", "Paused", "badge-disabled", "Sync paused (budget / throttle)"),
+    ("stale", "Stale", "badge-warning", "Stale (no successful sync for a long time)"),
+] %}
+
 {% if channels %}
-<table>
-    <thead>
-        <tr>
-            <th>Label</th>
-            <th>URL</th>
-            <th>Events</th>
-            <th>Enabled</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for ch in channels %}
-        <tr>
-            <td>{{ ch.label }}</td>
-            <td><code>{{ ch.masked_url }}</code></td>
-            <td>
-                {% for ev in ch.events %}
-                <span class="badge badge-admin">{{ ev }}</span>
-                {% endfor %}
-            </td>
-            <td>
-                <form method="post" action="/profile/notifications/{{ ch.id }}/toggle" style="display:inline">
-                    <button type="submit" class="btn-icon" title="{% if ch.enabled %}Disable{% else %}Enable{% endif %}">
-                        {% if ch.enabled %}
-                        <i data-lucide="toggle-right" class="icon-md"></i>
-                        {% else %}
-                        <i data-lucide="toggle-left" class="icon-md"></i>
-                        {% endif %}
-                    </button>
-                </form>
-            </td>
-            <td>
-                <button
-                    hx-post="/profile/notifications/{{ ch.id }}/test"
-                    hx-target="#test-result-{{ ch.id }}"
-                    hx-swap="innerHTML"
-                    class="btn-icon"
-                    title="Send test notification">
-                    <i data-lucide="send" class="icon-md"></i>
+<div class="notif-cards">
+    {% for ch in channels %}
+    <article class="notif-card{% if not ch.enabled %} channel-off{% endif %}">
+        <div class="notif-card-head">
+            <div class="notif-card-id">
+                <span class="notif-label">{{ ch.label }}</span>
+                <code class="notif-url">{{ ch.masked_url }}</code>
+            </div>
+            <form method="post" action="/profile/notifications/{{ ch.id }}/toggle" class="inline-form">
+                <label class="notif-switch text-small">
+                    <input type="checkbox" role="switch" {% if ch.enabled %}checked{% endif %}
+                           onchange="this.form.submit()">
+                    {{ "Enabled" if ch.enabled else "Disabled" }}
+                </label>
+            </form>
+        </div>
+
+        <div class="badge-row notif-card-events">
+            {% for opt in event_options if opt[0] in ch.events %}
+            <span class="badge {{ opt[2] }}">{{ opt[1] }}</span>
+            {% endfor %}
+            {% if not ch.events %}
+            <span class="text-muted text-small">No events selected — this channel won't notify.</span>
+            {% endif %}
+        </div>
+
+        <div class="notif-card-actions">
+            <button hx-post="/profile/notifications/{{ ch.id }}/test" hx-swap="none"
+                    class="icon-btn" title="Send a test notification now">
+                <i data-lucide="send" class="icon-sm"></i> Test
+            </button>
+            <button type="button" class="icon-btn" onclick="toggleRow('edit-{{ ch.id }}')"
+                    title="Edit label, URL and events">
+                <i data-lucide="pencil" class="icon-sm"></i> Edit
+            </button>
+            <form method="post" action="/profile/notifications/{{ ch.id }}/delete" class="inline-form"
+                  data-confirm="Delete channel {{ ch.label }}?"
+                  onsubmit="return confirm(this.dataset.confirm)">
+                <button type="submit" class="icon-btn danger">
+                    <i data-lucide="trash-2" class="icon-sm"></i> Delete
                 </button>
-                <span id="test-result-{{ ch.id }}"></span>
-                <form method="post" action="/profile/notifications/{{ ch.id }}/delete" style="display:inline">
-                    <button type="submit" class="btn-icon btn-danger" title="Delete channel"
-                        onclick="return confirm('Delete channel {{ ch.label }}?')">
-                        <i data-lucide="trash-2" class="icon-md"></i>
-                    </button>
-                </form>
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+            </form>
+        </div>
+
+        <form method="post" action="/profile/notifications/{{ ch.id }}/update"
+              id="edit-{{ ch.id }}" class="notif-edit hidden">
+            <label>Label
+                <input type="text" name="label" value="{{ ch.label }}" required>
+            </label>
+            <label>Replace URL
+                <span class="text-muted text-small">— leave blank to keep the current one</span>
+                <input type="text" name="apprise_url" placeholder="Keep current ({{ ch.masked_url }})">
+            </label>
+            <fieldset>
+                <legend>Events</legend>
+                {% for opt in event_options %}
+                <label><input type="checkbox" name="events" value="{{ opt[0] }}"
+                       {% if opt[0] in ch.events %}checked{% endif %}> {{ opt[3] }}</label>
+                {% endfor %}
+            </fieldset>
+            <div class="actions">
+                <button type="submit" class="icon-btn primary">
+                    <i data-lucide="check" class="icon-sm"></i> Save changes
+                </button>
+                <button type="button" class="icon-btn" onclick="toggleRow('edit-{{ ch.id }}')">Cancel</button>
+            </div>
+        </form>
+    </article>
+    {% endfor %}
+</div>
 {% else %}
-<p class="text-muted">No notification channels configured.</p>
+<div class="notif-empty">
+    <i data-lucide="bell-plus" class="icon-xl"></i>
+    <p class="notif-empty-text">No notification channels yet.<br>
+        Add one below to get a ping the moment an account needs attention.</p>
+</div>
 {% endif %}
 
-<h4>Add channel</h4>
+<article class="notif-add">
+    <h4><i data-lucide="plus" class="icon-md icon-inline"></i>Add a channel</h4>
+    <form method="post" action="/profile/notifications">
+        <label for="notif_label">Label</label>
+        <input type="text" id="notif_label" name="label" required placeholder="e.g. Phone (ntfy)">
 
-<details class="notif-examples">
-    <summary><i data-lucide="lightbulb" class="icon-sm icon-inline"></i>URL examples &amp; formats</summary>
-    <p class="text-muted text-small notif-docs-line">
-        Replace the placeholders with your own tokens. Browse the
-        <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noopener">full list of supported services</a>
-        for the exact URL format. Click an example to copy it.
-    </p>
-    <dl class="notif-example-grid">
-        <dt>
-            <i data-lucide="bell" class="icon-sm icon-inline"></i>
-            <a href="https://github.com/caronc/apprise/wiki/Notify_ntfy" target="_blank" rel="noopener">ntfy</a>
-        </dt>
-        <dd><code class="copyable" data-copy="ntfy://ntfy.sh/your-topic" title="Click to copy">ntfy://ntfy.sh/your-topic</code></dd>
+        <label for="notif_url">Apprise URL</label>
+        <input type="text" id="notif_url" name="apprise_url" required placeholder="e.g. ntfy://ntfy.sh/your-topic">
 
-        <dt>
-            <i data-lucide="send" class="icon-sm icon-inline"></i>
-            <a href="https://github.com/caronc/apprise/wiki/Notify_telegram" target="_blank" rel="noopener">Telegram</a>
-        </dt>
-        <dd><code class="copyable" data-copy="tgram://bottoken/ChatID" title="Click to copy">tgram://bottoken/ChatID</code></dd>
+        <details class="notif-examples">
+            <summary><i data-lucide="lightbulb" class="icon-sm icon-inline"></i>URL examples &amp; formats</summary>
+            <p class="text-muted text-small notif-docs-line">
+                Replace the placeholders with your own tokens. Browse the
+                <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noopener">full list of supported services</a>
+                for the exact URL format. Click an example to copy it.
+            </p>
+            <dl class="notif-example-grid">
+                <dt>
+                    <i data-lucide="bell" class="icon-sm icon-inline"></i>
+                    <a href="https://github.com/caronc/apprise/wiki/Notify_ntfy" target="_blank" rel="noopener">ntfy</a>
+                </dt>
+                <dd><code class="copyable" data-copy="ntfy://ntfy.sh/your-topic" title="Click to copy">ntfy://ntfy.sh/your-topic</code></dd>
 
-        <dt>
-            <i data-lucide="server" class="icon-sm icon-inline"></i>
-            <a href="https://github.com/caronc/apprise/wiki/Notify_gotify" target="_blank" rel="noopener">Gotify</a>
-        </dt>
-        <dd><code class="copyable" data-copy="gotify://gotify.example.com/apptoken" title="Click to copy">gotify://gotify.example.com/apptoken</code></dd>
+                <dt>
+                    <i data-lucide="send" class="icon-sm icon-inline"></i>
+                    <a href="https://github.com/caronc/apprise/wiki/Notify_telegram" target="_blank" rel="noopener">Telegram</a>
+                </dt>
+                <dd><code class="copyable" data-copy="tgram://bottoken/ChatID" title="Click to copy">tgram://bottoken/ChatID</code></dd>
 
-        <dt>
-            <i data-lucide="message-circle" class="icon-sm icon-inline"></i>
-            <a href="https://github.com/caronc/apprise/wiki/Notify_discord" target="_blank" rel="noopener">Discord</a>
-        </dt>
-        <dd><code class="copyable" data-copy="discord://webhook_id/webhook_token" title="Click to copy">discord://webhook_id/webhook_token</code></dd>
-    </dl>
-</details>
+                <dt>
+                    <i data-lucide="server" class="icon-sm icon-inline"></i>
+                    <a href="https://github.com/caronc/apprise/wiki/Notify_gotify" target="_blank" rel="noopener">Gotify</a>
+                </dt>
+                <dd><code class="copyable" data-copy="gotify://gotify.example.com/apptoken" title="Click to copy">gotify://gotify.example.com/apptoken</code></dd>
 
-<form method="post" action="/profile/notifications" class="container-narrow">
-    <label for="notif_label">Label</label>
-    <input type="text" id="notif_label" name="label" required placeholder="e.g. Phone">
+                <dt>
+                    <i data-lucide="message-circle" class="icon-sm icon-inline"></i>
+                    <a href="https://github.com/caronc/apprise/wiki/Notify_discord" target="_blank" rel="noopener">Discord</a>
+                </dt>
+                <dd><code class="copyable" data-copy="discord://webhook_id/webhook_token" title="Click to copy">discord://webhook_id/webhook_token</code></dd>
+            </dl>
+        </details>
 
-    <label for="notif_url">Apprise URL</label>
-    <input type="text" id="notif_url" name="apprise_url" required placeholder="e.g. ntfy://host/topic">
+        <fieldset>
+            <legend>Events to notify on</legend>
+            {% for opt in event_options %}
+            <label><input type="checkbox" name="events" value="{{ opt[0] }}"> {{ opt[3] }}</label>
+            {% endfor %}
+        </fieldset>
 
-    <fieldset>
-        <legend>Events</legend>
-        <label><input type="checkbox" name="events" value="needs_reauth"> Needs re-authentication</label>
-        <label><input type="checkbox" name="events" value="sync_error"> Sync error</label>
-        <label><input type="checkbox" name="events" value="sync_paused"> Sync paused (budget/throttle)</label>
-        <label><input type="checkbox" name="events" value="stale"> Stale (no sync for a long time)</label>
-    </fieldset>
-
-    <button type="submit">
-        <i data-lucide="plus" class="icon-md icon-inline"></i>Add channel
-    </button>
-</form>
+        <button type="submit">
+            <i data-lucide="plus" class="icon-md icon-inline"></i>Add channel
+        </button>
+    </form>
+</article>
 
 <hr>
 

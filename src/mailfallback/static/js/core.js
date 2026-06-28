@@ -121,6 +121,13 @@ document.addEventListener('click', function(e) {
     if (el) el.classList.remove('hidden');
 });
 
+/* === Toast from HX-Trigger ({"notifyToast": {message, type}}) === */
+
+document.body.addEventListener('notifyToast', function(e) {
+    var d = (e && e.detail) || {};
+    showToast(d.message || 'Done', d.type || 'success');
+});
+
 /* === Click-to-copy ([data-copy]) === */
 
 document.addEventListener('click', function(e) {

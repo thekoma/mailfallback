@@ -48,6 +48,77 @@ def test_test_send_invokes_apprise(client, db_session, default_store):
     m.assert_called_once()
 
 
+def test_update_channel_changes_events_and_audits(client, db_session, default_store):
+    _login(client, db_session, default_store)
+    client.post(
+        "/profile/notifications",
+        data={"label": "Phone", "apprise_url": "ntfy://host/topic", "events": ["needs_reauth"]},
+        follow_redirects=False,
+    )
+    ch = db_session.query(NotificationChannel).filter_by(label="Phone").first()
+    cid = ch.id
+    # Change label + events; leave URL blank (keep existing)
+    client.post(
+        f"/profile/notifications/{cid}/update",
+        data={"label": "My Phone", "apprise_url": "", "events": ["sync_error", "stale"]},
+        follow_redirects=False,
+    )
+    db_session.expire_all()
+    ch = db_session.query(NotificationChannel).filter_by(id=cid).first()
+    assert ch.label == "My Phone"
+    assert set(ch.events) == {"sync_error", "stale"}
+    # Blank URL means keep the original (still decryptable to the original)
+    assert decrypt_credentials(ch.apprise_url, settings.secret_key) == "ntfy://host/topic"
+    assert (
+        db_session.query(AuditLog).filter_by(action="user.notification_channel_update").count() == 1
+    )
+
+
+def test_update_channel_replaces_url_when_provided(client, db_session, default_store):
+    _login(client, db_session, default_store)
+    client.post(
+        "/profile/notifications",
+        data={"label": "Phone", "apprise_url": "ntfy://host/topic", "events": ["needs_reauth"]},
+        follow_redirects=False,
+    )
+    ch = db_session.query(NotificationChannel).filter_by(label="Phone").first()
+    cid = ch.id
+    client.post(
+        f"/profile/notifications/{cid}/update",
+        data={"label": "Phone", "apprise_url": "tgram://newtoken/123", "events": ["needs_reauth"]},
+        follow_redirects=False,
+    )
+    db_session.expire_all()
+    ch = db_session.query(NotificationChannel).filter_by(id=cid).first()
+    assert decrypt_credentials(ch.apprise_url, settings.secret_key) == "tgram://newtoken/123"
+
+
+def test_update_channel_scoped_to_owner(client, db_session, default_store):
+    from mailfallback.security import encrypt_credentials
+
+    other = create_user(
+        db_session, "other", "secretpass123", UserRole.user, store_id=default_store.id
+    )
+    foreign = NotificationChannel(
+        user_id=other.id,
+        label="Foreign",
+        apprise_url=encrypt_credentials("ntfy://x/y", settings.secret_key),
+        events=["stale"],
+    )
+    db_session.add(foreign)
+    db_session.commit()
+    fid = foreign.id
+    _login(client, db_session, default_store)  # logs in as "u", not "other"
+    client.post(
+        f"/profile/notifications/{fid}/update",
+        data={"label": "Hacked", "events": []},
+        follow_redirects=False,
+    )
+    db_session.expire_all()
+    # The other user's channel is untouched
+    assert db_session.query(NotificationChannel).filter_by(id=fid).first().label == "Foreign"
+
+
 def test_profile_get_masks_notification_urls(client, db_session, default_store):
     """Assert that GET /profile masks secret tokens in notification URLs."""
     _login(client, db_session, default_store)
