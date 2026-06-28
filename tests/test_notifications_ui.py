@@ -46,3 +46,26 @@ def test_test_send_invokes_apprise(client, db_session, default_store):
         resp = client.post(f"/profile/notifications/{ch.id}/test")
     assert resp.status_code == 200
     m.assert_called_once()
+
+
+def test_profile_get_masks_notification_urls(client, db_session, default_store):
+    """Assert that GET /profile masks secret tokens in notification URLs."""
+    _login(client, db_session, default_store)
+    # POST a channel with a secret-bearing URL
+    client.post(
+        "/profile/notifications",
+        data={
+            "label": "Ntfy",
+            "apprise_url": "ntfy://secrettoken@ntfy.example.com/mytopic",
+            "events": ["sync_error"],
+        },
+        follow_redirects=False,
+    )
+    # GET profile page
+    resp = client.get("/profile")
+    assert resp.status_code == 200
+    # Verify secrets are NOT present
+    assert "secrettoken" not in resp.text
+    assert "mytopic" not in resp.text
+    # Verify masked form IS present
+    assert "ntfy://…" in resp.text

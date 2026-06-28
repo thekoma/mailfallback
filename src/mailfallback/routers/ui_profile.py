@@ -23,7 +23,7 @@ def _mask_apprise_url(encrypted_url: str) -> str:
 
         plain = decrypt_credentials(encrypted_url, settings.secret_key)
         if "://" in plain:
-            scheme = plain.split("://")[0]
+            scheme = plain.split("://", 1)[0]
             return f"{scheme}://…"
         return "…"
     except Exception:
