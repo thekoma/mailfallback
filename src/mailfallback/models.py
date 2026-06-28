@@ -198,6 +198,8 @@ class NotificationChannel(Base):
     enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     # Event keys this channel receives: needs_reauth | sync_error | sync_paused | stale
     events = Column(JSON, nullable=False, default=list, server_default="[]")
+    # Payload format for notifications: "text" (plain-text body) or "json" (structured JSON body)
+    payload_format = Column(String, nullable=False, default="text", server_default="text")
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     user = relationship("User", passive_deletes=True)
