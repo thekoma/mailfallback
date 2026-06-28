@@ -1,4 +1,6 @@
 # src/mailfallback/routers/ui_profile.py
+import json
+
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, field_validator
@@ -264,6 +266,40 @@ async def toggle_notification_channel(
     return RedirectResponse("/profile", status_code=303)
 
 
+@router.post("/profile/notifications/{channel_id}/update")
+async def update_notification_channel(
+    channel_id: str, request: Request, db: Session = Depends(get_db)
+):
+    user = _get_session_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    from mailfallback.models import NotificationChannel
+    from mailfallback.security import encrypt_credentials
+    from mailfallback.services.audit_service import log_action
+
+    ch = db.query(NotificationChannel).filter_by(id=channel_id, user_id=user.id).first()
+    if ch:
+        form = await request.form()
+        label = (form.get("label") or "").strip()
+        if label:
+            ch.label = label
+        ch.events = [e for e in form.getlist("events") if e in _VALID_EVENT_KEYS]
+        new_url = (form.get("apprise_url") or "").strip()
+        if new_url:
+            ch.apprise_url = encrypt_credentials(new_url, settings.secret_key)
+        db.commit()
+        log_action(
+            db,
+            user=user,
+            action="user.notification_channel_update",
+            resource_type="notification_channel",
+            resource_id=ch.id,
+            resource_name=ch.label,
+            ip_address=request.client.host if request.client else None,
+        )
+    return RedirectResponse("/profile", status_code=303)
+
+
 @router.post("/profile/notifications/{channel_id}/test")
 async def test_notification_channel(
     channel_id: str, request: Request, db: Session = Depends(get_db)
@@ -278,9 +314,11 @@ async def test_notification_channel(
     if not ch:
         return Response(status_code=404)
     ok = notification_service.send_to_channel(ch, "MailFallBack test", "Notifications are working.")
-    state = "ok" if ok else "error"
-    text = "Sent ✓" if ok else "Failed"
-    return HTMLResponse(f'<span class="text-{state}-state">{text}</span>')
+    message = f"Test sent to {ch.label}" if ok else f"Test failed for {ch.label} — check the URL"
+    trigger = json.dumps(
+        {"notifyToast": {"message": message, "type": "success" if ok else "error"}}
+    )
+    return HTMLResponse("", status_code=200, headers={"HX-Trigger": trigger})
 
 
 class PreferencesUpdate(BaseModel):
