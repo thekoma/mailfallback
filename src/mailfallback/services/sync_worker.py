@@ -657,6 +657,24 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 account.sync_paused_until = None
                 account.pause_reason = None
                 db.commit()
+                from mailfallback.services import notification_service
+
+                if account.sync_state == SyncState.needs_reauth:
+                    notification_service.notify_account_problem(
+                        db,
+                        account,
+                        "needs_reauth",
+                        f"{account.name}: sign-in expired",
+                        "Reconnect the account in MailFallBack to resume backups.",
+                    )
+                else:
+                    notification_service.notify_account_problem(
+                        db,
+                        account,
+                        "sync_error",
+                        f"{account.name}: sync failed",
+                        TOKEN_REFRESH_FAILED,
+                    )
                 return
             status_access_token = access_token
             token_file = os.path.join(tempfile.gettempdir(), f"mfb_token_{account.id}")
@@ -913,6 +931,9 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 account.initial_sync_completed_at = datetime.now(UTC)
             account.sync_paused_until = None
             account.pause_reason = None
+            from mailfallback.services import notification_service
+
+            notification_service.clear_notified_state(account)
             logger.info("Sync completed for %s", account.name)
             # Persist the terminal state NOW, before the best-effort post-sync
             # bookkeeping below. Stats/index work can stall or fail (2026-06-22
@@ -946,6 +967,15 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 account.name,
                 account.sync_paused_until,
             )
+            from mailfallback.services import notification_service
+
+            notification_service.notify_account_problem(
+                db,
+                account,
+                "sync_paused",
+                f"{account.name}: sync paused (budget_paused)",
+                "Self-recovering; will resume automatically.",
+            )
         elif job_signal:
             # User-initiated stop: today's behavior (a budget stop also
             # SIGTERMs — consumed above, never reaches here). Pause columns
@@ -974,6 +1004,15 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                     attempt,
                     account.sync_paused_until,
                 )
+                from mailfallback.services import notification_service
+
+                notification_service.notify_account_problem(
+                    db,
+                    account,
+                    "sync_paused",
+                    f"{account.name}: sync paused (throttled)",
+                    "Self-recovering; will resume automatically.",
+                )
             elif kind == "transient":
                 attempt = _attempt_today(db, account.id, "transient")
                 _pause_account(
@@ -985,6 +1024,15 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                     attempt,
                     account.sync_paused_until,
                 )
+                from mailfallback.services import notification_service
+
+                notification_service.notify_account_problem(
+                    db,
+                    account,
+                    "sync_paused",
+                    f"{account.name}: sync paused (transient)",
+                    "Self-recovering; will resume automatically.",
+                )
             else:
                 job.status = JobStatus.failed
                 job.failure_kind = "error"
@@ -995,6 +1043,15 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 account.sync_paused_until = None
                 account.pause_reason = None
                 logger.warning("Sync failed for %s (exit %d)", account.name, result_code)
+                from mailfallback.services import notification_service
+
+                notification_service.notify_account_problem(
+                    db,
+                    account,
+                    "sync_error",
+                    f"{account.name}: sync failed",
+                    (account.last_error or "Sync failed")[:200],
+                )
 
     except subprocess.TimeoutExpired:
         job.status = JobStatus.failed

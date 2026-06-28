@@ -313,6 +313,39 @@ def start_scheduler(db: Session) -> None:
             id="sync-watchdog",
             replace_existing=True,
         )
+    if not any(j.id == "stale-notify" for j in scheduler.get_jobs()):
+
+        def _run_stale_notify() -> None:
+            from datetime import UTC, datetime, timedelta
+
+            from mailfallback.models import Account
+            from mailfallback.services import notification_service
+
+            db = SessionLocal()
+            try:
+                cutoff = datetime.now(UTC) - timedelta(days=7)
+                stale = (
+                    db.query(Account)
+                    .filter(Account.last_sync_at.isnot(None), Account.last_sync_at < cutoff)
+                    .all()
+                )
+                for a in stale:
+                    notification_service.notify_account_problem(
+                        db,
+                        a,
+                        "stale",
+                        f"{a.name}: no sync in 7+ days",
+                        "MailFallBack has not synced this account in over a week.",
+                    )
+                db.commit()
+            except Exception:
+                logger.exception("stale-notify tick failed")
+            finally:
+                db.close()
+
+        scheduler.add_job(
+            _run_stale_notify, CronTrigger(minute=0), id="stale-notify", replace_existing=True
+        )
     if not scheduler.running:
         scheduler.start()
 
