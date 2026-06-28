@@ -1057,6 +1057,7 @@ def execute_sync_job(db: Session, job_id: str) -> None:
         job.status = JobStatus.failed
         job.log = "Sync timed out after 3600 seconds"
         job.completed_at = datetime.now(UTC)
+        job.failure_kind = "error"
         account.sync_state = SyncState.error
         account.last_error = job.log
         from mailfallback.services import notification_service
@@ -1073,8 +1074,18 @@ def execute_sync_job(db: Session, job_id: str) -> None:
         job.status = JobStatus.failed
         job.log = str(e)
         job.completed_at = datetime.now(UTC)
+        job.failure_kind = "error"
         account.sync_state = SyncState.error
         account.last_error = str(e)
+        from mailfallback.services import notification_service
+
+        notification_service.notify_account_problem(
+            db,
+            account,
+            "sync_error",
+            f"{account.name}: sync failed",
+            (account.last_error or "Sync failed")[:200],
+        )
 
     finally:
         # Review F11: exception exits skip the straight-line marker consume —

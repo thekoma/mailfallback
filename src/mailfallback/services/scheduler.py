@@ -332,6 +332,7 @@ def start_scheduler(db: Session) -> None:
                         Account.enabled.is_(True),
                         Account.suspended.is_(False),
                         Account.sync_state != SyncState.needs_reauth,
+                        Account.pause_reason.is_(None),
                     )
                     .all()
                 )
@@ -343,7 +344,7 @@ def start_scheduler(db: Session) -> None:
                         f"{a.name}: no sync in 7+ days",
                         "MailFallBack has not synced this account in over a week.",
                     )
-                db.commit()
+                    db.commit()
             except Exception:
                 logger.exception("stale-notify tick failed")
             finally:
