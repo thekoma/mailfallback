@@ -943,14 +943,6 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             # bookkeeping — the watchdog then reaped it in a loop). Committing
             # here makes completion durable regardless of what follows.
             db.commit()
-            notification_service.notify_account_event(
-                db,
-                account,
-                "sync_completed",
-                f"{account.name}: sync complete",
-                "Sync finished successfully",
-                details={"messages": account.initial_sync_total_messages},
-            )
             if was_initial:
                 notification_service.notify_account_event(
                     db,
@@ -966,6 +958,18 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 collect_account_stats(db, account)
             except Exception:
                 logger.warning("Failed to collect stats for %s", account.name, exc_info=True)
+            # Emit sync_completed AFTER stats so details carry the live message
+            # count (account.total_messages), not the initial-sync-only counter
+            # (initial_sync_total_messages is null for accounts whose initial
+            # sync predates that field).
+            notification_service.notify_account_event(
+                db,
+                account,
+                "sync_completed",
+                f"{account.name}: sync complete",
+                f"{account.total_messages} messages backed up",
+                details={"messages": account.total_messages},
+            )
             try:
                 from mailfallback.services.sync_service import cleanup_old_jobs
 
