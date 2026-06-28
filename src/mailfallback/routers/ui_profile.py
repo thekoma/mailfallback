@@ -11,6 +11,7 @@ from mailfallback.dependencies import get_current_user, get_db
 from mailfallback.models import User
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import verify_password
+from mailfallback.services import notification_service as _ns
 from mailfallback.services.group_service import get_user_groups
 from mailfallback.services.store_service import get_selectable_stores, get_user_store
 from mailfallback.services.user_service import MIN_PASSWORD_LENGTH, change_password, update_user
@@ -43,6 +44,7 @@ def _build_channels_context(db: Session, user) -> list[dict]:
             "masked_url": _mask_apprise_url(ch.apprise_url),
             "enabled": ch.enabled,
             "events": ch.events or [],
+            "payload_format": ch.payload_format,
         }
         for ch in rows
     ]
@@ -189,7 +191,7 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
     )
 
 
-_VALID_EVENT_KEYS = frozenset(("needs_reauth", "sync_error", "sync_paused", "stale"))
+_VALID_EVENT_KEYS = frozenset(_ns.EVENT_KEYS)
 
 
 @router.post("/profile/notifications")
@@ -203,11 +205,14 @@ async def add_notification_channel(request: Request, db: Session = Depends(get_d
     from mailfallback.services.audit_service import log_action
 
     events = [e for e in form.getlist("events") if e in _VALID_EVENT_KEYS]
+    fmt = form.get("payload_format")
+    payload_format = fmt if fmt in {"text", "json"} else "text"
     ch = NotificationChannel(
         user_id=user.id,
         label=form["label"],
         apprise_url=encrypt_credentials(form["apprise_url"], settings.secret_key),
         events=events,
+        payload_format=payload_format,
     )
     db.add(ch)
     db.commit()
@@ -284,6 +289,8 @@ async def update_notification_channel(
         if label:
             ch.label = label
         ch.events = [e for e in form.getlist("events") if e in _VALID_EVENT_KEYS]
+        fmt = form.get("payload_format")
+        ch.payload_format = fmt if fmt in {"text", "json"} else "text"
         new_url = (form.get("apprise_url") or "").strip()
         if new_url:
             ch.apprise_url = encrypt_credentials(new_url, settings.secret_key)

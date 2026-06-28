@@ -152,3 +152,107 @@ def test_profile_shows_apprise_docs_and_examples(client, db_session, default_sto
     # At least a couple of concrete, copyable URL examples
     assert 'data-copy="ntfy://ntfy.sh/your-topic"' in resp.text
     assert 'data-copy="tgram://bottoken/ChatID"' in resp.text
+
+
+def test_add_channel_activity_event_and_json_format(client, db_session, default_store):
+    """Adding a channel with an activity event key + payload_format=json persists both."""
+    _login(client, db_session, default_store)
+    resp = client.post(
+        "/profile/notifications",
+        data={
+            "label": "WebhookJSON",
+            "apprise_url": "json://example.com/hook",
+            "events": ["sync_completed"],
+            "payload_format": "json",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code in (200, 303)
+    ch = db_session.query(NotificationChannel).filter_by(label="WebhookJSON").first()
+    assert ch is not None
+    assert ch.events == ["sync_completed"]
+    assert ch.payload_format == "json"
+
+
+def test_add_channel_junk_payload_format_defaults_to_text(client, db_session, default_store):
+    """An invalid payload_format value (e.g. 'xml') is coerced to 'text'."""
+    _login(client, db_session, default_store)
+    client.post(
+        "/profile/notifications",
+        data={
+            "label": "XMLChannel",
+            "apprise_url": "ntfy://host/topic",
+            "events": ["needs_reauth"],
+            "payload_format": "xml",
+        },
+        follow_redirects=False,
+    )
+    ch = db_session.query(NotificationChannel).filter_by(label="XMLChannel").first()
+    assert ch is not None
+    assert ch.payload_format == "text"
+
+
+def test_add_channel_no_payload_format_defaults_to_text(client, db_session, default_store):
+    """Omitting payload_format from the form defaults to 'text'."""
+    _login(client, db_session, default_store)
+    client.post(
+        "/profile/notifications",
+        data={
+            "label": "NoFormat",
+            "apprise_url": "ntfy://host/topic",
+            "events": ["stale"],
+        },
+        follow_redirects=False,
+    )
+    ch = db_session.query(NotificationChannel).filter_by(label="NoFormat").first()
+    assert ch is not None
+    assert ch.payload_format == "text"
+
+
+def test_update_channel_payload_format_and_activity_event(client, db_session, default_store):
+    """Updating a channel's payload_format to json and events to an activity event persists both."""
+    _login(client, db_session, default_store)
+    client.post(
+        "/profile/notifications",
+        data={
+            "label": "ToUpdate",
+            "apprise_url": "ntfy://host/topic",
+            "events": ["needs_reauth"],
+            "payload_format": "text",
+        },
+        follow_redirects=False,
+    )
+    ch = db_session.query(NotificationChannel).filter_by(label="ToUpdate").first()
+    cid = ch.id
+    client.post(
+        f"/profile/notifications/{cid}/update",
+        data={
+            "label": "ToUpdate",
+            "apprise_url": "",
+            "events": ["restore_completed"],
+            "payload_format": "json",
+        },
+        follow_redirects=False,
+    )
+    db_session.expire_all()
+    ch = db_session.query(NotificationChannel).filter_by(id=cid).first()
+    assert ch.events == ["restore_completed"]
+    assert ch.payload_format == "json"
+
+
+def test_add_channel_activity_event_not_stripped(client, db_session, default_store):
+    """Activity event keys like sync_completed are accepted (not filtered out by validation)."""
+    _login(client, db_session, default_store)
+    client.post(
+        "/profile/notifications",
+        data={
+            "label": "ActivityTest",
+            "apprise_url": "ntfy://host/topic",
+            "events": ["initial_sync_completed", "backup_completed", "account_added"],
+            "payload_format": "text",
+        },
+        follow_redirects=False,
+    )
+    ch = db_session.query(NotificationChannel).filter_by(label="ActivityTest").first()
+    assert ch is not None
+    assert set(ch.events) == {"initial_sync_completed", "backup_completed", "account_added"}
