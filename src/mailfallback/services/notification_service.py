@@ -23,13 +23,31 @@ ACTIVITY_EVENT_KEYS = (
 EVENT_KEYS = PROBLEM_EVENT_KEYS + ACTIVITY_EVENT_KEYS
 
 
+def account_info(account: Account) -> dict:
+    """A plain (thread-safe, JSON-serializable) snapshot of the account's
+    identity for notification envelopes. Built on the caller's thread while the
+    session is attached — never passed an ORM object into a send thread."""
+    info = {
+        "id": account.id,
+        "name": account.name,
+        "email": account.email_address,
+        "provider": account.provider,
+    }
+    try:
+        if account.store is not None:
+            info["store"] = account.store.name
+    except Exception:
+        logger.debug("account_info: could not resolve store for %s", account.id, exc_info=True)
+    return info
+
+
 def send_to_channel(
     channel: NotificationChannel,
     title: str,
     body: str,
     *,
     event_key: str | None = None,
-    account_email: str | None = None,
+    account: dict | None = None,
     details: dict | None = None,
 ) -> bool:
     """Decrypt the channel's Apprise URL and send one notification.
@@ -47,10 +65,10 @@ def send_to_channel(
             body = json.dumps(
                 {
                     "event": event_key,
-                    "account": account_email,
                     "title": title,
                     "message": body,
                     "timestamp": datetime.now(UTC).isoformat(),
+                    "account": account,
                     "details": details or {},
                 }
             )
@@ -72,10 +90,12 @@ def _send_to_users(
     title: str,
     body: str,
     details: dict | None = None,
-    account_email: str | None = None,
+    account: dict | None = None,
 ) -> None:
     """Query enabled channels for the given user ids subscribed to event_key
-    and fire a daemon thread per channel. Never raises."""
+    and fire a daemon thread per channel. Never raises.
+
+    `account` is a plain dict snapshot (see account_info), never an ORM object."""
     try:
         if not user_ids:
             return
@@ -94,7 +114,7 @@ def _send_to_users(
                 args=(ch, title, body),
                 kwargs={
                     "event_key": event_key,
-                    "account_email": account_email,
+                    "account": account,
                     "details": details,
                 },
                 daemon=True,
@@ -121,7 +141,7 @@ def notify_account_problem(
             title,
             body,
             details=None,
-            account_email=account.email_address,
+            account=account_info(account),
         )
     except Exception:
         logger.warning("notify_account_problem failed for %s", account.id, exc_info=True)
@@ -146,7 +166,7 @@ def notify_account_event(
             title,
             body,
             details=details,
-            account_email=account.email_address,
+            account=account_info(account),
         )
     except Exception:
         logger.warning("notify_account_event failed for %s", account.id, exc_info=True)
@@ -163,6 +183,6 @@ def notify_users(
     """Notify a specific list of users' enabled channels for the given event.
     Never raises."""
     try:
-        _send_to_users(db, user_ids, event_key, title, body, details=details, account_email=None)
+        _send_to_users(db, user_ids, event_key, title, body, details=details, account=None)
     except Exception:
         logger.warning("notify_users failed for event %s", event_key, exc_info=True)

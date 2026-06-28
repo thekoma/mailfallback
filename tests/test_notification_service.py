@@ -223,7 +223,10 @@ def test_json_payload_format(db_session, default_store):
     assert len(json_bodies) == 1
     assert len(text_bodies) == 1
     assert json_bodies[0]["event"] == "sync_completed"
-    assert json_bodies[0]["account"] == "test@example.com"
+    # account is now a rich object, not a bare email string
+    assert json_bodies[0]["account"]["email"] == "test@example.com"
+    assert json_bodies[0]["account"]["name"] == "label5"
+    assert json_bodies[0]["account"]["provider"]
     assert "timestamp" in json_bodies[0]
     assert text_bodies[0] == "All mail synced"
 
