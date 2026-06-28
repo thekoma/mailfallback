@@ -266,6 +266,18 @@ def run_config_backup(db: Session, repository: Repository) -> dict:
         repository.last_config_backup_error = None
         db.commit()
         logger.info("Config backup completed for repository %s", repository.name)
+        from mailfallback.models import User, UserRole
+        from mailfallback.services import notification_service
+
+        admin_ids = [u.id for u in db.query(User).filter(User.role == UserRole.admin).all()]
+        notification_service.notify_users(
+            db,
+            admin_ids,
+            "backup_completed",
+            f"Config backup complete: {repository.name}",
+            "Configuration backup finished",
+            details={"repository": repository.name},
+        )
         return {"ok": True, "error": None}
     except Exception as e:
         db.rollback()

@@ -438,6 +438,284 @@ def test_stale_loop_commits_per_account(db_session, default_store):
 
 
 # ---------------------------------------------------------------------------
+# T3 — activity event emits
+# ---------------------------------------------------------------------------
+
+
+def test_sync_completed_emits_event(db_session, default_store):
+    """A clean (exit 0) sync always emits sync_completed."""
+    from datetime import UTC
+
+    from mailfallback.models import Account, AuthType
+
+    acct = Account(
+        name="emit-sync-completed",
+        store=default_store,
+        maildir_path="/tmp/test_emit_sync_completed",
+        imap_host="imap.example.com",
+        imap_user="u",
+        credentials=None,
+        auth_type=AuthType.app_password,
+        initial_sync_completed_at=__import__("datetime").datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    db_session.add(acct)
+    db_session.commit()
+    job = _make_job(db_session, acct)
+
+    mock_proc = _proc(["ok"], code=0)
+    event_calls = []
+
+    def _track_event(db, a, key, t, b, details=None):
+        event_calls.append(key)
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"),
+        patch.object(ns, "notify_account_event", _track_event),
+    ):
+        sync_worker.execute_sync_job(db_session, job.id)
+
+    assert "sync_completed" in event_calls
+
+
+def test_initial_sync_completed_emitted_when_first_pass(db_session, default_store):
+    """When initial_sync_completed_at was None, both sync_completed and
+    initial_sync_completed are emitted."""
+    from mailfallback.models import Account, AuthType
+
+    acct = Account(
+        name="emit-initial-sync",
+        store=default_store,
+        maildir_path="/tmp/test_emit_initial_sync",
+        imap_host="imap.example.com",
+        imap_user="u",
+        credentials=None,
+        auth_type=AuthType.app_password,
+        initial_sync_completed_at=None,
+    )
+    db_session.add(acct)
+    db_session.commit()
+    job = _make_job(db_session, acct)
+
+    mock_proc = _proc(["ok"], code=0)
+    event_calls = []
+
+    def _track_event(db, a, key, t, b, details=None):
+        event_calls.append(key)
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"),
+        patch.object(ns, "notify_account_event", _track_event),
+    ):
+        sync_worker.execute_sync_job(db_session, job.id)
+
+    assert "sync_completed" in event_calls
+    assert "initial_sync_completed" in event_calls
+
+
+def test_initial_sync_completed_not_emitted_when_already_set(db_session, default_store):
+    """When initial_sync_completed_at was already set, initial_sync_completed
+    is NOT emitted (only sync_completed)."""
+    from datetime import UTC
+
+    from mailfallback.models import Account, AuthType
+
+    acct = Account(
+        name="emit-no-initial-sync",
+        store=default_store,
+        maildir_path="/tmp/test_emit_no_initial_sync",
+        imap_host="imap.example.com",
+        imap_user="u",
+        credentials=None,
+        auth_type=AuthType.app_password,
+        initial_sync_completed_at=__import__("datetime").datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    db_session.add(acct)
+    db_session.commit()
+    job = _make_job(db_session, acct)
+
+    mock_proc = _proc(["ok"], code=0)
+    event_calls = []
+
+    def _track_event(db, a, key, t, b, details=None):
+        event_calls.append(key)
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"),
+        patch.object(ns, "notify_account_event", _track_event),
+    ):
+        sync_worker.execute_sync_job(db_session, job.id)
+
+    assert "sync_completed" in event_calls
+    assert "initial_sync_completed" not in event_calls
+
+
+def test_restore_completed_emits_event(db_session, default_store):
+    """A successful restore job emits restore_completed for the target account."""
+    from unittest.mock import MagicMock, patch
+
+    from mailfallback.models import Account, AuthType, RestoreJob, RestoreMode, User
+    from mailfallback.services import notification_service as ns_local
+    from mailfallback.services.restore_worker import execute_restore_job
+
+    user = User(username="restore_emit_user", password_hash="x", store_id=default_store.id)
+    db_session.add(user)
+    db_session.flush()
+
+    src = Account(
+        name="restore-src",
+        email_address="src@example.com",
+        imap_host="imap.src.com",
+        imap_port=993,
+        maildir_path="/data/mailboxes/restore-src",
+        store_id=default_store.id,
+        credentials="encrypted",
+        auth_type=AuthType.app_password,
+    )
+    tgt = Account(
+        name="restore-tgt",
+        email_address="tgt@example.com",
+        imap_host="imap.tgt.com",
+        imap_port=993,
+        maildir_path="/data/mailboxes/restore-tgt",
+        store_id=default_store.id,
+        credentials="encrypted",
+        auth_type=AuthType.app_password,
+    )
+    db_session.add_all([src, tgt])
+    db_session.flush()
+    src.owners.append(user)
+    db_session.commit()
+
+    job = RestoreJob(
+        source_account_id=src.id,
+        target_account_id=tgt.id,
+        restore_mode=RestoreMode.folder,
+        selected_folders=["INBOX"],
+        skip_duplicates=False,
+        requested_by=user.id,
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+
+    event_calls = []
+
+    src_conn = MagicMock()
+    tgt_conn = MagicMock()
+    src_conn.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "INBOX"'])
+    src_conn.select.return_value = ("OK", [b"1"])
+    src_conn.search.return_value = ("OK", [b"1"])
+    src_conn.fetch.return_value = (
+        "OK",
+        [(b"1 (RFC822 {100}", b"From: a@b.com\r\nSubject: T\r\n\r\nBody"), b")"],
+    )
+    tgt_conn.append.return_value = ("OK", [b"APPEND completed"])
+
+    def _track_event(db, a, key, t, b, details=None):
+        event_calls.append(key)
+
+    _rw = "mailfallback.services.restore_worker"
+    with (
+        patch(f"{_rw}.decrypt_credentials", return_value="plaintext"),
+        patch(f"{_rw}.create_temp_imap_user", return_value=("_tmp_user", "tmp-pass")),
+        patch(f"{_rw}.delete_temp_imap_user"),
+        patch(f"{_rw}.connect_imap", side_effect=[src_conn, tgt_conn]),
+        patch.object(ns_local, "notify_account_event", _track_event),
+    ):
+        execute_restore_job(db_session, job.id)
+
+    assert "restore_completed" in event_calls
+
+
+def test_backup_completed_emits_to_admins(db_session, default_store):
+    """run_config_backup success emits backup_completed to all admin users."""
+    from unittest.mock import patch
+
+    from mailfallback.config import settings
+    from mailfallback.models import Repository, User, UserRole
+    from mailfallback.security import encrypt_credentials
+    from mailfallback.services import config_backup_service as cbs
+    from mailfallback.services import notification_service as ns_local
+
+    def _enc(v):
+        return encrypt_credentials(v, settings.secret_key)
+
+    admin = User(
+        username="backup_admin",
+        password_hash="x",
+        role=UserRole.admin,
+        store_id=default_store.id,
+    )
+    db_session.add(admin)
+    db_session.commit()
+
+    repo = Repository(
+        name="offsite-emit",
+        backend_type="s3",
+        s3_endpoint=_enc("https://s3.example.com"),
+        s3_bucket=_enc("bucket"),
+        s3_access_key=_enc("ak"),
+        s3_secret_key=_enc("sk"),
+        restic_password=_enc("rp"),
+        config_backup_enabled=True,
+        config_backup_passphrase=_enc("strong-passphrase"),
+    )
+    db_session.add(repo)
+    db_session.commit()
+
+    notify_calls = []
+
+    with patch("mailfallback.services.config_backup_service.restic_service") as mock_restic:
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.return_value = {"message_type": "summary"}
+        mock_restic.apply_retention.return_value = {"pruned": True}
+
+        def _track_notify(db, ids, key, t, b, details=None):
+            notify_calls.append((key, ids))
+
+        with patch.object(ns_local, "notify_users", _track_notify):
+            cbs.run_config_backup(db_session, repo)
+
+    assert any(key == "backup_completed" for key, _ in notify_calls), "backup_completed not emitted"
+    # verify admin id was included
+    emitted_ids = next(ids for key, ids in notify_calls if key == "backup_completed")
+    assert admin.id in emitted_ids
+
+
+def test_account_added_emits_event(client, db_session, default_store):
+    """Creating an account via POST /api/accounts emits account_added."""
+    from mailfallback.models import UserRole
+    from mailfallback.services import notification_service as ns_local
+    from mailfallback.services.user_service import create_user
+
+    create_user(db_session, "emit_admin", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "emit_admin", "password": "pass"})
+
+    event_calls = []
+
+    with patch.object(
+        ns_local,
+        "notify_account_event",
+        lambda db, a, key, t, b, details=None: event_calls.append(key),
+    ):
+        resp = client.post(
+            "/api/accounts",
+            json={
+                "name": "Emit Test",
+                "email_address": "emit@example.com",
+                "imap_host": "imap.example.com",
+                "imap_port": 993,
+            },
+        )
+
+    assert resp.status_code == 200
+    assert "account_added" in event_calls
+
+
+# ---------------------------------------------------------------------------
 # Helpers (mirrors test_sync_worker._proc)
 # ---------------------------------------------------------------------------
 

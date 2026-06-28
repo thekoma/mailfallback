@@ -925,7 +925,8 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             account.sync_state = SyncState.idle
             account.last_sync_at = datetime.now(UTC)
             account.last_error = None
-            if account.initial_sync_completed_at is None:
+            was_initial = account.initial_sync_completed_at is None
+            if was_initial:
                 # A clean FULL pass (the loop only reaches exit 0 after the
                 # last invocation) ends the initial-sync regime.
                 account.initial_sync_completed_at = datetime.now(UTC)
@@ -942,6 +943,23 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             # bookkeeping — the watchdog then reaped it in a loop). Committing
             # here makes completion durable regardless of what follows.
             db.commit()
+            notification_service.notify_account_event(
+                db,
+                account,
+                "sync_completed",
+                f"{account.name}: sync complete",
+                "Sync finished successfully",
+                details={"messages": account.initial_sync_total_messages},
+            )
+            if was_initial:
+                notification_service.notify_account_event(
+                    db,
+                    account,
+                    "initial_sync_completed",
+                    f"{account.name}: first backup complete",
+                    f"{account.initial_sync_total_messages or 0} messages backed up",
+                    details={"messages": account.initial_sync_total_messages},
+                )
             try:
                 from mailfallback.services.stats_service import collect_account_stats
 

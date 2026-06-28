@@ -227,6 +227,25 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             job.completed_at = datetime.now(UTC)
         db.commit()
 
+        if job.status == JobStatus.completed and target:
+            try:
+                from mailfallback.services import notification_service
+
+                notification_service.notify_account_event(
+                    db,
+                    target,
+                    "restore_completed",
+                    f"{target.name}: restore complete",
+                    f"{job.restored_messages}/{job.total_messages} messages restored",
+                    details={
+                        "restored": job.restored_messages,
+                        "failed": job.failed_messages,
+                        "total": job.total_messages,
+                    },
+                )
+            except Exception:
+                logger.warning("Failed to send restore_completed notification for job %s", job_id)
+
         try:
             from mailfallback.services.audit_service import log_action
 

@@ -107,6 +107,17 @@ def create(
             account.extra_config = json.dumps({"patterns": disc["patterns"]})
     db.commit()
     account_service.assign_owner(db, account.id, user.id)
+    db.refresh(account)
+    from mailfallback.services import notification_service
+
+    notification_service.notify_account_event(
+        db,
+        account,
+        "account_added",
+        f"Account added: {account.name}",
+        f"Now backing up {account.email_address}",
+        details={"email": account.email_address},
+    )
     log_action(
         db,
         user=user,
