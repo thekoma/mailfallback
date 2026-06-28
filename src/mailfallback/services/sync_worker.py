@@ -1059,6 +1059,15 @@ def execute_sync_job(db: Session, job_id: str) -> None:
         job.completed_at = datetime.now(UTC)
         account.sync_state = SyncState.error
         account.last_error = job.log
+        from mailfallback.services import notification_service
+
+        notification_service.notify_account_problem(
+            db,
+            account,
+            "sync_error",
+            f"{account.name}: sync failed",
+            (account.last_error or "Sync timed out")[:200],
+        )
 
     except Exception as e:
         job.status = JobStatus.failed

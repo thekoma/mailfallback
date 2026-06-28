@@ -212,6 +212,45 @@ def test_dedup_guard_suppresses_second_emit(db_session, oauth_account):
 
 
 # ---------------------------------------------------------------------------
+# sync_error — TimeoutExpired outer branch
+# ---------------------------------------------------------------------------
+
+
+def test_timeout_expired_emits_sync_error(db_session, default_store):
+    """subprocess.TimeoutExpired reaching the outer handler emits sync_error."""
+    import subprocess
+
+    from mailfallback.models import Account, AuthType
+
+    acct = Account(
+        name="timeout-notify",
+        store=default_store,
+        maildir_path="/tmp/test_notify_timeout",
+        imap_host="imap.example.com",
+        imap_user="u",
+        credentials=None,
+        auth_type=AuthType.app_password,
+        initial_sync_completed_at=None,
+    )
+    db_session.add(acct)
+    db_session.commit()
+    job = _make_job(db_session, acct)
+
+    calls = []
+    with (
+        patch(
+            "mailfallback.services.sync_worker.subprocess.Popen",
+            side_effect=subprocess.TimeoutExpired(cmd="mbsync", timeout=3600),
+        ),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"),
+        patch.object(ns, "notify_account_problem", lambda db, acct_, key, t, b: calls.append(key)),
+    ):
+        sync_worker.execute_sync_job(db_session, job.id)
+
+    assert "sync_error" in calls
+
+
+# ---------------------------------------------------------------------------
 # Helpers (mirrors test_sync_worker._proc)
 # ---------------------------------------------------------------------------
 

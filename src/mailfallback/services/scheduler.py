@@ -326,7 +326,13 @@ def start_scheduler(db: Session) -> None:
                 cutoff = datetime.now(UTC) - timedelta(days=7)
                 stale = (
                     db.query(Account)
-                    .filter(Account.last_sync_at.isnot(None), Account.last_sync_at < cutoff)
+                    .filter(
+                        Account.last_sync_at.isnot(None),
+                        Account.last_sync_at < cutoff,
+                        Account.enabled.is_(True),
+                        Account.suspended.is_(False),
+                        Account.sync_state != SyncState.needs_reauth,
+                    )
                     .all()
                 )
                 for a in stale:
