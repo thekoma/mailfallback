@@ -69,3 +69,15 @@ def test_profile_get_masks_notification_urls(client, db_session, default_store):
     assert "mytopic" not in resp.text
     # Verify masked form IS present
     assert "ntfy://…" in resp.text
+
+
+def test_profile_shows_apprise_docs_and_examples(client, db_session, default_store):
+    """The notifications section links to the Apprise docs and shows copyable URL examples."""
+    _login(client, db_session, default_store)
+    resp = client.get("/profile")
+    assert resp.status_code == 200
+    # Link to the Apprise documentation
+    assert "https://github.com/caronc/apprise" in resp.text
+    # At least a couple of concrete, copyable URL examples
+    assert 'data-copy="ntfy://ntfy.sh/your-topic"' in resp.text
+    assert 'data-copy="tgram://bottoken/ChatID"' in resp.text

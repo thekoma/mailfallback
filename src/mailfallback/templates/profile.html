@@ -49,7 +49,12 @@
 <hr>
 
 <h3><i data-lucide="bell" class="icon-lg icon-inline"></i>Notification channels</h3>
-<p class="text-muted text-small">Receive alerts via Apprise URLs when accounts need attention.</p>
+<p class="text-muted text-small">
+    Get alerted when an account needs attention — on ntfy, Telegram, Gotify, Discord and
+    <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noopener">80+ other services</a>
+    via <a href="https://github.com/caronc/apprise" target="_blank" rel="noopener">Apprise</a>.
+    Each channel is a single Apprise URL.
+</p>
 
 {% if channels %}
 <table>
@@ -109,6 +114,41 @@
 {% endif %}
 
 <h4>Add channel</h4>
+
+<details class="notif-examples">
+    <summary><i data-lucide="lightbulb" class="icon-sm icon-inline"></i>URL examples &amp; formats</summary>
+    <p class="text-muted text-small notif-docs-line">
+        Replace the placeholders with your own tokens. Browse the
+        <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noopener">full list of supported services</a>
+        for the exact URL format. Click an example to copy it.
+    </p>
+    <dl class="notif-example-grid">
+        <dt>
+            <i data-lucide="bell" class="icon-sm icon-inline"></i>
+            <a href="https://github.com/caronc/apprise/wiki/Notify_ntfy" target="_blank" rel="noopener">ntfy</a>
+        </dt>
+        <dd><code class="copyable" data-copy="ntfy://ntfy.sh/your-topic" title="Click to copy">ntfy://ntfy.sh/your-topic</code></dd>
+
+        <dt>
+            <i data-lucide="send" class="icon-sm icon-inline"></i>
+            <a href="https://github.com/caronc/apprise/wiki/Notify_telegram" target="_blank" rel="noopener">Telegram</a>
+        </dt>
+        <dd><code class="copyable" data-copy="tgram://bottoken/ChatID" title="Click to copy">tgram://bottoken/ChatID</code></dd>
+
+        <dt>
+            <i data-lucide="server" class="icon-sm icon-inline"></i>
+            <a href="https://github.com/caronc/apprise/wiki/Notify_gotify" target="_blank" rel="noopener">Gotify</a>
+        </dt>
+        <dd><code class="copyable" data-copy="gotify://gotify.example.com/apptoken" title="Click to copy">gotify://gotify.example.com/apptoken</code></dd>
+
+        <dt>
+            <i data-lucide="message-circle" class="icon-sm icon-inline"></i>
+            <a href="https://github.com/caronc/apprise/wiki/Notify_discord" target="_blank" rel="noopener">Discord</a>
+        </dt>
+        <dd><code class="copyable" data-copy="discord://webhook_id/webhook_token" title="Click to copy">discord://webhook_id/webhook_token</code></dd>
+    </dl>
+</details>
+
 <form method="post" action="/profile/notifications" class="container-narrow">
     <label for="notif_label">Label</label>
     <input type="text" id="notif_label" name="label" required placeholder="e.g. Phone">

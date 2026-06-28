@@ -533,6 +533,36 @@ button.icon-btn.success, a.icon-btn.success { color: var(--mfb-success-color); b
     animation: section-open 0.4s ease-out;
 }
 
+/* === Notification URL examples (profile) === */
+.notif-examples > summary { font-weight: 500; color: var(--pico-color); }
+.notif-docs-line { margin: 0 0 0.85rem; }
+.notif-example-grid {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.5rem 1rem;
+    align-items: center;
+    margin: 0;
+}
+.notif-example-grid dt {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+.notif-example-grid dd { margin: 0; min-width: 0; }
+code.copyable {
+    cursor: pointer;
+    overflow-wrap: anywhere;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+code.copyable:hover { background: var(--pico-primary-background); color: var(--pico-primary-inverse); }
+code.copyable.copied { background: var(--mfb-badge-idle-bg); color: var(--mfb-badge-idle-color); }
+@media (max-width: 540px) {
+    .notif-example-grid { grid-template-columns: 1fr; gap: 0.2rem 0; }
+    .notif-example-grid dd { margin-bottom: 0.6rem; }
+}
+
 /* === Dashboard stat cards === */
 .stat-cards { display: grid; grid-template-columns: repeat(12, 1fr); gap: 0.75rem; margin-bottom: 1.5rem; }
 .stat-card {
