@@ -240,6 +240,45 @@ def test_update_channel_payload_format_and_activity_event(client, db_session, de
     assert ch.payload_format == "json"
 
 
+def test_profile_add_form_exposes_format_selector_and_activity_checkboxes(
+    client, db_session, default_store
+):
+    """GET /profile: add form renders the payload_format select and activity event checkboxes."""
+    _login(client, db_session, default_store)
+    resp = client.get("/profile")
+    assert resp.status_code == 200
+    # Format selector present in the add form
+    assert 'name="payload_format"' in resp.text
+    # Activity checkbox for sync_completed is in the add form
+    assert 'value="sync_completed"' in resp.text
+    # The Activity fieldset legend is rendered
+    assert "Activity" in resp.text
+
+
+def test_profile_json_channel_with_activity_event_renders_badge_and_label(
+    client, db_session, default_store
+):
+    """GET /profile: a JSON channel on sync_completed shows the JSON badge + event label."""
+    _login(client, db_session, default_store)
+    client.post(
+        "/profile/notifications",
+        data={
+            "label": "ActivityJSON",
+            "apprise_url": "json://example.com/hook",
+            "events": ["sync_completed"],
+            "payload_format": "json",
+        },
+        follow_redirects=False,
+    )
+    resp = client.get("/profile")
+    assert resp.status_code == 200
+    # The JSON format badge span is rendered
+    assert "notif-format-badge" in resp.text
+    assert "JSON" in resp.text
+    # The activity event short label for sync_completed
+    assert "Sync done" in resp.text
+
+
 def test_add_channel_activity_event_not_stripped(client, db_session, default_store):
     """Activity event keys like sync_completed are accepted (not filtered out by validation)."""
     _login(client, db_session, default_store)
