@@ -271,7 +271,20 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     stale_cutoff = datetime.now(UTC) - timedelta(days=7)
     attention = []
     for a in accounts:
-        if a.sync_state.value == "error" and a.pause_reason is None:
+        if a.sync_state.value == "needs_reauth":
+            # Revoked/expired OAuth token (e.g. provider password change) —
+            # only the user can fix it, so surface it prominently with a
+            # one-click reconnect, not buried in the account page.
+            attention.append(
+                {
+                    "id": a.id,
+                    "name": a.name,
+                    "type": "reauth",
+                    "reason": "Sign-in expired — reconnect needed",
+                    "provider": a.provider,
+                }
+            )
+        elif a.sync_state.value == "error" and a.pause_reason is None:
             reason = a.last_error[:80] if a.last_error else "Sync failed"
             attention.append({"id": a.id, "name": a.name, "type": "error", "reason": reason})
         elif a.initial_sync_completed_at is None and a.is_authenticated and not a.suspended:

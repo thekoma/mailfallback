@@ -154,6 +154,8 @@
         {% elif item.type == 'info' %}
         {# Initial sync in progress / self-recovering pause — info, not error. #}
         <span class="badge badge-info"><i data-lucide="download" class="icon-sm"></i></span>
+        {% elif item.type == 'reauth' %}
+        <span class="badge badge-error"><i data-lucide="log-in" class="icon-sm"></i></span>
         {% else %}
         <span class="badge badge-syncing"><i data-lucide="clock" class="icon-sm"></i></span>
         {% endif %}
@@ -165,6 +167,10 @@
         <button class="icon-btn primary" hx-post="/api/sync/{{ item.id }}" hx-swap="none" hx-on::after-request="location.reload()">
             <i data-lucide="refresh-cw" class="icon-sm"></i> Retry
         </button>
+        {% elif item.type == 'reauth' %}
+        <a class="icon-btn primary" href="/auth/{{ item.provider }}/start?account_id={{ item.id }}">
+            <i data-lucide="log-in" class="icon-sm"></i> Reconnect
+        </a>
         {% endif %}
     </div>
     {% endfor %}
