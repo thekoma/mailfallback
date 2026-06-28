@@ -248,6 +248,7 @@ def run_config_backup(db: Session, repository: Repository) -> dict:
     """
     from mailfallback.services.repo_inventory import CONFIG_PREFIX
 
+    started = _utcnow()
     try:
         if not repository.config_backup_passphrase:
             raise ValueError("Repository has no config backup passphrase")
@@ -266,18 +267,30 @@ def run_config_backup(db: Session, repository: Repository) -> dict:
         repository.last_config_backup_error = None
         db.commit()
         logger.info("Config backup completed for repository %s", repository.name)
-        from mailfallback.models import User, UserRole
-        from mailfallback.services import notification_service
+        # Best-effort notify, isolated so a build/send hiccup can never reach the
+        # outer except (which rolls back the already-committed backup status).
+        try:
+            from mailfallback.models import User, UserRole
+            from mailfallback.services import notification_service
 
-        admin_ids = [u.id for u in db.query(User).filter(User.role == UserRole.admin).all()]
-        notification_service.notify_users(
-            db,
-            admin_ids,
-            "backup_completed",
-            f"Config backup complete: {repository.name}",
-            "Configuration backup finished",
-            details={"repository": repository.name},
-        )
+            admin_ids = [u.id for u in db.query(User).filter(User.role == UserRole.admin).all()]
+            notification_service.notify_users(
+                db,
+                admin_ids,
+                "backup_completed",
+                f"Config backup complete: {repository.name}",
+                "Configuration backup finished",
+                details={
+                    "repository": repository.name,
+                    "backend": repository.backend_type.value,
+                    "duration_seconds": round((_utcnow() - started).total_seconds(), 1),
+                    "completed_at": repository.last_config_backup_at.isoformat()
+                    if repository.last_config_backup_at
+                    else None,
+                },
+            )
+        except Exception:
+            logger.warning("Failed to send backup_completed notification", exc_info=True)
         return {"ok": True, "error": None}
     except Exception as e:
         db.rollback()

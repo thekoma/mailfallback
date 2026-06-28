@@ -239,8 +239,14 @@ def execute_restore_job(db: Session, job_id: str) -> None:
                     f"{job.restored_messages}/{job.total_messages} messages restored",
                     details={
                         "restored": job.restored_messages,
+                        "skipped": job.skipped_messages,
                         "failed": job.failed_messages,
                         "total": job.total_messages,
+                        "duration_seconds": round(
+                            (job.completed_at - job.started_at).total_seconds(), 1
+                        )
+                        if job.started_at and job.completed_at
+                        else None,
                     },
                 )
             except Exception:

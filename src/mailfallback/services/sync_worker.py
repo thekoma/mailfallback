@@ -943,6 +943,14 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             # bookkeeping — the watchdog then reaped it in a loop). Committing
             # here makes completion durable regardless of what follows.
             db.commit()
+            duration_seconds = None
+            if job.started_at is not None:
+                # job.started_at may be naive (SQLite) or aware (Postgres);
+                # normalize to UTC before subtracting an aware now().
+                started_at = job.started_at
+                if started_at.tzinfo is None:
+                    started_at = started_at.replace(tzinfo=UTC)
+                duration_seconds = round((datetime.now(UTC) - started_at).total_seconds(), 1)
             if was_initial:
                 notification_service.notify_account_event(
                     db,
@@ -950,7 +958,11 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                     "initial_sync_completed",
                     f"{account.name}: first backup complete",
                     f"{account.initial_sync_total_messages or 0} messages backed up",
-                    details={"messages": account.initial_sync_total_messages},
+                    details={
+                        "messages": account.initial_sync_total_messages,
+                        "folders": account.initial_sync_total_folders,
+                        "duration_seconds": duration_seconds,
+                    },
                 )
             try:
                 from mailfallback.services.stats_service import collect_account_stats
@@ -968,7 +980,15 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 "sync_completed",
                 f"{account.name}: sync complete",
                 f"{account.total_messages} messages backed up",
-                details={"messages": account.total_messages},
+                details={
+                    "messages": account.total_messages,
+                    "unread": account.unread_messages,
+                    "size_bytes": account.maildir_size_bytes,
+                    "duration_seconds": duration_seconds,
+                    "last_sync_at": account.last_sync_at.isoformat()
+                    if account.last_sync_at
+                    else None,
+                },
             )
             try:
                 from mailfallback.services.sync_service import cleanup_old_jobs

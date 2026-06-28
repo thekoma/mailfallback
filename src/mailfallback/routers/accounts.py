@@ -116,7 +116,11 @@ def create(
         "account_added",
         f"Account added: {account.name}",
         f"Now backing up {account.email_address}",
-        details={"email": account.email_address},
+        details={
+            "email": account.email_address,
+            "provider": account.provider,
+            "imap_host": account.imap_host,
+        },
     )
     log_action(
         db,

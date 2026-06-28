@@ -516,7 +516,11 @@ def test_sync_completed_reports_current_message_count(db_session, default_store)
     ):
         sync_worker.execute_sync_job(db_session, job.id)
 
-    assert captured["details"] == {"messages": 4242}
+    assert captured["details"]["messages"] == 4242
+    # richer envelope also carries the live stats
+    assert "unread" in captured["details"]
+    assert "size_bytes" in captured["details"]
+    assert "duration_seconds" in captured["details"]
 
 
 def test_initial_sync_completed_emitted_when_first_pass(db_session, default_store):
