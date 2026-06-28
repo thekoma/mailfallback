@@ -478,6 +478,47 @@ def test_sync_completed_emits_event(db_session, default_store):
     assert "sync_completed" in event_calls
 
 
+def test_sync_completed_reports_current_message_count(db_session, default_store):
+    """sync_completed.details.messages uses the live total_messages, not the
+    initial-sync-only counter (which is null for accounts synced before that
+    field was captured)."""
+    from datetime import UTC
+
+    from mailfallback.models import Account, AuthType
+
+    acct = Account(
+        name="emit-count",
+        store=default_store,
+        maildir_path="/tmp/test_emit_count",
+        imap_host="imap.example.com",
+        imap_user="u",
+        credentials=None,
+        auth_type=AuthType.app_password,
+        initial_sync_completed_at=__import__("datetime").datetime(2026, 1, 1, tzinfo=UTC),
+        initial_sync_total_messages=None,
+        total_messages=4242,
+    )
+    db_session.add(acct)
+    db_session.commit()
+    job = _make_job(db_session, acct)
+
+    mock_proc = _proc(["ok"], code=0)
+    captured = {}
+
+    def _track_event(db, a, key, t, b, details=None):
+        if key == "sync_completed":
+            captured["details"] = details
+
+    with (
+        patch("mailfallback.services.sync_worker.subprocess.Popen", return_value=mock_proc),
+        patch("mailfallback.services.sync_worker.generate_mbsyncrc", return_value="config"),
+        patch.object(ns, "notify_account_event", _track_event),
+    ):
+        sync_worker.execute_sync_job(db_session, job.id)
+
+    assert captured["details"] == {"messages": 4242}
+
+
 def test_initial_sync_completed_emitted_when_first_pass(db_session, default_store):
     """When initial_sync_completed_at was None, both sync_completed and
     initial_sync_completed are emitted."""
