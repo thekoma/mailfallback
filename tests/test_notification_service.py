@@ -226,7 +226,9 @@ def test_json_payload_format(db_session, default_store):
     # account is now a rich object, not a bare email string
     assert json_bodies[0]["account"]["email"] == "test@example.com"
     assert json_bodies[0]["account"]["name"] == "label5"
-    assert json_bodies[0]["account"]["provider"]
+    # all account fields must be JSON-native (str), not ORM/Enum/UUID objects
+    assert isinstance(json_bodies[0]["account"]["id"], str)
+    assert isinstance(json_bodies[0]["account"]["provider"], str)
     assert "timestamp" in json_bodies[0]
     assert text_bodies[0] == "All mail synced"
 
