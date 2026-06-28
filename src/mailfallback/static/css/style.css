@@ -565,6 +565,12 @@ button.icon-btn.success, a.icon-btn.success { color: var(--mfb-success-color); b
 }
 .notif-edit > label { display: block; }
 .notif-edit fieldset { margin: 0.6rem 0; }
+.notif-event-groups { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; }
+.notif-event-groups fieldset { flex: 1 1 14rem; margin: 0; }
+.notif-format-badge { margin-left: 0.4rem; vertical-align: middle; font-size: 0.7rem; }
+.notif-format-label { display: block; }
+.notif-format-select { width: auto; min-width: 8rem; }
+.notif-format-hint { margin: 0.2rem 0 0.75rem; }
 .notif-add { margin-top: 0.5rem; }
 .notif-empty {
     display: flex;

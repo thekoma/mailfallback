@@ -57,12 +57,20 @@
 </p>
 
 {# (value, short badge label, badge class, full checkbox label) #}
-{% set event_options = [
+{% set problem_events = [
     ("needs_reauth", "Needs re-auth", "badge-warning", "Needs re-authentication"),
     ("sync_error", "Sync error", "badge-error", "Sync error"),
     ("sync_paused", "Paused", "badge-disabled", "Sync paused (budget / throttle)"),
     ("stale", "Stale", "badge-warning", "Stale (no successful sync for a long time)"),
 ] %}
+{% set activity_events = [
+    ("sync_completed", "Sync done", "badge-idle", "Sync completed"),
+    ("initial_sync_completed", "First backup", "badge-idle", "Initial sync completed"),
+    ("restore_completed", "Restore done", "badge-idle", "Restore completed"),
+    ("backup_completed", "Backup done", "badge-idle", "Backup completed"),
+    ("account_added", "Account added", "badge-admin", "Account added"),
+] %}
+{% set event_options = problem_events + activity_events %}
 
 {% if channels %}
 <div class="notif-cards">
@@ -72,6 +80,9 @@
             <div class="notif-card-id">
                 <span class="notif-label">{{ ch.label }}</span>
                 <code class="notif-url">{{ ch.masked_url }}</code>
+                {% if ch.payload_format == 'json' %}
+                <span class="badge badge-disabled notif-format-badge">JSON</span>
+                {% endif %}
             </div>
             <form method="post" action="/profile/notifications/{{ ch.id }}/toggle" class="inline-form">
                 <label class="notif-switch text-small">
@@ -118,13 +129,28 @@
                 <span class="text-muted text-small">— leave blank to keep the current one</span>
                 <input type="text" name="apprise_url" placeholder="Keep current ({{ ch.masked_url }})">
             </label>
-            <fieldset>
-                <legend>Events</legend>
-                {% for opt in event_options %}
-                <label><input type="checkbox" name="events" value="{{ opt[0] }}"
-                       {% if opt[0] in ch.events %}checked{% endif %}> {{ opt[3] }}</label>
-                {% endfor %}
-            </fieldset>
+            <div class="notif-event-groups">
+                <fieldset>
+                    <legend>Problems</legend>
+                    {% for opt in problem_events %}
+                    <label><input type="checkbox" name="events" value="{{ opt[0] }}"
+                           {% if opt[0] in ch.events %}checked{% endif %}> {{ opt[3] }}</label>
+                    {% endfor %}
+                </fieldset>
+                <fieldset>
+                    <legend>Activity</legend>
+                    {% for opt in activity_events %}
+                    <label><input type="checkbox" name="events" value="{{ opt[0] }}"
+                           {% if opt[0] in ch.events %}checked{% endif %}> {{ opt[3] }}</label>
+                    {% endfor %}
+                </fieldset>
+            </div>
+            <label class="notif-format-label">Format
+                <select name="payload_format" class="notif-format-select">
+                    <option value="text" {% if ch.payload_format != 'json' %}selected{% endif %}>Text</option>
+                    <option value="json" {% if ch.payload_format == 'json' %}selected{% endif %}>JSON</option>
+                </select>
+            </label>
             <div class="actions">
                 <button type="submit" class="icon-btn primary">
                     <i data-lucide="check" class="icon-sm"></i> Save changes
@@ -186,12 +212,28 @@
             </dl>
         </details>
 
-        <fieldset>
-            <legend>Events to notify on</legend>
-            {% for opt in event_options %}
-            <label><input type="checkbox" name="events" value="{{ opt[0] }}"> {{ opt[3] }}</label>
-            {% endfor %}
-        </fieldset>
+        <div class="notif-event-groups">
+            <fieldset>
+                <legend>Problems</legend>
+                {% for opt in problem_events %}
+                <label><input type="checkbox" name="events" value="{{ opt[0] }}"> {{ opt[3] }}</label>
+                {% endfor %}
+            </fieldset>
+            <fieldset>
+                <legend>Activity</legend>
+                {% for opt in activity_events %}
+                <label><input type="checkbox" name="events" value="{{ opt[0] }}"> {{ opt[3] }}</label>
+                {% endfor %}
+            </fieldset>
+        </div>
+
+        <label class="notif-format-label">Format
+            <select name="payload_format" class="notif-format-select">
+                <option value="text" selected>Text</option>
+                <option value="json">JSON</option>
+            </select>
+        </label>
+        <p class="text-muted text-small notif-format-hint">JSON sends a machine-readable body for webhooks / automations.</p>
 
         <button type="submit">
             <i data-lucide="plus" class="icon-md icon-inline"></i>Add channel
