@@ -186,6 +186,23 @@ class User(Base):
     )
 
 
+class NotificationChannel(Base):
+    __tablename__ = "notification_channels"
+
+    id = Column(String, primary_key=True, default=_new_uuid)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    label = Column(String, nullable=False)
+    # Apprise URL, Fernet-encrypted at rest (contains tokens). Encrypt/decrypt
+    # at the service layer, never store/return plaintext.
+    apprise_url = Column(Text, nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    # Event keys this channel receives: needs_reauth | sync_error | sync_paused | stale
+    events = Column(JSON, nullable=False, default=list, server_default="[]")
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    user = relationship("User", passive_deletes=True)
+
+
 class MailStore(Base):
     __tablename__ = "mail_stores"
 
@@ -255,6 +272,9 @@ class Account(Base):
     # Folder count from the same STATUS pass that fills total_messages — the
     # recap denominator (NULL = unknown until the next pass).
     initial_sync_total_folders = Column(Integer, nullable=True)
+    # Dedup marker: last problem event-key notified for this account (cleared
+    # on recovery). Used by notification_service to notify once per state.
+    last_notified_state = Column(String, nullable=True)
     store_id = Column(String, ForeignKey("mail_stores.id"), nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)
     suspended = Column(Boolean, nullable=False, default=False)
