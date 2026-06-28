@@ -121,6 +121,24 @@ document.addEventListener('click', function(e) {
     if (el) el.classList.remove('hidden');
 });
 
+/* === Click-to-copy ([data-copy]) === */
+
+document.addEventListener('click', function(e) {
+    var el = e.target.closest('[data-copy]');
+    if (!el) return;
+    var text = el.dataset.copy || el.textContent;
+    var flash = function() {
+        el.classList.add('copied');
+        showToast('Copied to clipboard', 'success');
+        setTimeout(function() { el.classList.remove('copied'); }, 1200);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(flash, function() { showToast('Copy failed', 'error'); });
+    } else {
+        showToast('Copy not supported in this browser', 'error');
+    }
+});
+
 document.addEventListener('change', function(e) {
     var input = e.target.closest('[data-toggle-target]');
     if (input) {
