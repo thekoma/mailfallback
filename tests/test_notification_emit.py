@@ -5,9 +5,22 @@ on each state transition, and clears the marker on clean completion."""
 import io
 from unittest.mock import patch
 
+import pytest
+
 from mailfallback.models import JobStatus, SyncJob
 from mailfallback.services import notification_service as ns
 from mailfallback.services import sync_worker
+
+
+@pytest.fixture(autouse=True)
+def _public_dns():
+    """Treat test hosts as publicly-resolvable so the SSRF guard doesn't 422
+    account creation. SSRF rejection is covered in test_ssrf_and_reserved_users."""
+    with patch(
+        "mailfallback.services.imap_check.socket.getaddrinfo",
+        return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+    ):
+        yield
 
 
 def _make_job(db_session, account):

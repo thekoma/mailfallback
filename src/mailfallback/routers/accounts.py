@@ -184,7 +184,17 @@ def update(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Authorize first, so an unauthorized caller gets 404 (not a 422 that would
+    # leak whether their injected host resolves).
+    if not account_service.get_account_for_modify(db, account_id, user):
+        raise HTTPException(status_code=404, detail="Account not found")
+
     updates = body.model_dump(exclude_unset=True)
+    if updates.get("imap_host"):
+        try:
+            validate_host_not_internal(updates["imap_host"])
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
     if user.role != UserRole.admin:
         updates.pop("enabled", None)
         updates.pop("suspended", None)

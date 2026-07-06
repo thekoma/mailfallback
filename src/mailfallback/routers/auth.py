@@ -284,8 +284,14 @@ async def oidc_callback(request: Request, db: Session = Depends(get_db)):
     if not sub or not isinstance(sub, str) or not sub.strip():
         raise HTTPException(status_code=400, detail="Invalid OIDC token: missing sub claim")
 
+    from mailfallback.services.dovecot_auth import TEMP_USER_PREFIX
+
     raw_username = userinfo.get("preferred_username") or userinfo.get("email", sub)
     username = re.sub(r"[^a-zA-Z0-9@._-]", "_", str(raw_username))[:255]
+    # Never let an IdP-supplied name collide with the reserved restore-user
+    # prefix — cleanup_temp_imap_users would later delete it as an orphan.
+    if username.startswith(TEMP_USER_PREFIX):
+        username = f"u{username}"
     groups = userinfo.get("groups", [])
 
     if (

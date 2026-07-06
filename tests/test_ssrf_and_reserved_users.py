@@ -1,0 +1,168 @@
+"""Security regressions from the deepsec full revalidation (2026-07-06).
+
+Covers the highest-severity remaining true-positives:
+- SSRF: account PATCH update must reject internal imap_host (accounts.py)
+- SSRF: validate_host_not_internal must reject unresolvable hosts + more ranges
+- SSRF: /api/sync/discover must reject non-hostname domains
+- Data loss: reserved _restore_ prefix cannot be taken by real users
+"""
+
+from unittest.mock import patch
+
+import pytest
+
+from mailfallback.models import UserRole
+from mailfallback.services.dovecot_auth import TEMP_USER_PREFIX
+from mailfallback.services.user_service import create_user
+
+
+def _login(client, username, password):
+    client.post("/api/auth/login", json={"username": username, "password": password})
+
+
+class TestValidateHostNotInternal:
+    def test_rejects_loopback(self):
+        from mailfallback.services.imap_check import validate_host_not_internal
+
+        with pytest.raises(ValueError, match="internal"):
+            validate_host_not_internal("127.0.0.1")
+
+    def test_rejects_cloud_metadata_ip(self):
+        from mailfallback.services.imap_check import validate_host_not_internal
+
+        with pytest.raises(ValueError, match="internal"):
+            validate_host_not_internal("169.254.169.254")
+
+    def test_rejects_cgnat_range(self):
+        """100.64.0.0/10 is carrier-grade NAT — not caught by is_private."""
+        from mailfallback.services.imap_check import validate_host_not_internal
+
+        with pytest.raises(ValueError, match="internal"):
+            validate_host_not_internal("100.64.0.1")
+
+    def test_rejects_unresolvable_host(self):
+        """gaierror must NOT be swallowed — an unresolvable host is rejected."""
+        import socket
+
+        from mailfallback.services.imap_check import validate_host_not_internal
+
+        with (
+            patch(
+                "mailfallback.services.imap_check.socket.getaddrinfo",
+                side_effect=socket.gaierror("nope"),
+            ),
+            pytest.raises(ValueError),
+        ):
+            validate_host_not_internal("does-not-resolve.invalid")
+
+    def test_allows_public_host(self):
+        from mailfallback.services.imap_check import validate_host_not_internal
+
+        with patch(
+            "mailfallback.services.imap_check.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+        ):
+            validate_host_not_internal("imap.example.com")  # must not raise
+
+
+class TestAccountUpdateSSRF:
+    def test_patch_rejects_internal_imap_host(self, client, db_session, default_store):
+        from mailfallback.services.account_service import assign_owner, create_account
+
+        user = create_user(db_session, "user1", "pass", UserRole.user, store_id=default_store.id)
+        account = create_account(
+            db_session, "Gmail", "imap.gmail.com", 993, "app_password", store=default_store
+        )
+        assign_owner(db_session, account.id, user.id)
+        _login(client, "user1", "pass")
+
+        resp = client.patch(f"/api/accounts/{account.id}", json={"imap_host": "127.0.0.1"})
+
+        assert resp.status_code == 422
+        db_session.refresh(account)
+        assert account.imap_host == "imap.gmail.com"
+
+    def test_patch_still_allows_public_imap_host(self, client, db_session, default_store):
+        from mailfallback.services.account_service import assign_owner, create_account
+
+        user = create_user(db_session, "user1", "pass", UserRole.user, store_id=default_store.id)
+        account = create_account(
+            db_session, "Gmail", "imap.gmail.com", 993, "app_password", store=default_store
+        )
+        assign_owner(db_session, account.id, user.id)
+        _login(client, "user1", "pass")
+
+        with patch(
+            "mailfallback.services.imap_check.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+        ):
+            resp = client.patch(
+                f"/api/accounts/{account.id}", json={"imap_host": "imap.fastmail.com"}
+            )
+
+        assert resp.status_code == 200
+        db_session.refresh(account)
+        assert account.imap_host == "imap.fastmail.com"
+
+
+class TestDiscoverDomainValidation:
+    def test_discover_rejects_ip_literal_domain(self, client, db_session, default_store):
+        create_user(db_session, "admin", "pass", UserRole.admin, store_id=default_store.id)
+        _login(client, "admin", "pass")
+
+        # An IP literal must never reach discover_provider's URL builder.
+        with patch("mailfallback.routers.sync.discover_provider") as mock_disc:
+            resp = client.get("/api/sync/discover/169.254.169.254")
+
+        assert resp.status_code == 422
+        mock_disc.assert_not_called()
+
+    def test_discover_rejects_non_hostname_domain(self, client, db_session, default_store):
+        create_user(db_session, "admin", "pass", UserRole.admin, store_id=default_store.id)
+        _login(client, "admin", "pass")
+
+        with patch("mailfallback.routers.sync.discover_provider") as mock_disc:
+            resp = client.get("/api/sync/discover/not_a_valid_host")
+
+        assert resp.status_code == 422
+        mock_disc.assert_not_called()
+
+    def test_discover_allows_plain_domain(self, client, db_session, default_store):
+        create_user(db_session, "admin", "pass", UserRole.admin, store_id=default_store.id)
+        _login(client, "admin", "pass")
+
+        with patch("mailfallback.routers.sync.discover_provider", return_value=None) as mock_disc:
+            resp = client.get("/api/sync/discover/gmail.com")
+
+        assert resp.status_code == 200
+        mock_disc.assert_called_once_with("gmail.com")
+
+
+class TestReservedRestoreUsername:
+    def test_create_user_rejects_reserved_prefix(self, db_session, default_store):
+        with pytest.raises(ValueError, match="reserved"):
+            create_user(
+                db_session,
+                f"{TEMP_USER_PREFIX}team",
+                "pass",
+                UserRole.user,
+                store_id=default_store.id,
+            )
+
+    def test_create_temp_imap_user_still_uses_prefix(self, db_session, default_store):
+        """The internal helper must keep working — it isn't a user-chosen name."""
+        from mailfallback.models import Account
+        from mailfallback.services.dovecot_auth import create_temp_imap_user
+
+        acct = Account(
+            name="t",
+            imap_host="imap.test.com",
+            imap_port=993,
+            maildir_path="/data/mailboxes/t",
+            store_id=default_store.id,
+        )
+        db_session.add(acct)
+        db_session.commit()
+
+        username, _ = create_temp_imap_user(db_session, [acct.id])
+        assert username.startswith(TEMP_USER_PREFIX)

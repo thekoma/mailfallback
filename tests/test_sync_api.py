@@ -1,9 +1,22 @@
 # tests/test_sync_api.py
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from mailfallback.models import UserRole
 from mailfallback.services.account_service import assign_owner, create_account
 from mailfallback.services.user_service import create_user
+
+
+@pytest.fixture(autouse=True)
+def _public_dns():
+    """Treat test hosts as publicly-resolvable so the SSRF guard doesn't 422
+    them. SSRF rejection is covered explicitly in test_ssrf_and_reserved_users."""
+    with patch(
+        "mailfallback.services.imap_check.socket.getaddrinfo",
+        return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+    ):
+        yield
 
 
 def _login(client, username, password):
