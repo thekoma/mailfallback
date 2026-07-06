@@ -255,6 +255,37 @@ def test_notify_users_resolves_given_user_ids(db_session, default_store):
     assert sent_users == [user_a.id]  # only user_a's channel fires
 
 
+def test_send_thread_receives_snapshot_not_orm_channel(db_session, default_store):
+    """The send thread must get a plain snapshot, never the ORM channel —
+    a commit on the caller thread would otherwise expire the instance and the
+    daemon thread would refresh it through the (non-thread-safe) session."""
+    from mailfallback.services.account_service import assign_owner, create_account
+    from mailfallback.services.user_service import create_user
+
+    user = create_user(db_session, "u6", "p", UserRole.user, store_id=default_store.id)
+    acct = create_account(db_session, "G6", "imap.gmail.com", 993, "oauth2", store=default_store)
+    assign_owner(db_session, acct.id, user.id)
+    db_session.add(_channel(user.id, ["sync_completed"], payload_format="json"))
+    db_session.commit()
+
+    received = []
+    with (
+        patch.object(ns.threading, "Thread", _SyncThread),
+        patch.object(ns, "send_to_channel", lambda ch, t, b, **kw: received.append(ch) or True),
+    ):
+        ns.notify_account_event(db_session, acct, "sync_completed", "t", "b")
+
+    assert len(received) == 1
+    snap = received[0]
+    assert not isinstance(snap, NotificationChannel)
+    # the snapshot must carry everything send_to_channel reads
+    assert snap.payload_format == "json"
+    assert snap.events == ["sync_completed"]
+    from mailfallback.security import decrypt_credentials
+
+    assert decrypt_credentials(snap.apprise_url, settings.secret_key) == "ntfy://host/topic"
+
+
 def test_notify_users_best_effort_on_failure(db_session, default_store):
     """A raising send_to_channel inside notify_users must not propagate."""
     from mailfallback.services.user_service import create_user
