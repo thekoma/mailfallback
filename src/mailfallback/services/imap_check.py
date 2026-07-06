@@ -8,7 +8,12 @@ import socket
 _CGNAT_V4 = ipaddress.ip_network("100.64.0.0/10")
 
 
-def _is_internal_ip(ip: ipaddress._BaseAddress) -> bool:
+def _is_internal_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    # Unwrap IPv4-mapped IPv6 (::ffff:a.b.c.d) so an attacker-controlled AAAA
+    # record can't smuggle an internal IPv4 past the checks; also makes the
+    # classification independent of per-version is_private unwrapping quirks.
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
     return (
         ip.is_private
         or ip.is_loopback

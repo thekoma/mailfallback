@@ -40,6 +40,20 @@ class TestValidateHostNotInternal:
         with pytest.raises(ValueError, match="internal"):
             validate_host_not_internal("100.64.0.1")
 
+    def test_rejects_ipv4_mapped_internal(self):
+        """An AAAA record can return the IPv4-mapped form of an internal IP."""
+        from mailfallback.services.imap_check import validate_host_not_internal
+
+        for mapped in ("::ffff:127.0.0.1", "::ffff:100.64.0.1", "::ffff:169.254.169.254"):
+            with (
+                patch(
+                    "mailfallback.services.imap_check.socket.getaddrinfo",
+                    return_value=[(10, 1, 6, "", (mapped, 0, 0, 0))],
+                ),
+                pytest.raises(ValueError, match="internal"),
+            ):
+                validate_host_not_internal("rebind.example.com")
+
     def test_rejects_unresolvable_host(self):
         """gaierror must NOT be swallowed — an unresolvable host is rejected."""
         import socket
@@ -148,6 +162,31 @@ class TestReservedRestoreUsername:
                 UserRole.user,
                 store_id=default_store.id,
             )
+
+    def test_admin_create_user_reserved_prefix_flashes_not_500(
+        self, client, db_session, default_store
+    ):
+        create_user(db_session, "admin", "pass", UserRole.admin, store_id=default_store.id)
+        _login(client, "admin", "pass")
+
+        resp = client.post(
+            "/admin/users/new",
+            data={
+                "username": f"{TEMP_USER_PREFIX}evil",
+                "password": "longenoughpassword",
+                "role": "user",
+                "store_id": default_store.id,
+            },
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        from mailfallback.models import User
+
+        assert (
+            db_session.query(User).filter(User.username == f"{TEMP_USER_PREFIX}evil").first()
+            is None
+        )
 
     def test_create_temp_imap_user_still_uses_prefix(self, db_session, default_store):
         """The internal helper must keep working — it isn't a user-chosen name."""
