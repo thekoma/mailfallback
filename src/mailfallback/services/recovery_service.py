@@ -210,16 +210,24 @@ def create_recovery(
     return recovery
 
 
-def delete_recovery(db: Session, recovery_id: str) -> None:
+def delete_recovery(db: Session, recovery_id: str, account_id: str | None = None) -> bool:
     """Mark deleting → rm -rf the on-disk tree → drop the row.
 
-    Idempotent: if the row is already gone, succeed silently. The on-disk
-    parent directory (.offsite-restore/<account-id>-<timestamp>/) is removed
-    too — restic restore's outer wrapper directory.
+    Idempotent: if the row is already gone, succeed silently (returns False so
+    callers don't report a deletion that never happened). The on-disk parent
+    directory (.offsite-restore/<account-id>-<timestamp>/) is removed too —
+    restic restore's outer wrapper directory.
+
+    account_id scopes the lookup: callers acting on behalf of a user MUST pass
+    the account they authorized, so a recovery belonging to another account is
+    treated as not-found. Internal cleanup (TTL sweep) may omit it.
     """
-    recovery = db.query(Recovery).filter(Recovery.id == recovery_id).first()
+    query = db.query(Recovery).filter(Recovery.id == recovery_id)
+    if account_id is not None:
+        query = query.filter(Recovery.account_id == account_id)
+    recovery = query.first()
     if not recovery:
-        return
+        return False
     recovery.status = RecoveryStatus.deleting
     db.commit()
 
@@ -241,6 +249,7 @@ def delete_recovery(db: Session, recovery_id: str) -> None:
 
     db.delete(recovery)
     db.commit()
+    return True
 
 
 def list_recoveries_for_account(db: Session, account_id: str) -> list[Recovery]:

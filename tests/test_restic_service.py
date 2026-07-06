@@ -347,6 +347,18 @@ class TestPasswordOverride:
         env = mock_run.call_args.args[1]
         assert env["RESTIC_PASSWORD"] == "attpass"  # pragma: allowlist secret
 
+    @patch("mailfallback.services.restic_service._run_restic")
+    def test_restore_snapshot_id_after_separator(self, mock_run, s3_destination):
+        """snapshot_id must sit after `--` so a flag-like value can't be parsed as an option."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        restic_service.restore_snapshot(s3_destination, "acct", "ab12", "/tmp/x")
+
+        args = mock_run.call_args.args[0]
+        assert "--" in args
+        assert args[args.index("--") + 1] == "ab12"
+        assert args.index("--target") < args.index("--")
+
 
 class TestBackupTags:
     @patch("mailfallback.services.restic_service._run_restic")

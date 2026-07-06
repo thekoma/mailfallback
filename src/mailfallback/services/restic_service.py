@@ -186,8 +186,9 @@ def restore_snapshot(
 ) -> dict:
     """Restore a specific snapshot to the target path."""
     env = build_env(destination, account_id, restic_password_enc=restic_password_enc)
+    # `--` keeps a flag-like snapshot_id from being parsed as a restic option.
     result = _run_restic(
-        ["restore", snapshot_id, "--target", target_path],
+        ["restore", "--target", target_path, "--", snapshot_id],
         env,
         _is_insecure(destination),
     )
