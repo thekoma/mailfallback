@@ -30,20 +30,21 @@ router = APIRouter(tags=["ui"])
 # Restic prefixes are single path segments (account UUIDs, the config prefix,
 # or operator-named directories). Anything else could escape the repo root in
 # build_repo_url's os.path.join for local backends.
-_VALID_PREFIX_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_VALID_PREFIX_RE = re.compile(r"[A-Za-z0-9._-]+")
 
 
 def _is_valid_prefix(prefix: str) -> bool:
-    return bool(_VALID_PREFIX_RE.match(prefix)) and prefix not in (".", "..")
+    # fullmatch, not match with $: `$` matches before a trailing newline.
+    return bool(_VALID_PREFIX_RE.fullmatch(prefix)) and prefix not in (".", "..")
 
 
-# Restic snapshot ids are hex short/full ids, or the literal "latest". Anything
-# else must never reach the restic CLI as an argument.
-_VALID_SNAPSHOT_ID_RE = re.compile(r"^(?:[0-9a-fA-F]{8,64}|latest)$")
+# Restic snapshot ids are lowercase-hex short/full ids, or the literal
+# "latest". Anything else must never reach the restic CLI as an argument.
+_VALID_SNAPSHOT_ID_RE = re.compile(r"[0-9a-f]{8,64}|latest")
 
 
 def _is_valid_snapshot_id(snapshot_id: str) -> bool:
-    return bool(_VALID_SNAPSHOT_ID_RE.match(snapshot_id))
+    return bool(_VALID_SNAPSHOT_ID_RE.fullmatch(snapshot_id))
 
 
 # --- Backup Destination admin routes ---
@@ -1078,7 +1079,9 @@ def account_recovery_delete(
     if not account:
         return RedirectResponse("/", status_code=303)
 
-    delete_recovery(db, recovery_id, account_id=account.id)
+    if not delete_recovery(db, recovery_id, account_id=account.id):
+        request.session["flash_error"] = "Recovery not found"
+        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
     log_action(
         db,

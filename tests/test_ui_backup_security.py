@@ -14,6 +14,7 @@ from mailfallback.models import (
     RecoveryStatus,
     Repository,
     RepositoryAttachment,
+    User,
     UserRole,
 )
 from mailfallback.services.user_service import create_user
@@ -65,6 +66,42 @@ class TestRecoveryDeleteScoping:
         assert resp.status_code == 303
         assert db_session.query(Recovery).filter(Recovery.id == rec_id).first() is not None
 
+    def test_cross_account_delete_attempt_not_audited_as_success(
+        self, client, db_session, default_store
+    ):
+        """A delete that did nothing must not produce a recovery_delete audit row."""
+        from mailfallback.models import AuditLog
+
+        _login_admin(client, db_session, default_store)
+        mine = _mk_account(db_session, default_store, "mine")
+        other = _mk_account(db_session, default_store, "other")
+        rec_id = _mk_recovery(db_session, other.id)
+
+        client.post(f"/accounts/{mine.id}/recoveries/{rec_id}/delete", follow_redirects=False)
+
+        logs = db_session.query(AuditLog).filter(AuditLog.action == "account.recovery_delete").all()
+        assert logs == []
+
+    def test_non_admin_owner_cannot_delete_other_accounts_recovery(
+        self, client, db_session, default_store
+    ):
+        """The realistic IDOR: a plain user owning account A targets account B's recovery."""
+        create_user(db_session, "bob", "pass", UserRole.user, store_id=default_store.id)
+        mine = _mk_account(db_session, default_store, "mine")
+        other = _mk_account(db_session, default_store, "other")
+        user = db_session.query(User).filter(User.username == "bob").first()
+        mine.owners.append(user)
+        db_session.commit()
+        client.post("/api/auth/login", json={"username": "bob", "password": "pass"})
+        rec_id = _mk_recovery(db_session, other.id)
+
+        resp = client.post(
+            f"/accounts/{mine.id}/recoveries/{rec_id}/delete", follow_redirects=False
+        )
+
+        assert resp.status_code == 303
+        assert db_session.query(Recovery).filter(Recovery.id == rec_id).first() is not None
+
     def test_still_deletes_own_recovery(self, client, db_session, default_store):
         _login_admin(client, db_session, default_store)
         mine = _mk_account(db_session, default_store, "mine")
@@ -88,6 +125,21 @@ class TestSnapshotIdValidation:
         acct = _mk_account(db_session, default_store, "a1")
 
         resp = client.post(f"/accounts/{acct.id}/backup/restore/--use-fuse", follow_redirects=False)
+
+        assert resp.status_code == 303
+        mock_create.assert_not_called()
+
+    @patch("mailfallback.services.recovery_service.create_recovery")
+    def test_backup_restore_rejects_trailing_newline(
+        self, mock_create, client, db_session, default_store
+    ):
+        """`$` matches before a trailing newline — the check must use fullmatch (%0A bypass)."""
+        _login_admin(client, db_session, default_store)
+        acct = _mk_account(db_session, default_store, "a1")
+
+        resp = client.post(
+            f"/accounts/{acct.id}/backup/restore/ab12cd34%0A", follow_redirects=False
+        )
 
         assert resp.status_code == 303
         mock_create.assert_not_called()
