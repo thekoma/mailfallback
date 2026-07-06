@@ -212,7 +212,7 @@ class TestContents:
         _login_admin(client, db_session, default_store)
         repo = _mk_repo(client, db_session, default_store)
         mock_restic.list_snapshots.return_value = [
-            {"short_id": "ab12", "time": "2026-06-09T03:00:00Z"}
+            {"short_id": "ab12cd34", "time": "2026-06-09T03:00:00Z"}
         ]
 
         resp = client.get(f"/admin/backup/{repo.id}/contents/ghost-uuid/detail")
@@ -364,7 +364,7 @@ class TestAttachmentRestore:
         )
 
         resp = client.post(
-            f"/accounts/{acc.id}/backup/attachments/{att.id}/restore/ab12",
+            f"/accounts/{acc.id}/backup/attachments/{att.id}/restore/ab12cd34",
             follow_redirects=False,
         )
 
@@ -381,7 +381,7 @@ class TestAttachmentRestore:
         acc, _, _ = self._attach(client, db_session, default_store)
 
         resp = client.post(
-            f"/accounts/{acc.id}/backup/attachments/bogus-id/restore/ab12",
+            f"/accounts/{acc.id}/backup/attachments/bogus-id/restore/ab12cd34",
             follow_redirects=False,
         )
 
@@ -397,7 +397,7 @@ class TestAttachmentRestore:
         other = _mk_account(db_session, default_store, name="acc2", path="/data/m/acc2")
 
         resp = client.post(
-            f"/accounts/{other.id}/backup/attachments/{att.id}/restore/ab12",
+            f"/accounts/{other.id}/backup/attachments/{att.id}/restore/ab12cd34",
             follow_redirects=False,
         )
 
@@ -411,7 +411,7 @@ class TestAttachmentRestore:
         """A policy-less account with an attachment still gets a snapshots panel."""
         acc, _, att = self._attach(client, db_session, default_store)
         mock_list.return_value = [
-            {"short_id": "ab12", "time": "2026-06-01T00:00:00Z", "hostname": "mfb"}
+            {"short_id": "ab12cd34", "time": "2026-06-01T00:00:00Z", "hostname": "mfb"}
         ]
 
         resp = client.get(f"/accounts/{acc.id}/backup/snapshots")
@@ -419,7 +419,7 @@ class TestAttachmentRestore:
         assert resp.status_code == 200
         assert "Attached:" in resp.text
         assert "ghost-uuid" in resp.text
-        assert f"/accounts/{acc.id}/backup/attachments/{att.id}/restore/ab12" in resp.text
+        assert f"/accounts/{acc.id}/backup/attachments/{att.id}/restore/ab12cd34" in resp.text
 
     def test_account_page_shows_snapshots_panel_without_policy(
         self, client, db_session, default_store

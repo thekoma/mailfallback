@@ -37,6 +37,15 @@ def _is_valid_prefix(prefix: str) -> bool:
     return bool(_VALID_PREFIX_RE.match(prefix)) and prefix not in (".", "..")
 
 
+# Restic snapshot ids are hex short/full ids, or the literal "latest". Anything
+# else must never reach the restic CLI as an argument.
+_VALID_SNAPSHOT_ID_RE = re.compile(r"^(?:[0-9a-fA-F]{8,64}|latest)$")
+
+
+def _is_valid_snapshot_id(snapshot_id: str) -> bool:
+    return bool(_VALID_SNAPSHOT_ID_RE.match(snapshot_id))
+
+
 # --- Backup Destination admin routes ---
 
 
@@ -939,6 +948,10 @@ def account_backup_restore(
     if not account:
         return RedirectResponse("/", status_code=303)
 
+    if not _is_valid_snapshot_id(snapshot_id):
+        request.session["flash_error"] = "Invalid snapshot id"
+        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+
     try:
         recovery = create_recovery(db, account.id, snapshot_id)
     except ValueError as e:
@@ -990,6 +1003,10 @@ def account_attachment_restore(
     account = get_account(db, account_id, user)
     if not account:
         return RedirectResponse("/", status_code=303)
+
+    if not _is_valid_snapshot_id(snapshot_id):
+        request.session["flash_error"] = "Invalid snapshot id"
+        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
     att = (
         db.query(RepositoryAttachment)
@@ -1061,7 +1078,7 @@ def account_recovery_delete(
     if not account:
         return RedirectResponse("/", status_code=303)
 
-    delete_recovery(db, recovery_id)
+    delete_recovery(db, recovery_id, account_id=account.id)
 
     log_action(
         db,
