@@ -2,6 +2,7 @@
 import json
 import logging
 import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
@@ -41,8 +42,31 @@ def account_info(account: Account) -> dict:
     return info
 
 
+@dataclass(frozen=True)
+class ChannelSnapshot:
+    """Plain (thread-safe) copy of a NotificationChannel's send-relevant
+    fields. Built on the caller's thread while the session is attached —
+    like account_info, never pass the ORM object into a send thread."""
+
+    id: str
+    user_id: str
+    apprise_url: str
+    payload_format: str
+    events: list
+
+
+def channel_snapshot(channel: NotificationChannel) -> ChannelSnapshot:
+    return ChannelSnapshot(
+        id=channel.id,
+        user_id=channel.user_id,
+        apprise_url=channel.apprise_url,
+        payload_format=channel.payload_format,
+        events=list(channel.events or []),
+    )
+
+
 def send_to_channel(
-    channel: NotificationChannel,
+    channel: NotificationChannel | ChannelSnapshot,
     title: str,
     body: str,
     *,
@@ -111,7 +135,7 @@ def _send_to_users(
         for ch in targets:
             threading.Thread(
                 target=send_to_channel,
-                args=(ch, title, body),
+                args=(channel_snapshot(ch), title, body),
                 kwargs={
                     "event_key": event_key,
                     "account": account,
