@@ -3,16 +3,44 @@ import imaplib
 import ipaddress
 import socket
 
+# 100.64.0.0/10 (RFC 6598 carrier-grade NAT) is NOT covered by
+# ipaddress.is_private, so check it explicitly.
+_CGNAT_V4 = ipaddress.ip_network("100.64.0.0/10")
+
+
+def _is_internal_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    # Unwrap IPv4-mapped IPv6 (::ffff:a.b.c.d) so an attacker-controlled AAAA
+    # record can't smuggle an internal IPv4 past the checks; also makes the
+    # classification independent of per-version is_private unwrapping quirks.
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+        or (ip.version == 4 and ip in _CGNAT_V4)
+    )
+
 
 def validate_host_not_internal(host: str) -> None:
-    """Reject connections to private/loopback/link-local addresses."""
+    """Reject connections to private/loopback/link-local/CGNAT addresses.
+
+    Raises ValueError if the host resolves to an internal address OR cannot be
+    resolved at all — an unresolvable host must be rejected, not waved through
+    (a swallowed gaierror was an SSRF bypass: the later connection re-resolves).
+    """
     try:
         infos = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-    except socket.gaierror:
-        return  # let the actual connection fail with a proper error
+    except socket.gaierror as e:
+        raise ValueError(f"Host could not be resolved: {host}") from e
+    if not infos:
+        raise ValueError(f"Host could not be resolved: {host}")
     for _family, _, _, _, sockaddr in infos:
         ip = ipaddress.ip_address(sockaddr[0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+        if _is_internal_ip(ip):
             raise ValueError(f"Connections to private/internal addresses are not allowed: {host}")
 
 
