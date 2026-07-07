@@ -77,6 +77,7 @@ nav:
     - Repositories (off-site backup): admin-guide/repositories.md
     - Groups: admin-guide/groups.md
     - System Settings: admin-guide/settings.md
+    - Sync Budget & Watchdog: admin-guide/sync-budget.md
     - Audit Log: admin-guide/audit.md
     - SSO / OIDC: admin-guide/sso.md
     - OAuth Providers: admin-guide/oauth-providers.md
