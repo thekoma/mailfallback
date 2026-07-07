@@ -67,6 +67,23 @@ def request_cancel(job_id: str) -> None:
     _cancel_flags.add(job_id)
 
 
+def _finalize_running_job(job, was_cancelled: bool) -> None:
+    """Decide the terminal status of a still-`running` job.
+
+    A cancel requested during the run wins over completion, so the worker can
+    never overwrite an intended `cancelled` with `completed`.
+    """
+    if was_cancelled:
+        job.status = JobStatus.cancelled
+    elif job.restored_messages == 0 and job.failed_messages > 0:
+        job.status = JobStatus.failed
+        job.error = f"All {job.failed_messages} messages failed"
+    else:
+        job.status = JobStatus.completed
+        if job.failed_messages > 0:
+            job.error = f"{job.failed_messages} messages failed"
+
+
 def execute_restore_job(db: Session, job_id: str) -> None:
     logger.info("Starting restore job %s", job_id)
     job = db.query(RestoreJob).filter(RestoreJob.id == job_id).first()
@@ -197,6 +214,10 @@ def execute_restore_job(db: Session, job_id: str) -> None:
     except Exception as e:
         _fail_job(db, job, str(e))
     finally:
+        # Capture the cancel request BEFORE discarding the flag: a cancel that
+        # lands while the last batch is finishing must still win, otherwise the
+        # completion branch below would promote the job to `completed`.
+        was_cancelled = job_id in _cancel_flags
         _cancel_flags.discard(job_id)
         for conn in (src_conn, tgt_conn):
             if conn:
@@ -217,13 +238,7 @@ def execute_restore_job(db: Session, job_id: str) -> None:
             with contextlib.suppress(Exception):
                 db.rollback()
         if job.status == JobStatus.running:
-            if job.restored_messages == 0 and job.failed_messages > 0:
-                job.status = JobStatus.failed
-                job.error = f"All {job.failed_messages} messages failed"
-            else:
-                job.status = JobStatus.completed
-                if job.failed_messages > 0:
-                    job.error = f"{job.failed_messages} messages failed"
+            _finalize_running_job(job, was_cancelled)
             job.completed_at = datetime.now(UTC)
         db.commit()
 

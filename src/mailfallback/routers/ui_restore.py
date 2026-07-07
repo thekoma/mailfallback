@@ -593,10 +593,12 @@ def _build_search_criteria(query, search_in, type_filter, date_since, date_befor
     if type_filter in _TYPE_MAP:
         criteria.extend(_TYPE_MAP[type_filter])
 
-    if date_since:
-        criteria.extend(["SINCE", _to_imap_date(date_since)])
-    if date_before:
-        criteria.extend(["BEFORE", _to_imap_date(date_before)])
+    since = _to_imap_date(date_since) if date_since else None
+    if since:
+        criteria.extend(["SINCE", since])
+    before = _to_imap_date(date_before) if date_before else None
+    if before:
+        criteria.extend(["BEFORE", before])
 
     return criteria if criteria else ["ALL"]
 
@@ -627,7 +629,12 @@ def _build_or_group(fields, quoted_word):
 def _to_imap_date(iso_date):
     from datetime import datetime
 
-    dt = datetime.strptime(iso_date, "%Y-%m-%d")
+    # Return None on malformed input so the caller drops the SINCE/BEFORE
+    # criterion instead of letting a ValueError silently empty all results.
+    try:
+        dt = datetime.strptime(iso_date, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return None
     months = [
         "Jan",
         "Feb",
@@ -720,6 +727,11 @@ def restore_progress_partial(
         return HTMLResponse("")
 
     job = get_restore_job(db, job_id)
+    # Scope to the job's source account — otherwise any authenticated user could
+    # poll another tenant's progress counts and error string (which leaks the
+    # target IMAP host and verbatim auth-failure text).
+    if job and not get_account(db, job.source_account_id, user):
+        return HTMLResponse("")
     finished = job and job.status.value in ("completed", "failed", "cancelled")
 
     return templates.TemplateResponse(

@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 from mailfallback.config import settings
 from mailfallback.db import SessionLocal
 from mailfallback.models import Account, JobStatus, SyncJob, SyncState
-from mailfallback.security import decrypt_credentials
 from mailfallback.services import index_service, sync_budget, sync_failures
 from mailfallback.services.mbsync_config import (
     channel_name,
@@ -645,7 +644,9 @@ def execute_sync_job(db: Session, job_id: str) -> None:
     token_file = None
     status_access_token = None
     if account.credentials:
-        creds = decrypt_credentials(account.credentials, settings.secret_key)
+        from mailfallback.services.account_service import decrypt_account_credentials
+
+        creds = decrypt_account_credentials(db, account)
         if account.auth_type.value == "oauth2":
             access_token, terminal = _refresh_oauth_token(creds, db, account)
             if not access_token:

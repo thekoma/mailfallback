@@ -1,6 +1,7 @@
 # src/mailfallback/routers/ui.py
 import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -17,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ui"])
 
-templates = Jinja2Templates(directory="src/mailfallback/templates")
+# __file__-relative so templates resolve regardless of the process CWD
+# (mirrors the static mount in app.py); a relative path breaks packaged installs.
+templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
 def _get_session_user(request: Request, db: Session) -> User | None:
@@ -202,7 +205,9 @@ def login_page(request: Request):
 @router.post("/login")
 async def login_submit(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
-    user = authenticate_user(db, form["username"], form["password"])
+    username = form.get("username", "")
+    password = form.get("password", "")
+    user = authenticate_user(db, username, password) if username and password else None
     if not user:
         return templates.TemplateResponse(
             request=request,

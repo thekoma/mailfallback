@@ -18,10 +18,17 @@ class AccountExport(BaseModel):
     email_address: str = ""
     imap_host: str
     imap_port: int
-    auth_type: str
-    maildir_path: str
+    auth_type: AuthType
+    tls_type: str = "IMAPS"
+    imap_user: str | None = None
+    provider: str = "other"
+    extra_config: str | None = None
+    enabled: bool = True
     sync_schedule: str | None
     store_id: str | None = None
+    # Accepted for backward-compatible imports but ignored: the path is always
+    # derived from the target store, never trusted from the payload.
+    maildir_path: str | None = None
 
 
 class ConfigImport(BaseModel):
@@ -48,8 +55,13 @@ def export_config(
                 "imap_host": a.imap_host,
                 "imap_port": a.imap_port,
                 "auth_type": a.auth_type.value,
-                "maildir_path": a.maildir_path,
+                "tls_type": a.tls_type,
+                "imap_user": a.imap_user,
+                "provider": a.provider,
+                "extra_config": a.extra_config,
+                "enabled": a.enabled,
                 "sync_schedule": a.sync_schedule,
+                "store_id": a.store_id,
             }
             for a in accounts
         ]
@@ -72,10 +84,6 @@ def import_config(
             except ValueError as e:
                 errors.append({"index": idx, "name": acc_data.name, "error": str(e)})
                 continue
-            valid_auth_types = {t.value for t in AuthType}
-            if acc_data.auth_type not in valid_auth_types:
-                errors.append({"index": idx, "name": acc_data.name, "error": "Invalid auth_type"})
-                continue
             if not (1 <= acc_data.imap_port <= 65535):
                 errors.append({"index": idx, "name": acc_data.name, "error": "Invalid imap_port"})
                 continue
@@ -91,6 +99,11 @@ def import_config(
                 imap_host=acc_data.imap_host,
                 imap_port=acc_data.imap_port,
                 auth_type=acc_data.auth_type,
+                tls_type=acc_data.tls_type,
+                imap_user=acc_data.imap_user,
+                provider=acc_data.provider,
+                extra_config=acc_data.extra_config,
+                enabled=acc_data.enabled,
                 maildir_path="pending",
                 sync_schedule=acc_data.sync_schedule,
                 store_id=store_id,

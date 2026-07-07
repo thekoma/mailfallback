@@ -505,10 +505,9 @@ class TestImportValidation:
                 ]
             },
         )
-        data = resp.json()
-        assert data["imported"] == 0
-        assert len(data["errors"]) == 1
-        assert "auth_type" in data["errors"][0]["error"].lower()
+        # auth_type is now a typed enum on the request model: Pydantic rejects
+        # the whole payload with 422 instead of a per-item error.
+        assert resp.status_code == 422
 
     def test_import_rejects_invalid_port(self, client, db_session, default_store):
         _login(client, db_session, default_store)
