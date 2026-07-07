@@ -5,7 +5,11 @@ from sqlalchemy.orm import Session, selectinload
 
 from mailfallback.config import settings
 from mailfallback.models import Account, MailStore, User, UserRole, account_groups, group_members
-from mailfallback.security import decrypt_credentials, encrypt_credentials
+from mailfallback.security import (
+    decrypt_credentials,
+    encrypt_credentials,
+    is_legacy_encrypted,
+)
 from mailfallback.services.scheduler import refresh_scheduler
 from mailfallback.services.store_service import derive_maildir_path
 
@@ -174,4 +178,10 @@ def get_account_credentials(db: Session, account_id: str) -> str | None:
     account = db.query(Account).filter(Account.id == account_id).first()
     if not account or not account.credentials:
         return None
-    return decrypt_credentials(account.credentials, settings.secret_key)
+    plaintext = decrypt_credentials(account.credentials, settings.secret_key)
+    # Self-heal: rewrite legacy (unsalted-SHA256) ciphertext with the modern
+    # PBKDF2 KDF so the brute-forceable path drains out of the DB on read.
+    if is_legacy_encrypted(account.credentials, settings.secret_key):
+        account.credentials = encrypt_credentials(plaintext, settings.secret_key)
+        db.commit()
+    return plaintext

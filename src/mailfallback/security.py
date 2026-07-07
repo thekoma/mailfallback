@@ -44,3 +44,21 @@ def decrypt_credentials(encrypted: str, secret_key: str) -> str:
         plaintext = f_legacy.decrypt(encrypted.encode()).decode()
         logger.warning("Legacy KDF used for decryption — credentials should be re-encrypted")
         return plaintext
+
+
+def is_legacy_encrypted(encrypted: str, secret_key: str) -> bool:
+    """True if the ciphertext was produced by the weak unsalted-SHA256 KDF.
+
+    Callers with the persisted row should re-encrypt it (see
+    account_service.get_account_credentials) so the brute-forceable legacy path
+    drains out of the database over time.
+    """
+    try:
+        Fernet(_derive_fernet_key(secret_key)).decrypt(encrypted.encode())
+        return False
+    except InvalidToken:
+        try:
+            Fernet(_derive_fernet_key_legacy(secret_key)).decrypt(encrypted.encode())
+            return True
+        except InvalidToken:
+            return False
