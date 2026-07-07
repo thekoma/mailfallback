@@ -633,6 +633,24 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             db.commit()
             return
 
+    # Defense-in-depth against DNS rebinding: an account host validated at
+    # create/edit time can later resolve to an internal address. Re-validate
+    # here so both mbsync and the connect_imap helpers below refuse to reach
+    # internal services. (The residual TOCTOU between this check and mbsync's
+    # own resolution is unavoidable without pinning, which would break TLS.)
+    from mailfallback.services.imap_check import validate_host_not_internal
+
+    try:
+        validate_host_not_internal(account.imap_host)
+    except ValueError as e:
+        job.status = JobStatus.failed
+        job.log = f"Sync blocked: {e}"
+        job.completed_at = datetime.now(UTC)
+        account.sync_state = SyncState.error
+        account.last_error = str(e)
+        db.commit()
+        return
+
     job.status = JobStatus.running
     job.started_at = datetime.now(UTC)
     account.sync_state = SyncState.syncing

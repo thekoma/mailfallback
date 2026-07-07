@@ -123,6 +123,37 @@ class TestResolvePublicIpPinning:
         assert resp.json()["ok"] is False
 
 
+class TestSyncTimeRebindGuard:
+    def test_sync_blocked_when_host_resolves_internal(self, db_session, default_store):
+        """Defense-in-depth: a sync whose account host resolves internal is failed."""
+        from mailfallback.models import Account, JobStatus, SyncJob
+        from mailfallback.services.sync_worker import execute_sync_job
+
+        account = Account(
+            name="Rebind",
+            imap_host="rebind.example.com",
+            imap_port=993,
+            auth_type="app_password",
+            maildir_path=f"{default_store.path}/rebind",
+            store_id=default_store.id,
+        )
+        db_session.add(account)
+        db_session.commit()
+        job = SyncJob(account_id=account.id, source="manual", status=JobStatus.pending)
+        db_session.add(job)
+        db_session.commit()
+
+        with patch(
+            "mailfallback.services.imap_check.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("169.254.169.254", 0))],
+        ):
+            execute_sync_job(db_session, job.id)
+
+        db_session.refresh(job)
+        assert job.status == JobStatus.failed
+        assert "internal" in (job.log or "")
+
+
 class TestAccountUpdateSSRF:
     def test_patch_rejects_internal_imap_host(self, client, db_session, default_store):
         from mailfallback.services.account_service import assign_owner, create_account
