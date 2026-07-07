@@ -87,3 +87,4 @@ nav:
     - Dovecot Integration: architecture/dovecot.md
     - FTS & Tika: architecture/fts-tika.md
     - Data Model: architecture/data-model.md
+    - Security Model: architecture/security.md
