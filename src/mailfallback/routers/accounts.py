@@ -80,6 +80,7 @@ def create(
             port=body.imap_port,
             username=body.email_address,
             password=body.credentials,
+            pin_public_ip=True,
         )
         if not result["ok"]:
             raise HTTPException(status_code=422, detail=f"Connection failed: {result['message']}")

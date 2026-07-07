@@ -46,6 +46,7 @@ def test_connection(
         tls_type=body.tls_type,
         username=body.username,
         password=body.password,
+        pin_public_ip=True,
     )
 
 
