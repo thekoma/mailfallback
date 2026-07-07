@@ -143,7 +143,7 @@ volumes:
 docker compose up -d
 ```
 
-Open `http://localhost:8000` — default login: `admin` / `changeme`.
+Open `http://localhost:8000` — default login: `admin` / `changeme1234!` (you'll be forced to change it on first login).
 
 Connect an IMAP client to `localhost:31143` (plaintext) to read backed-up mail.
 
