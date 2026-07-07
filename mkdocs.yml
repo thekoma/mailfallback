@@ -82,6 +82,7 @@ nav:
     - Disaster Recovery: admin-guide/disaster-recovery.md
   - Architecture:
     - Overview: architecture/overview.md
+    - Runtime Flows: architecture/flows.md
     - Centralized Config: architecture/config-generation.md
     - Dovecot Integration: architecture/dovecot.md
     - FTS & Tika: architecture/fts-tika.md
