@@ -169,21 +169,34 @@ Ownership is modeled two ways, both checked by `account_service`:
 - **Group membership** — `account_groups` + `group_members`; a group's accounts
   are visible to all of its members without being individually owned by them.
 
-`account_service.get_account(db, account_id, user)` is the read-access gate used
-by account-scoped UI and API endpoints: it returns the account for admins,
-direct owners, or group members, and `None` otherwise — routes that call it
-return 404 rather than leaking whether the ID exists. `get_account_for_modify`
-is stricter: it only allows admins and *direct* owners, not group members, so
-group-shared visibility never implies write access. Endpoints built on these
-gates include the account detail/edit/delete routes in `routers/accounts.py`,
-and the off-site backup/restore/recovery routes in `routers/ui_backup.py`
-(configure backup policy, trigger a backup, restore a snapshot or attachment,
-delete a recovery) — every one of them resolves the account through
-`get_account`/`get_account_for_modify` keyed to the requesting user before
-touching that account's data, so one tenant cannot reach another's mailbox,
-snapshots, or recoveries by guessing an account ID (an IDOR guard). Adding or
-removing an account's owners is itself admin-only (`require_admin` on the
-`/accounts/{id}/owners` endpoints), so ownership can't be self-granted.
+MFB enforces multi-tenant isolation through two access-control gates in
+`account_service`:
+
+- **`get_account`** (read/shared-access gate): returns the account for admins,
+  direct owners, *or* group members. Used for read-only and operational routes
+  (account detail, sync status, snapshots, backup history).
+- **`get_account_for_modify`** (write gate): returns the account for admins and
+  *direct* owners only — not group members. Used for account settings changes
+  (name, IMAP host, credentials, sync schedule).
+
+This distinction means:
+
+- **Account settings** (edit IMAP host, change sync schedule, etc.) require
+  direct ownership or admin role. Group members have no write access to account
+  configuration.
+- **Backup/restore/recovery operations** (configure off-site policy, back up now,
+  restore a snapshot or attachment, delete a recovery) are intentionally
+  available to group members via `get_account` — shared group access grants
+  operational access to an account's off-site backup surface. This is by design.
+- **Account ownership** itself is admin-only (`require_admin` on
+  `/accounts/{id}/owners` endpoints), so users cannot self-grant or self-revoke
+  ownership.
+
+All these endpoints are account-scoped: routes that call `get_account` or
+`get_account_for_modify` return 404 rather than leaking whether an account ID
+exists to an unauthorized user. Before touching any account's data, the endpoint
+resolves it for the requesting user. One tenant therefore cannot reach another's
+mailbox, snapshots, or recoveries by guessing an account ID (an IDOR guard).
 
 ## OAuth CSRF protection
 
