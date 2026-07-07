@@ -70,19 +70,23 @@ nav:
     - Restore: user-guide/restore.md
     - Webmail: user-guide/webmail.md
     - Profile: user-guide/profile.md
+    - Notifications: user-guide/notifications.md
   - Admin Guide:
     - User Management: admin-guide/users.md
     - Mail stores: admin-guide/stores.md
     - Repositories (off-site backup): admin-guide/repositories.md
     - Groups: admin-guide/groups.md
     - System Settings: admin-guide/settings.md
+    - Sync Budget & Watchdog: admin-guide/sync-budget.md
     - Audit Log: admin-guide/audit.md
     - SSO / OIDC: admin-guide/sso.md
     - OAuth Providers: admin-guide/oauth-providers.md
     - Disaster Recovery: admin-guide/disaster-recovery.md
   - Architecture:
     - Overview: architecture/overview.md
+    - Runtime Flows: architecture/flows.md
     - Centralized Config: architecture/config-generation.md
     - Dovecot Integration: architecture/dovecot.md
     - FTS & Tika: architecture/fts-tika.md
     - Data Model: architecture/data-model.md
+    - Security Model: architecture/security.md

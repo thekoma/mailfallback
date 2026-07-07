@@ -17,6 +17,18 @@ from mailfallback.services import sync_worker
 from mailfallback.services.sync_worker import execute_sync_job
 
 
+@pytest.fixture(autouse=True)
+def _public_dns():
+    """Treat placeholder IMAP hosts as publicly-resolvable so the sync-time
+    SSRF guard doesn't fail the job. Rebinding rejection is covered in
+    test_ssrf_and_reserved_users."""
+    with patch(
+        "mailfallback.services.imap_check.socket.getaddrinfo",
+        return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+    ):
+        yield
+
+
 def _make_engine(shared: bool = False):
     """In-memory engine; shared=True makes it usable from the sampler thread
     (StaticPool single connection, check_same_thread off)."""

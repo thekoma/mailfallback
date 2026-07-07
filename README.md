@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/mailfallback/static/logo.svg" alt="MFB Logo" width="128">
+  <img src="src/mailfallback/static/favicon.svg" alt="MFB Logo" width="128">
 </p>
 
 <h1 align="center">MailFallBack</h1>
@@ -13,22 +13,48 @@
   <a href="https://github.com/thekoma/mailfallback/pkgs/container/mailfallback"><img src="https://img.shields.io/badge/docker-ghcr.io%2Fthekoma%2Fmailfallback-blue?logo=docker" alt="Docker"></a>
 </p>
 
+<p align="center">
+  <strong><a href="https://thekoma.github.io/mailfallback/">📖 Full documentation</a></strong> — installation guides, admin guide, architecture, security model
+</p>
+
 ---
 
-Self-hosted email backup service with a web UI. Wraps [mbsync/isync](https://isync.sourceforge.io/) to back up your email and provides read-only IMAP access via Dovecot as a fallback in case you lose access to your provider.
+Self-hosted email safety net with a web UI. Wraps [mbsync/isync](https://isync.sourceforge.io/) to keep a local sync of your mailboxes, optionally pushes encrypted off-site backups to S3 or local storage via restic, and provides read-only IMAP access via Dovecot as a fallback in case you lose access to your provider.
+
+<p align="center">
+  <img src="docs/screenshots/02-dashboard.png" alt="MailFallBack dashboard" width="900">
+</p>
 
 ## Why
 
-Cloud email providers can lock you out without warning. If your entire digital life depends on a single Gmail account, one accidental lockout means losing 20+ years of correspondence. MailFallBack gives you an independent, encrypted backup with a web interface to access it.
+Cloud email providers can lock you out without warning. If your entire digital life depends on a single Gmail account, one accidental lockout means losing 20+ years of correspondence. MailFallBack gives you an independent local sync — plus optional off-site, encrypted snapshots — with a web interface to reach your mail again.
 
 ## Features
 
-### Email Backup
-- Automated IMAP backup via **mbsync** with configurable cron schedules
+### Local sync
+- Automated IMAP sync via **mbsync** with configurable cron schedules
 - **Multi-account** support with independent storage volumes (mail stores)
-- **Store migration** — move users between stores with progress tracking and crash recovery
-- **Job queue** with deduplication — triggers from scheduler, API, or future webhooks
-- Sync history with logs, exit codes, and error tracking
+- **Daily sync budget** per account (provider-aware default, e.g. Gmail's ~2 GB/day) with automatic throttle backoff and ETA on first sync
+- **Watchdog** reaper — detects stalled/crashed sync jobs and recovers them automatically
+- **Groups** — share mailbox access across multiple users without duplicating accounts
+- **Store migration** — move users between mail stores with progress tracking and crash recovery
+- **Job queue** with deduplication — triggers from scheduler or API
+- Sync history with logs, exit codes, and failure classification (throttled/transient states self-recover; only real errors are flagged)
+
+### Off-site backup (optional)
+- Push encrypted **snapshots** to a **repository** (local disk or S3) via [restic](https://restic.net/)
+- Per-mailbox backup policy: schedule, retention preset (light/standard/full) or custom retention
+- **Recover** a snapshot into a new, suspended mailbox for inspection before reactivating it
+- Attach pre-existing restic prefixes in a repository to an account (orphan detection)
+
+### Notifications
+- **Apprise**-backed notification channels — 100+ services (email, Slack, Discord, ntfy, ...) via a single URL scheme
+- Per-channel event subscriptions: re-auth needed, sync error, sync paused, stale mailbox, plus activity events (sync completed, restore completed, off-site backup completed, account added)
+- **Text or structured JSON** payload per channel — the JSON envelope carries a plain account object plus per-event details, ready for webhook-style consumers
+
+### Restore
+- **Restore staging workspace** — search across mailboxes, stage selected messages, then push them back to any mailbox
+- **Attachment content search** (optional) — full-text search inside attachment contents via Apache Tika, in addition to headers/body
 
 ### Authentication
 - **Google OAuth2** for Gmail (no app passwords needed)
@@ -48,10 +74,10 @@ Cloud email providers can lock you out without warning. If your entire digital l
 - Responsive design with Pico CSS and Lucide icons
 
 ### Read-Only IMAP Access (Optional)
-- **Dovecot 2.4** exposes backed-up Maildir via IMAP in read-only mode
+- **Dovecot 2.4** exposes the local sync's Maildir via IMAP in read-only mode
 - SQL auth against the MFB database — no separate user management
 - Login automatically blocked during store migrations
-- Compatible with **Snappymail**, **Roundcube**, or any IMAP client
+- Compatible with **Roundcube** (bundled, optional profile) or any IMAP client
 
 ### Monitoring
 - `/healthz` — liveness probe
@@ -59,7 +85,7 @@ Cloud email providers can lock you out without warning. If your entire digital l
 - `/metrics` — Prometheus format (sync counters, durations, maildir sizes, queue depth)
 
 ### Deployment
-- **Docker Compose** with PostgreSQL (3 services: db, mailfallback, dovecot)
+- **Docker Compose** with PostgreSQL, the mailfallback app, and Dovecot; optional `webmail` (Roundcube) and `tika` (attachment content search) profiles
 - **Kubernetes** with Helm (bjw-s-labs charts)
 - Config **export/import** API for portability between deployments
 - Multi-architecture Docker images (amd64 + arm64)
@@ -78,74 +104,32 @@ Cloud email providers can lock you out without warning. If your entire digital l
 
 ### Docker Compose
 
-Create a `.env` file:
+The repo's [`docker-compose.yml`](docker-compose.yml) is the source of truth — clone it and go:
 
 ```bash
-MAILFALLBACK_SECRET_KEY=your-random-secret-here
-MAILFALLBACK_SESSION_SECRET=your-session-secret-here
-MAILFALLBACK_DOVECOT_API_KEY=your-dovecot-api-key
-MAILFALLBACK_DOVECOT_ENABLED=true
+git clone https://github.com/thekoma/mailfallback.git
+cd mailfallback
+cp .env.example .env
+# edit .env — at minimum set MAILFALLBACK_SECRET_KEY and MAILFALLBACK_SESSION_SECRET
+
+docker compose up -d --build
 ```
 
-```yaml
-services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: mailfallback
-      POSTGRES_PASSWORD: mailfallback
-      POSTGRES_DB: mailfallback
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mailfallback"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  mailfallback:
-    image: ghcr.io/thekoma/mailfallback:latest
-    ports:
-      - "8000:8000"
-    volumes:
-      - maildirs:/data/mailboxes
-    env_file: .env
-    environment:
-      MAILFALLBACK_DATABASE_URL: postgresql://mailfallback:mailfallback@db:5432/mailfallback  # pragma: allowlist secret
-    depends_on:
-      db:
-        condition: service_healthy
-
-  dovecot:
-    image: dovecot/dovecot:latest
-    volumes:
-      - ./docker/dovecot/conf.d:/etc/dovecot/conf.d:ro
-      - maildirs:/data/mailboxes
-    ports:
-      - "31143:31143"
-    environment:
-      DOVECOT_DB_HOST: db
-      DOVECOT_DB_PORT: "5432"
-      DOVECOT_DB_NAME: mailfallback
-      DOVECOT_DB_USER: mailfallback
-      DOVECOT_DB_PASSWORD: mailfallback
-      DOVECOT_API_KEY: ${MAILFALLBACK_DOVECOT_API_KEY:-changeme}
-    depends_on:
-      db:
-        condition: service_healthy
-
-volumes:
-  pgdata:
-  maildirs:
-```
+This starts three services: **PostgreSQL 18**, the **mailfallback** app, and **Dovecot 2.4.2** (read-only IMAP fallback). Two optional Compose profiles add more:
 
 ```bash
-docker compose up -d
+# Roundcube webmail on http://localhost:8001 (also set MAILFALLBACK_WEBMAIL_ENABLED=true
+# and MAILFALLBACK_WEBMAIL_URL=http://localhost:8001 in .env)
+docker compose --profile webmail up -d --build
+
+# Apache Tika for attachment content search in the restore workspace
+# (also set MAILFALLBACK_TIKA_ENABLED=true in .env)
+docker compose --profile tika up -d --build
 ```
 
-Open `http://localhost:8000` — default login: `admin` / `changeme`.
+Open `http://localhost:8000` — default login: `admin` / `changeme1234!` (you'll be forced to change it on first login).
 
-Connect an IMAP client to `localhost:31143` (plaintext) to read backed-up mail.
+Connect an IMAP client to `localhost:31143` (plaintext) to read the local sync's mail.
 
 ### From Source
 
@@ -168,9 +152,11 @@ All settings via environment variables with `MAILFALLBACK_` prefix:
 | `MAILFALLBACK_SESSION_SECRET` | `change-me-session-secret` | Session cookie signing key |
 | `MAILFALLBACK_SESSION_HTTPS_ONLY` | `false` | Require HTTPS for session cookies |
 | `MAILFALLBACK_DEBUG` | `false` | Enable debug mode (persists mbsync configs to `/tmp/mbsync/`) |
-| `MAILFALLBACK_DOVECOT_ENABLED` | `false` | Enable Dovecot integration (stats, reload) |
 | `MAILFALLBACK_DOVECOT_API_URL` | `http://dovecot:8080` | Dovecot doveadm HTTP API URL |
 | `MAILFALLBACK_DOVECOT_API_KEY` | | Dovecot doveadm API password |
+| `MAILFALLBACK_WEBMAIL_ENABLED` | `false` | Show the Webmail link and generate the Roundcube config (use with the `webmail` Compose profile) |
+| `MAILFALLBACK_WEBMAIL_URL` | | Webmail URL shown in the nav bar (e.g. `http://localhost:8001`) |
+| `MAILFALLBACK_TIKA_ENABLED` | `false` | Enable attachment content search via Apache Tika (use with the `tika` Compose profile) |
 | `MAILFALLBACK_OIDC_ENABLED` | `false` | Enable OIDC/SSO login |
 | `MAILFALLBACK_OIDC_CLIENT_ID` | | OIDC client ID |
 | `MAILFALLBACK_OIDC_CLIENT_SECRET` | | OIDC client secret |
@@ -228,7 +214,7 @@ To enable IMAPS (port 31993):
 - **Never commit or expose** `MAILFALLBACK_SECRET_KEY` — use environment variables or Kubernetes Secrets
 - Session cookies are signed with `MAILFALLBACK_SESSION_SECRET`
 - Passwords are hashed with **bcrypt**
-- Dovecot runs in **read-only mode** to preserve backup integrity
+- Dovecot runs in **read-only mode** to preserve the local sync's integrity
 
 ## Architecture
 
@@ -271,8 +257,11 @@ To enable IMAPS (port 31993):
 
 - **Backend**: Python 3.12+, FastAPI, SQLAlchemy, Alembic, APScheduler
 - **Frontend**: Jinja2, HTMX, Pico CSS, Lucide icons
-- **Database**: PostgreSQL
+- **Database**: PostgreSQL 18
 - **Sync**: mbsync/isync
+- **Off-site backup**: restic (S3 or local-disk repositories)
+- **Notifications**: Apprise
+- **Content search**: Apache Tika (optional, attachment content)
 - **IMAP access**: Dovecot 2.4 (official image, SQL auth)
 - **Auth**: bcrypt, Fernet, authlib (OIDC + Google/Microsoft OAuth2)
 - **Monitoring**: prometheus-client

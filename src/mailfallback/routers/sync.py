@@ -1,4 +1,6 @@
 # src/mailfallback/routers/sync.py
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -12,6 +14,13 @@ from mailfallback.services.provider_discovery import discover_provider
 from mailfallback.services.sync_worker import get_live_log, stop_sync_job, submit_sync_job
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
+
+# RFC 1035 hostname syntax: dot-separated labels of alnum/hyphen, no IPs, no
+# scheme/path/userinfo. Guards discover_provider's URL builder against
+# injection (e.g. "evil.com/@169.254.169.254").
+_VALID_DOMAIN_RE = re.compile(
+    r"(?=.{1,253}\Z)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(?:\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+\Z"
+)
 
 
 class TestConnectionRequest(BaseModel):
@@ -37,11 +46,22 @@ def test_connection(
         tls_type=body.tls_type,
         username=body.username,
         password=body.password,
+        pin_public_ip=True,
     )
+
+
+def _is_valid_domain(domain: str) -> bool:
+    if not _VALID_DOMAIN_RE.match(domain):
+        return False
+    # Reject IP literals / numeric TLDs — a bare IP is not a domain to discover
+    # and would otherwise be interpolated straight into the fetch URL.
+    return not domain.rsplit(".", 1)[-1].isdigit()
 
 
 @router.get("/discover/{domain}")
 def discover(domain: str, user: User = Depends(get_current_user)):
+    if not _is_valid_domain(domain):
+        raise HTTPException(status_code=422, detail="Invalid domain")
     result = discover_provider(domain)
     if not result:
         return {"ok": False, "message": f"No IMAP configuration found for {domain}"}

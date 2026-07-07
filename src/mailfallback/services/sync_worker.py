@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 from mailfallback.config import settings
 from mailfallback.db import SessionLocal
 from mailfallback.models import Account, JobStatus, SyncJob, SyncState
-from mailfallback.security import decrypt_credentials
 from mailfallback.services import index_service, sync_budget, sync_failures
 from mailfallback.services.mbsync_config import (
     channel_name,
@@ -634,6 +633,24 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             db.commit()
             return
 
+    # Defense-in-depth against DNS rebinding: an account host validated at
+    # create/edit time can later resolve to an internal address. Re-validate
+    # here so both mbsync and the connect_imap helpers below refuse to reach
+    # internal services. (The residual TOCTOU between this check and mbsync's
+    # own resolution is unavoidable without pinning, which would break TLS.)
+    from mailfallback.services.imap_check import validate_host_not_internal
+
+    try:
+        validate_host_not_internal(account.imap_host)
+    except ValueError as e:
+        job.status = JobStatus.failed
+        job.log = f"Sync blocked: {e}"
+        job.completed_at = datetime.now(UTC)
+        account.sync_state = SyncState.error
+        account.last_error = str(e)
+        db.commit()
+        return
+
     job.status = JobStatus.running
     job.started_at = datetime.now(UTC)
     account.sync_state = SyncState.syncing
@@ -645,7 +662,9 @@ def execute_sync_job(db: Session, job_id: str) -> None:
     token_file = None
     status_access_token = None
     if account.credentials:
-        creds = decrypt_credentials(account.credentials, settings.secret_key)
+        from mailfallback.services.account_service import decrypt_account_credentials
+
+        creds = decrypt_account_credentials(db, account)
         if account.auth_type.value == "oauth2":
             access_token, terminal = _refresh_oauth_token(creds, db, account)
             if not access_token:

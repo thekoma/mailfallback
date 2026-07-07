@@ -312,3 +312,41 @@ def test_attached_restore_threads_password(mock_restic, db_session, tmp_store):
 
     assert mock_restic.restore_snapshot.call_args.kwargs["restic_password_enc"] == "enc-att-pass"
     assert mock_restic.list_snapshots.call_args.kwargs["restic_password_enc"] == "enc-att-pass"
+
+
+def test_delete_recovery_scoped_to_account(db_session, tmp_store):
+    """delete_recovery(account_id=...) must not delete another account's recovery."""
+    from mailfallback.models import Recovery, RecoveryStatus
+
+    owner = Account(
+        name="owner",
+        store=tmp_store,
+        maildir_path=f"{tmp_store.path}/owner",
+        imap_host="imap.example.com",
+    )
+    other = Account(
+        name="other",
+        store=tmp_store,
+        maildir_path=f"{tmp_store.path}/other",
+        imap_host="imap.example.com",
+    )
+    db_session.add_all([owner, other])
+    db_session.commit()
+
+    rec = Recovery(
+        account_id=owner.id,
+        snapshot_id="ab12cd34",
+        restore_path=f"{tmp_store.path}/nonexistent",
+        status=RecoveryStatus.ready,
+    )
+    db_session.add(rec)
+    db_session.commit()
+    rec_id = rec.id
+
+    # Wrong account: the row must survive.
+    recovery_service.delete_recovery(db_session, rec_id, account_id=other.id)
+    assert db_session.query(Recovery).filter(Recovery.id == rec_id).first() is not None
+
+    # Matching account: deleted.
+    recovery_service.delete_recovery(db_session, rec_id, account_id=owner.id)
+    assert db_session.query(Recovery).filter(Recovery.id == rec_id).first() is None

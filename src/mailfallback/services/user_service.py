@@ -25,6 +25,10 @@ def create_user(
     *,
     store_id: str,
 ) -> User:
+    from mailfallback.services.dovecot_auth import TEMP_USER_PREFIX
+
+    if username.startswith(TEMP_USER_PREFIX):
+        raise ValueError(f"Username prefix '{TEMP_USER_PREFIX}' is reserved for internal use")
     user = User(
         username=username, password_hash=hash_password(password), role=role, store_id=store_id
     )

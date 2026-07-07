@@ -361,6 +361,7 @@ async def account_form_submit(request: Request, db: Session = Depends(get_db)):
             tls_type=tls_type,
             username=email_address,
             password=credentials,
+            pin_public_ip=True,
         )
         if not result["ok"] or result.get("login_ok") is False:
             error_msg = result.get("login_message") or result.get("message", "Connection failed")
@@ -716,7 +717,10 @@ async def account_migrate(
         return RedirectResponse("/", status_code=303)
 
     form = await request.form()
-    target_store_id = form["target_store_id"]
+    target_store_id = form.get("target_store_id")
+    if not target_store_id:
+        request.session["flash_error"] = "No target store selected"
+        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
 
     try:
         migration = initiate_account_migration(db, account_id, target_store_id)
@@ -828,14 +832,18 @@ async def account_add_owner(account_id: str, request: Request, db: Session = Dep
     if user.role.value != "admin":
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
     form = await request.form()
-    assign_owner(db, account_id, form["user_id"])
+    target_user_id = form.get("user_id")
+    if not target_user_id:
+        request.session["flash_error"] = "No user selected"
+        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+    assign_owner(db, account_id, target_user_id)
     log_action(
         db,
         user=user,
         action="account.add_owner",
         resource_type="account",
         resource_id=account_id,
-        resource_name=form["user_id"],
+        resource_name=target_user_id,
         ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)
@@ -850,7 +858,10 @@ async def account_remove_owner(account_id: str, request: Request, db: Session = 
     if not account:
         return RedirectResponse("/", status_code=303)
     form = await request.form()
-    target_user_id = form["user_id"]
+    target_user_id = form.get("user_id")
+    if not target_user_id:
+        request.session["flash_error"] = "No user selected"
+        return RedirectResponse(f"/accounts/{account_id}", status_code=303)
     if user.role.value != "admin" and target_user_id != user.id:
         return RedirectResponse(f"/accounts/{account_id}", status_code=303)
     remove_owner(db, account_id, target_user_id)
@@ -860,7 +871,7 @@ async def account_remove_owner(account_id: str, request: Request, db: Session = 
         action="account.remove_owner",
         resource_type="account",
         resource_id=account_id,
-        resource_name=form["user_id"],
+        resource_name=target_user_id,
         ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse(f"/accounts/{account_id}", status_code=303)

@@ -97,13 +97,17 @@ def google_oauth_start(request: Request, account_id: str, db: Session = Depends(
     return RedirectResponse(url)
 
 
-def _oauth_failure_redirect(db, request, account_id, reason="failed"):
+def _oauth_failure_redirect(db, request, account_id, reason="failed", *, delete_stub=True):
     if account_id:
         user_id = request.session.get("user_id") if request else None
         user = db.query(User).filter(User.id == user_id).first() if user_id else None
         account = db.query(Account).filter(Account.id == account_id).first()
+        # delete_stub is False on state-mismatch: a forged cross-site callback
+        # (same_site=lax lets the GET through) must not be able to destroy a
+        # victim's pending account. Only genuine, state-validated failures clean up.
         if (
-            account
+            delete_stub
+            and account
             and not account.credentials
             and user
             and (user.role == UserRole.admin or is_account_owner(user, account))
@@ -151,11 +155,15 @@ async def google_oauth_callback(
     account_id = request.session.pop("oauth_account_id", None)
     expected_state = request.session.pop("oauth_state", None)
 
+    # Validate state BEFORE any destructive action: a state mismatch may be a
+    # forged cross-site callback, so it must never delete the pending account.
+    if not state or not expected_state or state != expected_state:
+        return _oauth_failure_redirect(
+            db, request, account_id, reason="invalid_state", delete_stub=False
+        )
+
     if error or not code:
         return _oauth_failure_redirect(db, request, account_id, reason=error or "denied")
-
-    if not state or not expected_state or state != expected_state:
-        return _oauth_failure_redirect(db, request, account_id, reason="invalid_state")
 
     redirect_uri = str(request.url_for("google_oauth_callback"))
     try:
@@ -205,11 +213,14 @@ async def microsoft_oauth_callback(
     account_id = request.session.pop("oauth_account_id", None)
     expected_state = request.session.pop("oauth_state", None)
 
+    # Validate state BEFORE any destructive action (see google callback).
+    if not state or not expected_state or state != expected_state:
+        return _oauth_failure_redirect(
+            db, request, account_id, reason="invalid_state", delete_stub=False
+        )
+
     if error or not code:
         return _oauth_failure_redirect(db, request, account_id, reason=error or "denied")
-
-    if not state or not expected_state or state != expected_state:
-        return _oauth_failure_redirect(db, request, account_id, reason="invalid_state")
 
     redirect_uri = str(request.url_for("microsoft_oauth_callback"))
     try:
@@ -284,8 +295,14 @@ async def oidc_callback(request: Request, db: Session = Depends(get_db)):
     if not sub or not isinstance(sub, str) or not sub.strip():
         raise HTTPException(status_code=400, detail="Invalid OIDC token: missing sub claim")
 
+    from mailfallback.services.dovecot_auth import TEMP_USER_PREFIX
+
     raw_username = userinfo.get("preferred_username") or userinfo.get("email", sub)
     username = re.sub(r"[^a-zA-Z0-9@._-]", "_", str(raw_username))[:255]
+    # Never let an IdP-supplied name collide with the reserved restore-user
+    # prefix — cleanup_temp_imap_users would later delete it as an orphan.
+    if username.startswith(TEMP_USER_PREFIX):
+        username = f"u{username}"
     groups = userinfo.get("groups", [])
 
     if (

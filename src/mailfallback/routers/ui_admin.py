@@ -365,7 +365,11 @@ async def admin_create_user(request: Request, db: Session = Depends(get_db)):
         request.session["flash_error"] = f"Password must be at least {MIN_PASSWORD_LENGTH} chars"
         return RedirectResponse("/admin/users", status_code=303)
     store_id = form.get("store_id") or ensure_default_store(db).id
-    new_user = create_user(db, form["username"], password, role, store_id=store_id)
+    try:
+        new_user = create_user(db, form["username"], password, role, store_id=store_id)
+    except ValueError as e:
+        request.session["flash_error"] = str(e)
+        return RedirectResponse("/admin/users", status_code=303)
     set_allowed_stores(db, new_user.id, [store_id])
     log_action(
         db,

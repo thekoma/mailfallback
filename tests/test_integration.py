@@ -11,6 +11,19 @@ from mailfallback.services.user_service import create_user
 
 
 @pytest.fixture(autouse=True)
+def _public_dns():
+    """Placeholder IMAP hosts resolve to a public IP so the sync-time SSRF
+    guard doesn't fail the job (rebinding rejection tested elsewhere)."""
+    from unittest.mock import patch as _patch
+
+    with _patch(
+        "mailfallback.services.imap_check.socket.getaddrinfo",
+        return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _offline_worker(monkeypatch):
     """The worker's sampler thread opens sessions via sync_worker.SessionLocal
     and its initial-sync STATUS pass dials the upstream (non-fatal) — keep
