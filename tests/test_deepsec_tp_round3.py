@@ -117,6 +117,33 @@ class TestLegacyKdfUpgrade:
         assert account.credentials != legacy_ct
         assert is_legacy_encrypted(account.credentials, settings.secret_key) is False
 
+    def test_decrypt_account_credentials_heals_and_is_wired_into_sync(
+        self, db_session, default_store
+    ):
+        """The sync read path must self-heal too — not just the unused getter."""
+        import inspect
+
+        from cryptography.fernet import Fernet
+
+        from mailfallback.config import settings
+        from mailfallback.security import _derive_fernet_key_legacy, is_legacy_encrypted
+        from mailfallback.services import sync_worker
+        from mailfallback.services.account_service import decrypt_account_credentials
+
+        # sync_worker must route credential decryption through the healing helper.
+        assert "decrypt_account_credentials" in inspect.getsource(sync_worker.execute_sync_job)
+
+        legacy_ct = Fernet(_derive_fernet_key_legacy(settings.secret_key)).encrypt(b"pw").decode()
+        account = create_account(
+            db_session, "Legacy2", "imap.gmail.com", 993, "app_password", store=default_store
+        )
+        account.credentials = legacy_ct
+        db_session.commit()
+
+        assert decrypt_account_credentials(db_session, account) == "pw"
+        db_session.refresh(account)
+        assert is_legacy_encrypted(account.credentials, settings.secret_key) is False
+
 
 class TestOAuthCallbackCSRF:
     def test_state_mismatch_does_not_delete_pending_account(

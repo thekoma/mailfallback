@@ -6,9 +6,8 @@ from sqlalchemy.orm import Session, selectinload
 from mailfallback.config import settings
 from mailfallback.models import Account, MailStore, User, UserRole, account_groups, group_members
 from mailfallback.security import (
-    decrypt_credentials,
+    decrypt_credentials_with_upgrade,
     encrypt_credentials,
-    is_legacy_encrypted,
 )
 from mailfallback.services.scheduler import refresh_scheduler
 from mailfallback.services.store_service import derive_maildir_path
@@ -174,14 +173,25 @@ def delete_account(db: Session, account_id: str, delete_files: bool = False) -> 
     return True
 
 
-def get_account_credentials(db: Session, account_id: str) -> str | None:
-    account = db.query(Account).filter(Account.id == account_id).first()
-    if not account or not account.credentials:
+def decrypt_account_credentials(db: Session, account: Account) -> str | None:
+    """Decrypt an account's credentials, self-healing legacy KDF ciphertext.
+
+    Legacy (unsalted-SHA256) ciphertext is rewritten with the modern PBKDF2 KDF
+    on read and committed, so the brute-forceable path drains out of the DB.
+    Use this at every read site (sync worker, restore, UI) instead of calling
+    decrypt_credentials directly.
+    """
+    if not account.credentials:
         return None
-    plaintext = decrypt_credentials(account.credentials, settings.secret_key)
-    # Self-heal: rewrite legacy (unsalted-SHA256) ciphertext with the modern
-    # PBKDF2 KDF so the brute-forceable path drains out of the DB on read.
-    if is_legacy_encrypted(account.credentials, settings.secret_key):
-        account.credentials = encrypt_credentials(plaintext, settings.secret_key)
+    plaintext, upgraded = decrypt_credentials_with_upgrade(account.credentials, settings.secret_key)
+    if upgraded is not None:
+        account.credentials = upgraded
         db.commit()
     return plaintext
+
+
+def get_account_credentials(db: Session, account_id: str) -> str | None:
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not account:
+        return None
+    return decrypt_account_credentials(db, account)

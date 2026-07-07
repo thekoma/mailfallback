@@ -61,6 +61,7 @@ def export_config(
                 "extra_config": a.extra_config,
                 "enabled": a.enabled,
                 "sync_schedule": a.sync_schedule,
+                "store_id": a.store_id,
             }
             for a in accounts
         ]
