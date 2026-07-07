@@ -79,6 +79,50 @@ class TestValidateHostNotInternal:
             validate_host_not_internal("imap.example.com")  # must not raise
 
 
+class TestResolvePublicIpPinning:
+    def test_returns_public_ip(self):
+        from mailfallback.services.imap_check import resolve_public_ip
+
+        with patch(
+            "mailfallback.services.imap_check.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+        ):
+            assert resolve_public_ip("imap.example.com", 993) == "93.184.216.34"
+
+    def test_rejects_internal_at_resolve(self):
+        from mailfallback.services.imap_check import resolve_public_ip
+
+        with (
+            patch(
+                "mailfallback.services.imap_check.socket.getaddrinfo",
+                return_value=[(2, 1, 6, "", ("10.0.0.5", 0))],
+            ),
+            pytest.raises(ValueError, match="internal"),
+        ):
+            resolve_public_ip("rebind.example.com", 993)
+
+    def test_test_connection_pins_ip_and_rejects_rebind(self, client, db_session, default_store):
+        """test-connection resolves+pins; a rebinding flip to internal is caught."""
+        create_user(db_session, "u1", "pass", UserRole.user, store_id=default_store.id)
+        _login(client, "u1", "pass")
+
+        # First resolution (route-level validate) public, second (pin at connect) internal.
+        seq = [
+            [(2, 1, 6, "", ("93.184.216.34", 0))],
+            [(2, 1, 6, "", ("169.254.169.254", 0))],
+        ]
+        with patch(
+            "mailfallback.services.imap_check.socket.getaddrinfo",
+            side_effect=seq,
+        ):
+            resp = client.post(
+                "/api/sync/test-connection",
+                json={"imap_host": "rebind.example.com", "imap_port": 993},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is False
+
+
 class TestAccountUpdateSSRF:
     def test_patch_rejects_internal_imap_host(self, client, db_session, default_store):
         from mailfallback.services.account_service import assign_owner, create_account

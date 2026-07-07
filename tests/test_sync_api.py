@@ -121,7 +121,7 @@ def test_test_connection_basic(client, db_session, default_store):
     _login(client, "user1", "pass")
 
     conn = _mock_imap_conn()
-    with patch("mailfallback.services.imap_check.imaplib.IMAP4_SSL", return_value=conn):
+    with patch("mailfallback.services.imap_check._PinnedIMAP4SSL", return_value=conn):
         resp = client.post(
             "/api/sync/test-connection",
             json={"imap_host": "imap.example.com", "imap_port": 993, "tls_type": "IMAPS"},
@@ -138,7 +138,7 @@ def test_test_connection_with_login_success(client, db_session, default_store):
     _login(client, "user1", "pass")
 
     conn = _mock_imap_conn(login_ok=True)
-    with patch("mailfallback.services.imap_check.imaplib.IMAP4_SSL", return_value=conn):
+    with patch("mailfallback.services.imap_check._PinnedIMAP4SSL", return_value=conn):
         resp = client.post(
             "/api/sync/test-connection",
             json={
@@ -161,7 +161,7 @@ def test_test_connection_with_login_failure(client, db_session, default_store):
     _login(client, "user1", "pass")
 
     conn = _mock_imap_conn(login_ok=False, login_error="AUTHENTICATIONFAILED")
-    with patch("mailfallback.services.imap_check.imaplib.IMAP4_SSL", return_value=conn):
+    with patch("mailfallback.services.imap_check._PinnedIMAP4SSL", return_value=conn):
         resp = client.post(
             "/api/sync/test-connection",
             json={
@@ -183,7 +183,7 @@ def test_test_connection_returns_auth_capabilities(client, db_session, default_s
     _login(client, "user1", "pass")
 
     conn = _mock_imap_conn(capabilities=["IMAP4rev1", "AUTH=PLAIN", "AUTH=LOGIN", "AUTH=XOAUTH2"])
-    with patch("mailfallback.services.imap_check.imaplib.IMAP4_SSL", return_value=conn):
+    with patch("mailfallback.services.imap_check._PinnedIMAP4SSL", return_value=conn):
         resp = client.post(
             "/api/sync/test-connection",
             json={"imap_host": "imap.example.com", "imap_port": 993, "tls_type": "IMAPS"},
@@ -197,7 +197,7 @@ def test_test_connection_starttls(client, db_session, default_store):
     _login(client, "user1", "pass")
 
     conn = _mock_imap_conn()
-    with patch("mailfallback.services.imap_check.imaplib.IMAP4", return_value=conn):
+    with patch("mailfallback.services.imap_check._PinnedIMAP4", return_value=conn):
         resp = client.post(
             "/api/sync/test-connection",
             json={"imap_host": "imap.example.com", "imap_port": 143, "tls_type": "STARTTLS"},
@@ -211,7 +211,7 @@ def test_test_connection_failure(client, db_session, default_store):
     _login(client, "user1", "pass")
 
     with patch(
-        "mailfallback.services.imap_check.imaplib.IMAP4_SSL",
+        "mailfallback.services.imap_check._PinnedIMAP4SSL",
         side_effect=OSError("Connection refused"),
     ):
         resp = client.post(
