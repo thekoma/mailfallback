@@ -49,11 +49,11 @@ flowchart TD
 
 ## Authentication
 
-The three ways a user authenticates to MFB.
+Users log into MFB with a password or OIDC (creating a session). Accounts separately authenticate to upstream providers (Gmail, Outlook) via OAuth2 to store encrypted tokens for direct access to the mail source.
 
 ```mermaid
 flowchart TD
-    USER["User"] --> CH{"auth method"}
+    USER["User"] --> CH{"auth context"}
     CH -- "password" --> SQL["SQL passdb<br/>(bcrypt)"]
     CH -- "OIDC SSO" --> OIDC["OIDC provider<br/>+ group sync"]
     CH -- "account OAuth2" --> OAUTH["Google / Microsoft<br/>OAuth2 token"]
