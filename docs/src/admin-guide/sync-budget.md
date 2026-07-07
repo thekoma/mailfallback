@@ -1,6 +1,6 @@
 # Sync Budget & Watchdog
 
-MFB paces backups of large mailboxes against provider rate limits, and it self-heals when a sync job or an OAuth2 connection gets stuck. This page covers the daily sync budget, the self-recovering pause states, the in-flight watchdog, and re-authentication.
+MFB paces syncs of large mailboxes against provider rate limits, and it self-heals when a sync job or an OAuth2 connection gets stuck. This page covers the daily sync budget, the self-recovering pause states, the in-flight watchdog, and re-authentication.
 
 ## Why a daily budget exists
 
@@ -83,7 +83,7 @@ After either sweep closes a job, the account goes back to `idle` and:
 
 OAuth2 accounts (Gmail, Microsoft) refresh their access token automatically before each sync using the stored refresh token. Two outcomes distinguish a real sign-in problem from a transient one:
 
-- **Terminal failure** — the refresh token itself is invalid (missing/malformed credentials, or the provider returns `invalid_grant`, meaning the token was revoked or expired). MFB sets the account's sync state to `needs_reauth` and sends a `needs_reauth` notification ("Reconnect the account in MailFallBack to resume backups.").
+- **Terminal failure** — the refresh token itself is invalid (missing/malformed credentials, or the provider returns `invalid_grant`, meaning the token was revoked or expired). MFB sets the account's sync state to `needs_reauth` and sends a `needs_reauth` notification ("Reconnect the account in MailFallBack to resume syncs.").
 - **Non-terminal failure** — a network error or a provider 5xx during the refresh call. MFB treats this like any other sync error (`error` state) rather than demanding re-authentication, since retrying may simply work next time.
 
 A `needs_reauth` account is skipped by the scheduler's periodic path entirely (it won't retry a token that's known to be dead) and won't inherit a self-recovering pause.
@@ -93,6 +93,6 @@ A `needs_reauth` account is skipped by the scheduler's periodic path entirely (i
 From the account detail page, the **Re-authenticate** button walks the account back through the OAuth2 consent flow. On a successful callback, MFB:
 
 1. Clears `needs_reauth` (and any lingering `error` state left by the same failed token) back to `idle`.
-2. Immediately enqueues and submits a new sync job for the account, so the account starts backing up again without waiting for its regular schedule.
+2. Immediately enqueues and submits a new sync job for the account, so the account starts syncing again without waiting for its regular schedule.
 
 See [Notifications](../user-guide/notifications.md) for how `needs_reauth`, `sync_paused`, and `sync_error` events surface to users and admins.
