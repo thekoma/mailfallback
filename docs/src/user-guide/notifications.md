@@ -31,8 +31,9 @@ own **Profile** page. There is no separate admin notifications screen.
     The Apprise URL is encrypted at rest with the same Fernet scheme used for
     IMAP credentials (see [Security Model](../architecture/security.md)). The
     Profile page only ever displays it masked as `scheme://…` — even to the
-    owning user — and editing a channel requires pasting a new URL rather than
-    revealing the old one.
+    owning user. When editing a channel you can paste a new URL to replace it,
+    or leave the URL field blank to keep the current one — the stored URL is
+    never shown back to you.
 
 Each existing channel can be tested (**Test** sends an immediate sample
 notification), edited (label, URL, events, format), toggled on/off, or

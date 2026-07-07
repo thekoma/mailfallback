@@ -3,7 +3,7 @@
 Sequence and flow diagrams for the main runtime paths. For the static
 component/dependency view, see [Overview](overview.md).
 
-## Backup sync
+## Local sync
 
 How a scheduled or manual sync pulls mail from upstream into local Maildir.
 

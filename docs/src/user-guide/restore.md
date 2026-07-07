@@ -41,7 +41,7 @@ through a group. Admins can widen the scope to every mailbox on the server
 with the **All users' mailboxes** toggle; that escalation is written to the
 audit log.
 
-A row of **When** chips (7d / 30d / 90d / 1y / All time / Custom range)
+A row of **When** chips (7d / 30d / 90d / 1y / All time / Custom…)
 narrows the search by date, and each result shows whether the message is
 still **live** in the local backup, only survives in one or more
 **snapshots**, or is **gone** from both.
