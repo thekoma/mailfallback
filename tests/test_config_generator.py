@@ -106,6 +106,10 @@ def test_dovecot_fts_without_tika(tmp_path):
     fts = (tmp_path / "dovecot" / "mfb-fts.conf").read_text()
     assert "fts_flatcurve = yes" in fts
     assert "fts_decoder_driver" not in fts
+    # dovecot 2.4 requires an explicit language definition for FTS init.
+    assert "language en {" in fts
+    assert "language_default = yes" in fts
+    assert "language_tokenizers = generic email-address" in fts
 
 
 def test_dovecot_fts_with_tika(tmp_path):

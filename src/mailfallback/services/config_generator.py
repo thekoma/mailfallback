@@ -117,6 +117,16 @@ fts flatcurve {{
 }}
 
 fts_search_add_missing = yes
+
+# dovecot 2.4 requires an explicit language definition for FTS init
+# (otherwise: "No language defined"). Minimal English default:
+# generic + email-address tokenizers, lowercase filter.
+language_tokenizers = generic email-address
+
+language en {{
+  language_default = yes
+  language_filters = lowercase
+}}
 {tika_block}"""
 
 
