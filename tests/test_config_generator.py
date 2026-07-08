@@ -59,14 +59,13 @@ def test_generate_dovecot_creates_all_files(tmp_path):
         "mfb-stats.conf",
         "mfb-mail.conf",
         "mfb-acl.conf",
-        "dovecot-acl",
         "mfb-fts.conf",
         "mfb-auth.conf",
         "mfb-lua-userdb.lua",
     }
     actual_names = {p.name for p in written}
     assert actual_names == expected_names
-    assert len(written) == 9
+    assert len(written) == 8
 
     # All files should exist on disk
     for p in written:
@@ -119,25 +118,39 @@ def test_dovecot_fts_with_tika(tmp_path):
     assert "fts_decoder_tika_url = http://tika:9998/tika/" in fts
 
 
-def test_dovecot_acl_content(tmp_path):
-    settings = _make_settings(tmp_path)
-    generate_dovecot_config(settings)
-
-    acl = (tmp_path / "dovecot" / "dovecot-acl").read_text()
-    # Exact content, in order: default read-only first, then the writable
-    # per-user Staging/ namespace (restore curation surface). All matching
-    # lines apply and same-identifier rights are unioned; a narrower pattern
-    # can only ADD rights, never remove them (subtraction needs negative
-    # entries). Verified against dovecot 2.4.2 source (acl-global-file.c).
-    assert acl == "* owner lrs\nStaging owner lrwstie\nStaging/* owner lrwstie\n"
-
-
-def test_dovecot_acl_path_in_config(tmp_path):
+def test_dovecot_acl_uses_settings_blocks(tmp_path):
     settings = _make_settings(tmp_path)
     generate_dovecot_config(settings)
 
     acl_conf = (tmp_path / "dovecot" / "mfb-acl.conf").read_text()
-    assert "acl_global_path = /etc/dovecot/conf.d/dovecot-acl" in acl_conf
+    # Global read-only for the owner across all mailboxes (incl. dynamic
+    # per-account namespaces), Staging writable for restore curation.
+    # dovecot 2.4.3+ removed the global acl file; ACLs are settings blocks.
+    assert "acl_driver = vfile" in acl_conf
+    assert "acl_globals_only = yes" in acl_conf
+    assert "acl readonly {" in acl_conf
+    assert "acl_id = owner" in acl_conf
+    assert "acl_rights = lrs" in acl_conf
+    assert "mailbox Staging {" in acl_conf
+    assert "mailbox Staging/* {" in acl_conf
+    assert "acl_rights = lrwstie" in acl_conf
+    assert "acl_global_path" not in acl_conf
+
+
+def test_dovecot_acl_file_not_emitted(tmp_path):
+    settings = _make_settings(tmp_path)
+    generate_dovecot_config(settings)
+    assert not (tmp_path / "dovecot" / "dovecot-acl").exists()
+
+
+def test_dovecot_acl_removes_orphan_legacy_file(tmp_path):
+    # An upgraded deployment may carry a stale dovecot-acl from an older MFB.
+    dovecot_dir = tmp_path / "dovecot"
+    dovecot_dir.mkdir(parents=True, exist_ok=True)
+    (dovecot_dir / "dovecot-acl").write_text("* owner lrs\n")
+    settings = _make_settings(tmp_path)
+    generate_dovecot_config(settings)
+    assert not (dovecot_dir / "dovecot-acl").exists()
 
 
 # ---------------------------------------------------------------------------

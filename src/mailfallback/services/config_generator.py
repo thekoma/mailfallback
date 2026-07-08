@@ -55,6 +55,13 @@ mailbox_list_layout = fs
 
 
 def _dovecot_acl_conf() -> str:
+    # ACL as settings blocks (dovecot 2.4.3+ removed the global acl file).
+    # Global: every mailbox is owner read-only (lrs) -- covers the dynamic
+    # per-account namespaces from the Lua userdb without enumerating them.
+    # Override: the per-user Staging namespace is writable (lrwstie), the
+    # restore-curation surface (delete-before-push in webmail).
+    # lrwstie = lookup/read/write-flags/write-seen/write-deleted/insert/expunge
+    # -- no create/delete-mailbox/admin.
     return """\
 mail_plugins = acl
 
@@ -64,16 +71,26 @@ protocol imap {
 
 acl_driver = vfile
 acl_globals_only = yes
-acl_global_path = /etc/dovecot/conf.d/dovecot-acl
+
+acl readonly {
+  acl_id = owner
+  acl_rights = lrs
+}
+
+mailbox Staging {
+  acl staging {
+    acl_id = owner
+    acl_rights = lrwstie
+  }
+}
+
+mailbox Staging/* {
+  acl staging_sub {
+    acl_id = owner
+    acl_rights = lrwstie
+  }
+}
 """
-
-
-def _dovecot_acl_file() -> str:
-    # Everything read-only except the per-user staging namespace, which is
-    # the curation surface for restores (delete-before-push in webmail).
-    # lrwstie = lookup/read/write-flags/write-seen/write-deleted/insert/expunge
-    # -- no create/delete-mailbox/admin.
-    return "* owner lrs\nStaging owner lrwstie\nStaging/* owner lrwstie\n"
 
 
 def _dovecot_fts_conf(settings: Any) -> str:
@@ -322,7 +339,6 @@ _DOVECOT_FILES: list[tuple[str, Any]] = [
     ("mfb-stats.conf", _dovecot_stats_conf),
     ("mfb-mail.conf", _dovecot_mail_conf),
     ("mfb-acl.conf", _dovecot_acl_conf),
-    ("dovecot-acl", _dovecot_acl_file),
     ("mfb-fts.conf", None),
     ("mfb-auth.conf", None),
     ("mfb-lua-userdb.lua", None),
@@ -390,6 +406,10 @@ def generate_dovecot_config(settings: Any) -> list[Path]:
         _purge_fts_indexes(settings)
         reindex_marker = base / ".fts-reindex-needed"
         reindex_marker.write_text("purged")
+
+    # Legacy cleanup: dovecot 2.4.2 wrote a separate global ACL file; 2.4.3+
+    # inlines ACLs. Drop the orphan so an upgraded volume doesn't carry it.
+    (base / "dovecot-acl").unlink(missing_ok=True)
 
     return written
 
