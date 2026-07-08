@@ -123,22 +123,27 @@ def test_dovecot_fts_with_tika(tmp_path):
 
 
 def test_dovecot_acl_uses_settings_blocks(tmp_path):
+    import re
+
     settings = _make_settings(tmp_path)
     generate_dovecot_config(settings)
 
     acl_conf = (tmp_path / "dovecot" / "mfb-acl.conf").read_text()
-    # Global read-only for the owner across all mailboxes (incl. dynamic
-    # per-account namespaces), Staging writable for restore curation.
     # dovecot 2.4.3+ removed the global acl file; ACLs are settings blocks.
     assert "acl_driver = vfile" in acl_conf
     assert "acl_globals_only = yes" in acl_conf
-    assert "acl readonly {" in acl_conf
-    assert "acl_id = owner" in acl_conf
-    assert "acl_rights = lrs" in acl_conf
-    assert "mailbox Staging {" in acl_conf
-    assert "mailbox Staging/* {" in acl_conf
-    assert "acl_rights = lrwstie" in acl_conf
     assert "acl_global_path" not in acl_conf
+
+    # Structural, not substring: the RIGHTS must be bound to the correct block,
+    # so a rights inversion (global writable / Staging read-only) fails the test.
+    # Global default block grants read-only (lrs), NOT lrwstie.
+    global_rights = re.search(r"acl readonly \{.*?acl_rights = (\w+)", acl_conf, re.DOTALL)
+    assert global_rights and global_rights.group(1) == "lrs", "global ACL must be lrs"
+    # Staging mailbox blocks grant the writable set (lrwstie).
+    staging_rights = re.search(r"mailbox Staging \{.*?acl_rights = (\w+)", acl_conf, re.DOTALL)
+    assert staging_rights and staging_rights.group(1) == "lrwstie", "Staging must be lrwstie"
+    staging_sub = re.search(r"mailbox Staging/\* \{.*?acl_rights = (\w+)", acl_conf, re.DOTALL)
+    assert staging_sub and staging_sub.group(1) == "lrwstie", "Staging/* must be lrwstie"
 
 
 def test_dovecot_acl_file_not_emitted(tmp_path):
