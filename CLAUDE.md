@@ -10,7 +10,7 @@ Self-hosted email backup service wrapping mbsync/isync with a web UI. Backs up I
 - **Frontend**: Jinja2 templates, HTMX, Pico CSS, Lucide icons
 - **Database**: PostgreSQL (only supported backend)
 - **Sync**: mbsync/isync (subprocess)
-- **IMAP access**: Dovecot 2.4 (`dovecot/dovecot:2.4.2` pinned, SQL auth against MFB database)
+- **IMAP access**: Dovecot 2.4 (`dovecot/dovecot:2.4.4` pinned, SQL auth against MFB database)
 - **Webmail**: Roundcube (`roundcube/roundcubemail:latest`, read-only via Dovecot IMAP)
 - **Package manager**: uv (with uv.lock)
 
@@ -155,7 +155,7 @@ Uses **UUID-based paths** with **LAYOUT=fs** and **SubFolders Verbatim**. Folder
 
 ## Dovecot Integration
 
-- Uses **official `dovecot/dovecot:2.4.2`** image (pinned: 2.4.3+ replaces the global ACL file with settings blocks — port mfb-acl before bumping) — no custom Dockerfile
+- Uses **official `dovecot/dovecot:2.4.4`** image (latest stable) — no custom Dockerfile
 - Config files volume-mounted from `docker/dovecot/conf.d/mfb-*.conf` to `/etc/dovecot/conf.d/`
 - SQL auth queries the MFB `users` and `mail_stores` tables directly via PostgreSQL
 - `auth_mechanisms = plain login` (login required by Roundcube)
@@ -165,7 +165,7 @@ Uses **UUID-based paths** with **LAYOUT=fs** and **SubFolders Verbatim**. Folder
 - doveadm HTTP API on port 8080 for stats collection and reload commands
 - **Lua userdb**: `mfb-lua-userdb.lua` calls MFB's internal API (`GET /api/internal/dovecot/userdb/{username}`) at login. Returns dynamic namespace fields per account. Uses `dovecot.http.client` + `require "json"`. Passdb stays SQL.
 - **Dynamic namespaces**: Each account becomes a Dovecot namespace. First account = inbox namespace (no prefix). Others get `"Name (email)/"` prefix. MFB is the control plane for IMAP visibility.
-- **ACL read-only**: `acl_driver = vfile`, `acl_globals_only = yes`, `acl_global_path = /etc/dovecot/dovecot-acl` with `* owner lrs` (lookup, read, write-seen). Blocks delete, expunge, insert, flag changes. mbsync writes directly to filesystem — unaffected by ACLs.
+- **ACL read-only**: `acl_driver = vfile`, `acl_globals_only = yes`. ACLs are settings blocks (dovecot 2.4.3+ removed the global acl file): a global `acl readonly { acl_id = owner; acl_rights = lrs }` makes every mailbox owner-read-only (incl. dynamic per-account namespaces), and `mailbox Staging` / `mailbox Staging/*` filters grant `lrwstie` on the per-user restore-staging namespace. Blocks delete, expunge, insert, flag changes everywhere except Staging. mbsync writes directly to filesystem — unaffected by ACLs.
 
 ## Roundcube Webmail
 
