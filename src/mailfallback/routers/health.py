@@ -3,12 +3,13 @@ import hmac
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
-from prometheus_client import CollectorRegistry, Gauge, generate_latest
+from prometheus_client import CollectorRegistry, Gauge, Info, generate_latest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from mailfallback.dependencies import get_db
 from mailfallback.models import Account, JobStatus, SyncJob
+from mailfallback.version import __version__
 
 router = APIRouter(tags=["health"])
 
@@ -47,6 +48,8 @@ JOBS_PENDING = Gauge(
     "Pending jobs in queue",
     registry=registry,
 )
+APP_INFO = Info("mailfallback", "MailFallBack build info", registry=registry)
+APP_INFO.info({"version": __version__})
 
 
 @router.get("/readyz")
