@@ -42,6 +42,7 @@ from mailfallback.services.scheduler import start_scheduler, stop_scheduler
 from mailfallback.services.store_service import ensure_default_store, set_allowed_stores
 from mailfallback.services.sync_worker import shutdown_sync_executor
 from mailfallback.services.user_service import ensure_admin_exists
+from mailfallback.version import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +162,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="MailFallBack",
         description="Self-hosted email backup service",
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
     )
     from mailfallback.middleware.force_password_change import ForcePasswordChangeMiddleware
@@ -201,7 +202,7 @@ def create_app() -> FastAPI:
 
     @app.get("/healthz")
     async def healthz():
-        return {"status": "ok"}
+        return {"status": "ok", "version": __version__}
 
     return app
 

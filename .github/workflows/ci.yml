@@ -102,3 +102,5 @@ jobs:
           file: docker/Dockerfile
           push: ${{ github.event_name == 'push' }}
           tags: ${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
+          build-args: |
+            MFB_GIT_SHA=${{ github.sha }}

@@ -1,0 +1,31 @@
+# git-cliff configuration — https://git-cliff.org/docs/configuration
+# NB: nessun `header`: CHANGELOG.md è gestito interamente via --prepend
+# (un header statico duplicherebbe a ogni release).
+[changelog]
+body = """
+## [{{ version }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group }}
+{% for commit in commits %}
+- {{ commit.message | upper_first }}{% if commit.scope %} *({{ commit.scope }})*{% endif %}
+{%- endfor %}
+{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+tag_pattern = "^[0-9]{4}\\.[0-9]{2}\\.[0-9]+$"
+commit_parsers = [
+  { message = "^feat", group = "Features" },
+  { message = "^fix", group = "Fixes" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Refactoring" },
+  { message = "^docs", group = "Documentation" },
+  { message = "^test", group = "Testing" },
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^chore\\(deps\\)", group = "Dependencies" },
+  { message = "^(chore|ci|build)", group = "Maintenance" },
+  { message = ".*", group = "Other" },
+]

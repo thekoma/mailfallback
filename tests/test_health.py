@@ -23,3 +23,11 @@ def test_metrics_endpoint(client, db_session):
     assert resp.status_code == 200
     assert "mailfallback_accounts_total" in resp.text
     assert "mailfallback_jobs_pending" in resp.text
+
+
+def test_metrics_exposes_version_info(client, db_session):
+    resp = client.get("/metrics", headers={"Authorization": "Bearer test-key"})
+    assert resp.status_code == 200
+    from mailfallback.version import __version__
+
+    assert f'mailfallback_info{{version="{__version__}"}} 1.0' in resp.text

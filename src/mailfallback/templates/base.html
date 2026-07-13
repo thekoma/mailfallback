@@ -55,6 +55,7 @@
             <a href="/profile" {% if request.url.path == "/profile" %}class="active"{% endif %}><i data-lucide="circle-user-round" class="icon-nav"></i>{{ user.username }}</a>
             <a href="#" hx-post="/api/auth/logout" hx-target="body"><i data-lucide="log-out" class="icon-nav"></i>Logout</a>
         </nav>
+        <div class="sidebar-version">MFB {{ app_version }}</div>
         {% endif %}
     </aside>
 
