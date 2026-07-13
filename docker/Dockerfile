@@ -1,5 +1,12 @@
 FROM python:3.14-slim
 
+ARG MFB_VERSION=dev
+ARG MFB_GIT_SHA=unknown
+LABEL org.opencontainers.image.title="MailFallBack" \
+      org.opencontainers.image.source="https://github.com/thekoma/mailfallback" \
+      org.opencontainers.image.version="${MFB_VERSION}" \
+      org.opencontainers.image.revision="${MFB_GIT_SHA}"
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        isync ca-certificates curl restic libsasl2-modules-kdexoauth2 \
