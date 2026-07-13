@@ -90,6 +90,13 @@ uv run alembic upgrade head
 docker compose exec mailfallback uv run alembic upgrade head
 ```
 
+## Release (CalVer)
+
+- Versioning: `YYYY.MM.INC` (es. `2026.07.0`), fonte unica `src/mailfallback/version.py` (NON pyproject: PEP 440 normalizzerebbe `07`→`7`). Bumpata SOLO dalla release PR.
+- Flusso: ogni push su main aggiorna la PR `release/next` (version bump + CHANGELOG.md via git-cliff + callout migration). Merge della PR → `release.yml`: build multi-arch → push ghcr (`:VER`, `:stable`, `:latest`) → tag git + GitHub Release PER ULTIMI (mai tag orfani).
+- Prerelease: "Run workflow" su Release → rc/beta (`2026.07.1-rc1`, alias `:rc`, GitHub prerelease, nessun changelog).
+- La release PR (creata con GITHUB_TOKEN) non triggera la CI: per forzarla, close/reopen.
+
 ## Key Patterns
 
 - **TemplateResponse**: Use `request=request, name="template.html", context={...}` (Python 3.14 Starlette API)
