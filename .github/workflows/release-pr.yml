@@ -1,0 +1,101 @@
+name: Release PR
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-pr
+  cancel-in-progress: true
+
+jobs:
+  release-pr:
+    runs-on: ubuntu-latest
+    # Loop guard: il merge della release PR stessa non deve rigenerarla
+    # (a quel punto il tag non esiste ancora e il calcolo CalVer sarebbe sbagliato).
+    # Copre sia merge-commit ("Merge pull request #N from thekoma/release/next")
+    # sia squash ("chore(release): X.Y.Z (#N)").
+    if: >-
+      ${{ !startsWith(github.event.head_commit.message, 'chore(release):') &&
+          !contains(github.event.head_commit.message, 'from thekoma/release/next') }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute next version
+        id: ver
+        run: echo "version=$(scripts/next_calver.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Bump version.py
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          sed -i "s/^__version__ = .*/__version__ = \"${VERSION}\"/" src/mailfallback/version.py
+          grep -q "\"${VERSION}\"" src/mailfallback/version.py
+
+      - name: Ensure CHANGELOG.md exists (first release)
+        run: touch CHANGELOG.md
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4
+        with:
+          config: cliff.toml
+          args: --unreleased --tag ${{ steps.ver.outputs.version }} --prepend CHANGELOG.md
+
+      - name: Release-notes section for PR body
+        id: notes
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4
+        with:
+          config: cliff.toml
+          args: --unreleased --tag ${{ steps.ver.outputs.version }} --strip all
+        env:
+          OUTPUT: release-notes.md
+
+      - name: Migration callout
+        id: migrations
+        run: |
+          LAST_TAG=$(git tag -l | grep -E '^[0-9]{4}\.[0-9]{2}\.[0-9]+$' | sort -V | tail -1 || true)
+          if [ -n "$LAST_TAG" ]; then
+            NEW=$(git diff --name-only --diff-filter=A "${LAST_TAG}..HEAD" -- alembic/versions/ | grep -oE '[^/]+$' | sort || true)
+          else
+            # Prima release: tutte le migration esistenti (callout onesto, non un diff).
+            NEW=$(git ls-files 'alembic/versions/*.py' | grep -oE '[^/]+$' | sort || true)
+          fi
+          {
+            echo "body<<EOF"
+            if [ -n "$NEW" ]; then
+              echo "> ⚠️ **DB migrations included:**"
+              echo "$NEW" | awk '{print "> - " $0}'
+            else
+              echo "> No DB migrations in this release."
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compose PR body
+        run: |
+          {
+            echo "${{ steps.migrations.outputs.body }}"
+            echo ""
+            cat release-notes.md
+          } > pr-body.md
+          rm release-notes.md
+
+      - name: Create or update release PR
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
+        with:
+          branch: release/next
+          title: "chore(release): ${{ steps.ver.outputs.version }}"
+          commit-message: "chore(release): ${{ steps.ver.outputs.version }}"
+          body-path: pr-body.md
+          labels: release
+          add-paths: |
+            src/mailfallback/version.py
+            CHANGELOG.md
+          delete-branch: true
