@@ -148,8 +148,25 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "${{ needs.version.outputs.version }}" "${{ needs.version.outputs.sha }}"
-          git push origin "refs/tags/${{ needs.version.outputs.version }}"
+
+          VERSION="${{ needs.version.outputs.version }}"
+          SHA="${{ needs.version.outputs.sha }}"
+
+          # Check if tag already exists
+          if git rev-parse -q --verify "refs/tags/${VERSION}^{commit}" > /dev/null 2>&1; then
+            EXISTING_SHA=$(git rev-parse "refs/tags/${VERSION}^{commit}")
+            if [ "$EXISTING_SHA" = "$SHA" ]; then
+              echo "Tag '${VERSION}' already exists at expected SHA ${SHA} — skipping create and push"
+              exit 0
+            else
+              echo "ERROR: Tag '${VERSION}' already exists at SHA ${EXISTING_SHA}, but expected SHA ${SHA}" >&2
+              exit 1
+            fi
+          fi
+
+          # Tag doesn't exist, create and push
+          git tag "$VERSION" "$SHA"
+          git push origin "refs/tags/$VERSION"
 
       - name: Extract release notes
         if: needs.version.outputs.prerelease == 'false'
