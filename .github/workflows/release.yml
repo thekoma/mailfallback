@@ -1,24 +1,23 @@
 name: Release
 
 on:
+  pull_request:
+    types: [closed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       type:
-        description: "Release type"
+        description: "Prerelease type (full releases go through the release PR)"
         type: choice
-        options:
-          - release
-          - rc
-          - beta
-        default: release
-  push:
-    tags:
-      - "[0-9]*.[0-9]*.[0-9]*"
-      - "[0-9]*.[0-9]*.[0-9]*-*"
+        options: [rc, beta]
+        default: rc
 
 permissions:
   contents: write
   packages: write
+
+concurrency:
+  group: release
 
 env:
   REGISTRY: ghcr.io
@@ -26,13 +25,20 @@ env:
 
 jobs:
   version:
+    # Gira solo per: merge della release PR, oppure dispatch manuale (prerelease).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true &&
+       contains(github.event.pull_request.labels.*.name, 'release'))
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
+      sha: ${{ steps.resolve.outputs.sha }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || 'main' }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -40,54 +46,19 @@ jobs:
         id: resolve
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            YEAR_MONTH="$(date +%Y).$(date +%-m)"
-            TYPE="${{ inputs.type }}"
-
-            LATEST=$(git tag -l "${YEAR_MONTH}.*" --sort=-v:refname | grep -vE '\-' | head -1)
-            if [ -z "$LATEST" ]; then
-              NEXT_INC=0
-            else
-              CURRENT_INC=$(echo "$LATEST" | awk -F. '{print $3}')
-              NEXT_INC=$((CURRENT_INC + 1))
-            fi
-            BASE="${YEAR_MONTH}.${NEXT_INC}"
-
-            if [ "$TYPE" = "release" ]; then
-              VERSION="$BASE"
-              PRERELEASE=false
-            else
-              LATEST_PRE=$(git tag -l "${BASE}-${TYPE}*" --sort=-v:refname | head -1)
-              if [ -z "$LATEST_PRE" ]; then
-                PRE_NUM=1
-              else
-                CURRENT_PRE=$(echo "$LATEST_PRE" | grep -oE '[0-9]+$')
-                PRE_NUM=$((CURRENT_PRE + 1))
-              fi
-              VERSION="${BASE}-${TYPE}${PRE_NUM}"
-              PRERELEASE=true
-            fi
-
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag "${VERSION}"
-            git push origin --tags
-
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
+            VERSION=$(scripts/next_calver.sh --pre "${{ inputs.type }}")
+            PRERELEASE=true
           else
-            VERSION="${GITHUB_REF_NAME}"
-            if echo "$VERSION" | grep -qE '\-(rc|beta|alpha)'; then
-              PRERELEASE=true
-            else
-              PRERELEASE=false
-            fi
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
+            VERSION=$(grep -E '^__version__' src/mailfallback/version.py | grep -oE '"[^"]+"' | tr -d '"')
+            echo "$VERSION" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]+$' || { echo "version.py has no release version: $VERSION" >&2; exit 1; }
+            PRERELEASE=false
           fi
-
-          echo "### Release" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Version:** ${VERSION}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Pre-release:** ${PRERELEASE}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "version=${VERSION}"
+            echo "prerelease=${PRERELEASE}"
+            echo "sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          echo "### Release ${VERSION} (prerelease=${PRERELEASE})" >> "$GITHUB_STEP_SUMMARY"
 
   build:
     needs: version
@@ -104,7 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          ref: ${{ needs.version.outputs.version }}
+          ref: ${{ needs.version.outputs.sha }}
 
       - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
         with:
@@ -122,6 +93,9 @@ jobs:
           push: true
           platforms: ${{ matrix.platform }}
           tags: ${{ env.IMAGE }}:${{ needs.version.outputs.version }}-${{ matrix.suffix }}
+          build-args: |
+            MFB_VERSION=${{ needs.version.outputs.version }}
+            MFB_GIT_SHA=${{ needs.version.outputs.sha }}
 
   manifest:
     needs: [version, build]
@@ -140,38 +114,64 @@ jobs:
           VERSION="${{ needs.version.outputs.version }}"
           PRERELEASE="${{ needs.version.outputs.prerelease }}"
 
-          # Version-specific tag
           docker buildx imagetools create \
             -t ${{ env.IMAGE }}:${VERSION} \
             ${{ env.IMAGE }}:${VERSION}-amd64 \
             ${{ env.IMAGE }}:${VERSION}-arm64
 
           if [ "$PRERELEASE" = "false" ]; then
-            # :stable alias for releases
             docker buildx imagetools create \
               -t ${{ env.IMAGE }}:stable \
               -t ${{ env.IMAGE }}:latest \
               ${{ env.IMAGE }}:${VERSION}-amd64 \
               ${{ env.IMAGE }}:${VERSION}-arm64
-          else
-            # :rc alias for release candidates
-            if echo "$VERSION" | grep -qE '\-rc'; then
-              docker buildx imagetools create \
-                -t ${{ env.IMAGE }}:rc \
-                ${{ env.IMAGE }}:${VERSION}-amd64 \
-                ${{ env.IMAGE }}:${VERSION}-arm64
-            fi
+          elif echo "$VERSION" | grep -qE '\-rc'; then
+            docker buildx imagetools create \
+              -t ${{ env.IMAGE }}:rc \
+              ${{ env.IMAGE }}:${VERSION}-amd64 \
+              ${{ env.IMAGE }}:${VERSION}-arm64
           fi
 
   release:
+    # Tag git + GitHub Release SOLO dopo che immagini e manifest sono pushati:
+    # un build fallito non lascia mai un tag orfano.
     needs: [version, manifest]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Create git tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ needs.version.outputs.version }}" "${{ needs.version.outputs.sha }}"
+          git push origin "refs/tags/${{ needs.version.outputs.version }}"
+
+      - name: Extract release notes
+        if: needs.version.outputs.prerelease == 'false'
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4
+        with:
+          config: cliff.toml
+          args: --current --strip all
+        env:
+          OUTPUT: release-notes.md
 
       - name: Create GitHub Release
+        if: needs.version.outputs.prerelease == 'false'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           tag_name: ${{ needs.version.outputs.version }}
-          prerelease: ${{ needs.version.outputs.prerelease }}
+          body_path: release-notes.md
+          prerelease: false
+
+      - name: Create GitHub Prerelease
+        if: needs.version.outputs.prerelease == 'true'
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+        with:
+          tag_name: ${{ needs.version.outputs.version }}
+          prerelease: true
           generate_release_notes: true
