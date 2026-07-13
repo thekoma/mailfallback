@@ -201,7 +201,9 @@ def create_app() -> FastAPI:
 
     @app.get("/healthz")
     async def healthz():
-        return {"status": "ok"}
+        from mailfallback.version import __version__
+
+        return {"status": "ok", "version": __version__}
 
     return app
 
