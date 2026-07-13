@@ -13,6 +13,7 @@ from mailfallback.dependencies import get_db
 from mailfallback.models import Account, SyncJob, User, UserRole
 from mailfallback.services.account_service import get_accounts_for_user
 from mailfallback.services.user_service import authenticate_user
+from mailfallback.version import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,7 @@ templates.env.filters["time_ago_class"] = _time_ago_class
 templates.env.filters["number"] = _number_format
 templates.env.globals["webmail_url"] = settings.webmail_url
 templates.env.globals["webmail_enabled"] = settings.webmail_enabled
+templates.env.globals["app_version"] = __version__
 
 # Honest copy per pause reason — chip tooltips + panel headlines.
 PAUSE_TOOLTIPS = {

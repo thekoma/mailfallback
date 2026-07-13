@@ -198,6 +198,7 @@ body { overflow-x: hidden; }
 }
 .sidebar-nav hr { margin: 0.3rem 1.2rem; border-color: var(--pico-muted-border-color); }
 .sidebar-label { padding: 0.8rem 1.2rem 0.25rem; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--pico-secondary); border-top: 1px solid var(--pico-muted-border-color); margin-top: 0.3rem; }
+.sidebar-version { padding: 0.8rem 1.2rem; font-size: 0.7rem; color: var(--pico-muted-color); border-top: 1px solid var(--pico-muted-border-color); margin-top: 0.3rem; }
 .sidebar-overlay {
     display: none;
     position: fixed;
