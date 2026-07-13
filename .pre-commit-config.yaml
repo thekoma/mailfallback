@@ -3,7 +3,10 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: '^src/mailfallback/static/vendor/'
       - id: end-of-file-fixer
+        # vendored assets must stay byte-identical to upstream (sync_vendor.py --check)
+        exclude: '^src/mailfallback/static/vendor/'
       - id: check-yaml
         args: ['--unsafe']
       - id: check-json

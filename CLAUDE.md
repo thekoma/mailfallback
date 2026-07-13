@@ -98,7 +98,8 @@ docker compose exec mailfallback uv run alembic upgrade head
 - **Field allowlists**: Update functions use `_UPDATABLE_*_FIELDS` sets to restrict which columns can be changed (see `account_service.py`, `user_service.py`, `store_service.py`)
 - **Inline styles**: All CSS in `static/css/style.css`, use classes not inline styles
 - **JavaScript**: All JS in `static/js/` (`core.js` + per-page files like `account-detail.js`, `restore_workspace.js`), no inline `<script>` blocks
-- **Icons**: Lucide via CDN, use classes `icon-sm/md/lg/xl icon-inline`
+- **Icons**: Lucide (vendored), use classes `icon-sm/md/lg/xl icon-inline`
+- **Vendored frontend assets**: htmx/Alpine/Lucide/flatpickr/Pico live in `static/vendor/` with versions pinned in `vendor.json`. Renovate bumps the manifest (custom manager); after a bump run `python3 scripts/sync_vendor.py` to re-download the files — the `vendor` CI job fails on drift
 - **Sync failure classification**: throttled/transient/budget_paused are self-recovering pauses, never error states (`sync_failures.py` + `sync_budget.py`); only `error` is red in the UI
 - **New columns with NOT NULL**: Always add `server_default` in migrations
 - **Sidebar active state**: `request.url.path` checked in `base.html` to add `class="active"` on current nav link
