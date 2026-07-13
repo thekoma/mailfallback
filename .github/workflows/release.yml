@@ -13,8 +13,7 @@ on:
         default: rc
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 concurrency:
   group: release
@@ -62,6 +61,9 @@ jobs:
 
   build:
     needs: version
+    permissions:
+      contents: read
+      packages: write
     strategy:
       matrix:
         include:
@@ -99,6 +101,8 @@ jobs:
 
   manifest:
     needs: [version, build]
+    permissions:
+      packages: write
     runs-on: ubuntu-latest
     steps:
       - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
@@ -136,6 +140,8 @@ jobs:
     # Tag git + GitHub Release SOLO dopo che immagini e manifest sono pushati:
     # un build fallito non lascia mai un tag orfano.
     needs: [version, manifest]
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
