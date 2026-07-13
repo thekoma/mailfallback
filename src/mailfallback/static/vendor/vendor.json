@@ -1,0 +1,36 @@
+{
+  "$comment": "Pinned versions of vendored frontend assets. Renovate bumps `version` fields (customManager in renovate.json, npm datasource). After a bump, run `python3 scripts/sync_vendor.py` to re-download the files; CI fails if files and manifest drift apart. Fonts (Geist) are not managed here.",
+  "packages": {
+    "htmx.org": {
+      "version": "2.0.10",
+      "files": {
+        "dist/htmx.min.js": "htmx.min.js"
+      }
+    },
+    "alpinejs": {
+      "version": "3.15.12",
+      "files": {
+        "dist/cdn.min.js": "alpine.min.js"
+      }
+    },
+    "lucide": {
+      "version": "1.24.0",
+      "files": {
+        "dist/umd/lucide.min.js": "lucide.min.js"
+      }
+    },
+    "flatpickr": {
+      "version": "4.6.13",
+      "files": {
+        "dist/flatpickr.min.js": "flatpickr.min.js",
+        "dist/flatpickr.min.css": "flatpickr.min.css"
+      }
+    },
+    "@picocss/pico": {
+      "version": "2.1.1",
+      "files": {
+        "css/pico.min.css": "pico.min.css"
+      }
+    }
+  }
+}

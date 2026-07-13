@@ -2,5 +2,14 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Vendored frontend assets pinned in vendor.json; files are re-downloaded by scripts/sync_vendor.py and CI blocks drift",
+      "managerFilePatterns": ["/^src/mailfallback/static/vendor/vendor\\.json$/"],
+      "matchStrings": ["\"(?<depName>[^\"]+)\":\\s*\\{\\s*\"version\":\\s*\"(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "npm"
+    }
   ]
 }
