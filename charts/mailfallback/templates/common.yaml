@@ -1,0 +1,279 @@
+{{- include "bjw-s.common.loader.init" . }}
+
+{{- define "mailfallback.config" -}}
+defaultPodOptions:
+  securityContext: {}
+  # No fsGroup on purpose: root-squashed NFS breaks kubelet applyFSGroup; ownership
+  # is uid-1000 end to end (see project journal, incident: fsGroup/root-squash).
+controllers:
+  # Controller key MUST equal the chart/release fullname ("mailfallback") so the app
+  # Deployment renders suffix-less as "mailfallback": common 5.0.1 appends the
+  # identifier to every controller when >1 exists UNLESS identifier == fullname.
+  mailfallback:
+    strategy: Recreate            # never two mbsync writers on the same maildirs
+    containers:
+      main:
+        image:
+          repository: {{ .Values.image.repository }}
+          tag: {{ .Values.image.tag | default .Chart.AppVersion }}
+        env:
+          FORWARDED_ALLOW_IPS: "*"   # TLS terminates upstream; trust proxy headers
+          MAILFALLBACK_DOVECOT_API_URL: http://{{ include "mailfallback.dovecotServiceName" . }}:8080
+          MAILFALLBACK_DOVECOT_IMAP_HOST: {{ include "mailfallback.dovecotServiceName" . }}
+          MAILFALLBACK_DOVECOT_IMAP_PORT: "31143"
+          MAILFALLBACK_DOVECOT_NFS: {{ include "mailfallback.isRwx" . | quote }}
+          MAILFALLBACK_DOVECOT_TLS: {{ .Values.imaps.enabled | quote }}
+          MAILFALLBACK_TIKA_ENABLED: {{ .Values.tika.enabled | quote }}
+          {{- if .Values.tika.enabled }}
+          MAILFALLBACK_TIKA_URL: http://{{ include "mailfallback.tikaServiceName" . }}:9998
+          {{- end }}
+          MAILFALLBACK_WEBMAIL_ENABLED: {{ .Values.webmail.enabled | quote }}
+          {{- if and .Values.webmail.enabled .Values.webmail.hostname }}
+          MAILFALLBACK_WEBMAIL_URL: https://{{ .Values.webmail.hostname }}
+          {{- end }}
+        envFrom:
+          - secretRef:
+              name: {{ .Values.existingSecrets.app }}
+        probes:
+          readiness:
+            enabled: true
+            custom: true
+            spec:
+              httpGet: {path: /readyz, port: 8000}
+              periodSeconds: 10
+          liveness:
+            enabled: true
+            custom: true
+            spec:
+              httpGet: {path: /healthz, port: 8000}
+              initialDelaySeconds: 15
+              periodSeconds: 30
+        resources: {{ .Values.resources.app | toYaml | nindent 10 }}
+  dovecot:
+    strategy: Recreate            # never two dovecots on the same NFS indexes
+    initContainers:
+      wait-config:
+        image:
+          repository: {{ .Values.initImage.repository }}
+          tag: {{ .Values.initImage.tag | quote }}
+        # uid 1000: the NFS export root-squashes and the confd tree is 1000-owned,
+        # so a root busybox couldn't even stat the awaited file (the until loop
+        # would hang forever).
+        securityContext:
+          runAsUser: 1000
+        command:
+          - sh
+          - -c
+          - 'until [ -f /etc/dovecot/conf.d/mfb-auth.conf ]; do echo "waiting for MFB-generated config"; sleep 3; done'
+    containers:
+      main:
+        image:
+          repository: {{ .Values.dovecot.image.repository }}
+          tag: {{ .Values.dovecot.image.tag }}
+        envFrom:
+          - secretRef:
+              name: {{ .Values.existingSecrets.app }}   # provides DOVEADM_PASSWORD
+        probes:
+          readiness:
+            enabled: true
+            custom: true
+            spec:
+              tcpSocket: {port: 31143}
+              periodSeconds: 10
+          liveness:
+            enabled: true
+            custom: true
+            spec:
+              tcpSocket: {port: 31143}
+              initialDelaySeconds: 10
+              periodSeconds: 30
+        resources: {{ .Values.resources.dovecot | toYaml | nindent 10 }}
+  {{- if .Values.webmail.enabled }}
+  webmail:
+    initContainers:
+      wait-config:
+        image:
+          repository: {{ .Values.initImage.repository }}
+          tag: {{ .Values.initImage.tag | quote }}
+        # uid 1000: the NFS export root-squashes and the webmail-conf tree is
+        # 1000-owned, so a root busybox couldn't even stat the awaited file (the
+        # until loop would hang forever).
+        securityContext:
+          runAsUser: 1000
+        command:
+          - sh
+          - -c
+          - 'until [ -f /var/roundcube/config/custom.php ]; do echo "waiting for MFB-generated custom.php"; sleep 3; done'
+    containers:
+      main:
+        image:
+          repository: {{ .Values.webmail.image.repository }}
+          tag: {{ .Values.webmail.image.tag }}
+        envFrom:
+          - secretRef:
+              name: {{ .Values.existingSecrets.roundcube }}
+        probes:
+          readiness:
+            enabled: true
+            custom: true
+            spec:
+              httpGet: {path: /, port: 80}
+              periodSeconds: 10
+        resources: {{ .Values.resources.webmail | toYaml | nindent 10 }}
+  {{- end }}
+  {{- if .Values.tika.enabled }}
+  tika:
+    containers:
+      main:
+        image:
+          repository: {{ .Values.tika.image.repository }}
+          tag: {{ .Values.tika.image.tag }}
+        probes:
+          readiness:
+            enabled: true
+            custom: true
+            spec:
+              tcpSocket: {port: 9998}
+              periodSeconds: 10
+        resources: {{ .Values.resources.tika | toYaml | nindent 10 }}
+  {{- end }}
+service:
+  main:
+    controller: mailfallback
+    forceRename: {{ include "mailfallback.appServiceName" . }}   # Lua userdb hardcodes http://mailfallback:8000
+    ports:
+      http:
+        port: 8000
+  dovecot:
+    controller: dovecot
+    ports:
+      imap: {port: 31143}
+      doveadm: {port: 8080}
+      metrics: {port: 9900}
+  {{- if .Values.imaps.enabled }}
+  dovecot-imaps:
+    controller: dovecot
+    type: {{ .Values.imaps.service.type }}
+    {{- with .Values.imaps.service.loadBalancerIP }}
+    loadBalancerIP: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.imaps.service.annotations }}
+    annotations: {{ . | toYaml | nindent 6 }}
+    {{- end }}
+    ports:
+      imaps: {port: 31993}
+  {{- end }}
+  {{- if .Values.webmail.enabled }}
+  webmail:
+    controller: webmail
+    ports:
+      http: {port: 80}
+  {{- end }}
+  {{- if .Values.tika.enabled }}
+  tika:
+    controller: tika
+    ports:
+      http: {port: 9998}
+  {{- end }}
+persistence:
+  maildirs:
+    {{- if .Values.storage.maildirs.existingClaim }}
+    existingClaim: {{ .Values.storage.maildirs.existingClaim | quote }}
+    {{- else }}
+    accessMode: {{ first .Values.storage.maildirs.accessModes }}
+    size: {{ .Values.storage.maildirs.size }}
+    {{- with .Values.storage.maildirs.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+    {{- end }}
+    advancedMounts:
+      mailfallback:
+        main:
+          - path: /data/mailboxes
+      dovecot:
+        main:
+          - path: /data/mailboxes
+  {{- if .Values.storage.maildirs2.enabled }}
+  maildirs2:
+    {{- if .Values.storage.maildirs2.existingClaim }}
+    existingClaim: {{ .Values.storage.maildirs2.existingClaim | quote }}
+    {{- else }}
+    accessMode: {{ first .Values.storage.maildirs2.accessModes }}
+    size: {{ .Values.storage.maildirs2.size }}
+    {{- with .Values.storage.maildirs2.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+    {{- end }}
+    advancedMounts:
+      mailfallback:
+        main:
+          - path: /data/mailboxes2
+      dovecot:
+        main:
+          - path: /data/mailboxes2
+  {{- end }}
+  confs-dovecot:
+    {{- if .Values.storage.dovecotConfd.existingClaim }}
+    existingClaim: {{ .Values.storage.dovecotConfd.existingClaim | quote }}
+    {{- else }}
+    accessMode: {{ first .Values.storage.dovecotConfd.accessModes }}
+    size: {{ .Values.storage.dovecotConfd.size }}
+    {{- with .Values.storage.dovecotConfd.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+    {{- end }}
+    advancedMounts:
+      mailfallback:
+        main:
+          - path: /confs/dovecot
+      dovecot:
+        wait-config:
+          - path: /etc/dovecot/conf.d
+            readOnly: true
+        main:
+          - path: /etc/dovecot/conf.d
+            readOnly: true
+  {{- if .Values.webmail.enabled }}
+  confs-webmail:
+    {{- if .Values.storage.webmailConf.existingClaim }}
+    existingClaim: {{ .Values.storage.webmailConf.existingClaim | quote }}
+    {{- else }}
+    accessMode: {{ first .Values.storage.webmailConf.accessModes }}
+    size: {{ .Values.storage.webmailConf.size }}
+    {{- with .Values.storage.webmailConf.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+    {{- end }}
+    advancedMounts:
+      mailfallback:
+        main:
+          - path: /confs/webmail
+      webmail:
+        wait-config:
+          - path: /var/roundcube/config
+            readOnly: true
+        main:
+          - path: /var/roundcube/config
+            readOnly: true
+  {{- end }}
+  {{- if and .Values.imaps.enabled .Values.imaps.existingTlsSecret }}
+  imaps-tls:
+    type: secret
+    name: {{ .Values.imaps.existingTlsSecret | quote }}
+    advancedMounts:
+      dovecot:
+        main:
+          - path: /etc/dovecot/ssl
+            readOnly: true
+  {{- end }}
+{{- end -}}
+
+{{- $config := include "mailfallback.config" . | fromYaml -}}
+{{- $_ := mergeOverwrite .Values $config -}}
+{{/* The top-level `route` key is reserved for THIS chart's Gateway API
+     templates (Task 5), not the common library's route feature. Hide it from
+     the library during generate, then restore it for our own templates. */}}
+{{- $savedRoute := .Values.route -}}
+{{- $_ := unset .Values "route" -}}
+{{- include "bjw-s.common.loader.generate" . }}
+{{- if not (kindIs "invalid" $savedRoute) }}{{- $_ := set .Values "route" $savedRoute }}{{- end }}

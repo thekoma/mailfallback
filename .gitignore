@@ -62,3 +62,6 @@ docs/superpowers/
 
 # MkDocs build output
 site/
+
+# Helm chart dependencies (fetched via `helm dependency build`)
+charts/mailfallback/charts/

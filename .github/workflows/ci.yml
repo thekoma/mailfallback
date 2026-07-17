@@ -104,3 +104,26 @@ jobs:
           tags: ${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
           build-args: |
             MFB_GIT_SHA=${{ github.sha }}
+
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+      - name: Add chart repos
+        run: helm repo add bjw-s https://bjw-s-labs.github.io/helm-charts
+      - name: Dependency build
+        run: helm dependency build charts/mailfallback
+      - name: Lint
+        run: helm lint charts/mailfallback
+      - name: Render assertions
+        run: |
+          pip install pyyaml
+          python3 scripts/assert_chart_render.py
+      - name: Kubeconform
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          for f in minimal full existing-claims; do
+            helm template mailfallback charts/mailfallback -n mailfallback -f charts/mailfallback/ci/${f}-values.yaml \
+              | ./kubeconform -strict -ignore-missing-schemas -summary
+          done

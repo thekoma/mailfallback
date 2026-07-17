@@ -136,10 +136,36 @@ jobs:
               ${{ env.IMAGE }}:${VERSION}-arm64
           fi
 
-  release:
-    # Tag git + GitHub Release SOLO dopo che immagini e manifest sono pushati:
-    # un build fallito non lascia mai un tag orfano.
+  chart:
+    # Package + push the Helm chart to ghcr OCI PRIMA del tag (job release):
+    # version == appVersion == CalVer risolta; un push fallito non lascia tag orfani.
     needs: [version, manifest]
+    permissions:
+      packages: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+
+      - name: Login to ghcr
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Package and push
+        run: |
+          VER="${{ needs.version.outputs.version }}"
+          helm repo add bjw-s https://bjw-s-labs.github.io/helm-charts
+          helm dependency build charts/mailfallback
+          helm package charts/mailfallback --version "$VER" --app-version "$VER" -d /tmp/pkg
+          helm push /tmp/pkg/mailfallback-"$VER".tgz oci://ghcr.io/thekoma/charts
+
+  release:
+    # Tag git + GitHub Release SOLO dopo che immagini, manifest e chart sono pushati:
+    # un build fallito non lascia mai un tag orfano.
+    needs: [version, manifest, chart]
     permissions:
       contents: write
     runs-on: ubuntu-latest

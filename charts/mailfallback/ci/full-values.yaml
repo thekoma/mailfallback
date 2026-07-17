@@ -1,0 +1,36 @@
+# Full fixture: every optional feature enabled.
+hostname: mfb.example.com
+
+webmail:
+  enabled: true
+  hostname: mail.example.com
+
+tika:
+  enabled: true
+
+storage:
+  maildirs:
+    size: 50Gi
+  dovecotConfd:
+    size: 2Gi
+  webmailConf:
+    size: 2Gi
+
+imaps:
+  enabled: true
+  existingTlsSecret: imaps-tls  # pragma: allowlist secret
+  certificate:
+    enabled: true
+    issuerRef:
+      name: my-issuer
+    dnsNames:
+      - imap.example.com
+  service:
+    loadBalancerIP: 192.0.2.10
+
+route:
+  enabled: true
+  gateway:
+    name: gw
+    namespace: gw-ns
+  noSsoPolicy: true

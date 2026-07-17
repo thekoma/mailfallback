@@ -19,7 +19,16 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _dovecot_ssl_conf() -> str:
+def _dovecot_ssl_conf(settings: Any) -> str:
+    if getattr(settings, "dovecot_tls", False):
+        # Paths match a mounted kubernetes.io/tls secret. Cleartext stays on:
+        # in-cluster webmail authenticates over plain 31143.
+        return (
+            "ssl = yes\n"
+            "ssl_server_cert_file = /etc/dovecot/ssl/tls.crt\n"
+            "ssl_server_key_file = /etc/dovecot/ssl/tls.key\n"
+            "auth_allow_cleartext = yes\n"
+        )
     return "ssl = no\nauth_allow_cleartext = yes\n"
 
 
@@ -332,6 +341,11 @@ $config['oauth_login_redirect'] = false;
 
     return f"""\
 <?php
+// TLS terminates at the reverse proxy: restore the original scheme so
+// Roundcube builds https URLs (SSO redirect_uri, secure cookies).
+if (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') {{
+    $_SERVER['HTTPS'] = 'on';
+}}
 $config['db_prefix'] = 'rc_';
 $config['use_subscriptions'] = false;
 $config['check_all_folders'] = true;
@@ -352,7 +366,7 @@ $config['search_scope'] = 'base';
 # ---------------------------------------------------------------------------
 
 _DOVECOT_FILES: list[tuple[str, Any]] = [
-    ("mfb-ssl.conf", _dovecot_ssl_conf),
+    ("mfb-ssl.conf", None),
     ("mfb-service.conf", _dovecot_service_conf),
     ("mfb-stats.conf", _dovecot_stats_conf),
     ("mfb-mail.conf", None),
@@ -407,6 +421,8 @@ def generate_dovecot_config(settings: Any) -> list[Path]:
         dest = base / rel_path
         if factory is not None:
             content = factory()
+        elif rel_path == "mfb-ssl.conf":
+            content = _dovecot_ssl_conf(settings)
         elif rel_path == "mfb-mail.conf":
             content = _dovecot_mail_conf(settings)
         elif rel_path == "mfb-fts.conf":
