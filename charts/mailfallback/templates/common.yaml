@@ -56,6 +56,11 @@ controllers:
         image:
           repository: {{ .Values.initImage.repository }}
           tag: {{ .Values.initImage.tag | quote }}
+        # uid 1000: the NFS export root-squashes and the confd tree is 1000-owned,
+        # so a root busybox couldn't even stat the awaited file (the until loop
+        # would hang forever).
+        securityContext:
+          runAsUser: 1000
         command:
           - sh
           - -c
@@ -90,6 +95,11 @@ controllers:
         image:
           repository: {{ .Values.initImage.repository }}
           tag: {{ .Values.initImage.tag | quote }}
+        # uid 1000: the NFS export root-squashes and the webmail-conf tree is
+        # 1000-owned, so a root busybox couldn't even stat the awaited file (the
+        # until loop would hang forever).
+        securityContext:
+          runAsUser: 1000
         command:
           - sh
           - -c
@@ -266,4 +276,4 @@ persistence:
 {{- $savedRoute := .Values.route -}}
 {{- $_ := unset .Values "route" -}}
 {{- include "bjw-s.common.loader.generate" . }}
-{{- if $savedRoute }}{{- $_ := set .Values "route" $savedRoute }}{{- end }}
+{{- if not (kindIs "invalid" $savedRoute) }}{{- $_ := set .Values "route" $savedRoute }}{{- end }}
