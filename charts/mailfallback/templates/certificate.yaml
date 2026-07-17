@@ -1,0 +1,16 @@
+{{- if and .Values.imaps.enabled .Values.imaps.certificate.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-imaps
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: {{ .Values.imaps.certificate.secretName }}
+  issuerRef:
+    name: {{ required "imaps.certificate.issuerRef.name is required" .Values.imaps.certificate.issuerRef.name }}
+    kind: {{ .Values.imaps.certificate.issuerRef.kind }}
+  dnsNames:
+    {{- range .Values.imaps.certificate.dnsNames }}
+    - {{ . }}
+    {{- end }}
+{{- end }}

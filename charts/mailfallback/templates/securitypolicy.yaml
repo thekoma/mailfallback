@@ -1,0 +1,27 @@
+{{- if and .Values.route.enabled .Values.route.noSsoPolicy }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ .Release.Name }}-main-no-sso
+  namespace: {{ .Release.Namespace }}
+spec:
+  # Opt-out from a gateway-level extAuth: MFB has native OIDC + local auth.
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ .Release.Name }}-main
+{{- if .Values.webmail.enabled }}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ .Release.Name }}-webmail-no-sso
+  namespace: {{ .Release.Namespace }}
+spec:
+  # Opt-out from a gateway-level extAuth: Roundcube has native OAuth.
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ .Release.Name }}-webmail
+{{- end }}
+{{- end }}
