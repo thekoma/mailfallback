@@ -20,6 +20,7 @@ class FakeSettings:
     dovecot_api_url = "http://dovecot:8080"
     dovecot_imap_host = "dovecot"
     dovecot_imap_port = 31143
+    dovecot_nfs = False
     tika_enabled = False
     tika_url = "http://tika:9998"
     webmail_enabled = False
@@ -228,3 +229,19 @@ def test_webmail_config_without_oauth(tmp_path):
     content = (tmp_path / "webmail" / "custom.php").read_text()
     assert "oauth" not in content.lower()
     assert "$config['db_prefix'] = 'rc_'" in content
+
+
+def test_mail_conf_default_has_no_nfs_settings(tmp_path):
+    settings = _make_settings(tmp_path)
+    generate_dovecot_config(settings)
+    content = (tmp_path / "dovecot" / "mfb-mail.conf").read_text()
+    assert "mmap_disable" not in content
+    assert "mail_fsync" not in content
+
+
+def test_mail_conf_nfs_mode_adds_safety_settings(tmp_path):
+    settings = _make_settings(tmp_path, dovecot_nfs=True)
+    generate_dovecot_config(settings)
+    content = (tmp_path / "dovecot" / "mfb-mail.conf").read_text()
+    assert "mmap_disable = yes" in content
+    assert "mail_fsync = always" in content

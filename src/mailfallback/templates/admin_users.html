@@ -67,15 +67,15 @@
                             {% if u.id != user.id %}
                             <hr class="dropdown-divider">
                             {% if u.enabled %}
-                            <a class="dropdown-item" onclick="closeDropdown(); this.closest('.actions').querySelector('.toggle-form-{{ u.id }}').submit()">
+                            <a class="dropdown-item" onclick="closeDropdown(); document.querySelector('.toggle-form-{{ u.id }}').submit()">
                                 <i data-lucide="user-x" class="icon-sm"></i> Disable
                             </a>
                             {% else %}
-                            <a class="dropdown-item" onclick="closeDropdown(); this.closest('.actions').querySelector('.toggle-form-{{ u.id }}').submit()">
+                            <a class="dropdown-item" onclick="closeDropdown(); document.querySelector('.toggle-form-{{ u.id }}').submit()">
                                 <i data-lucide="user-check" class="icon-sm"></i> Enable
                             </a>
                             {% endif %}
-                            <a class="dropdown-item dropdown-danger" onclick="closeDropdown(); if(confirm('Delete user {{ u.username }}? This cannot be undone.')) this.closest('.actions').querySelector('.delete-form-{{ u.id }}').submit()">
+                            <a class="dropdown-item dropdown-danger" onclick="closeDropdown(); if(confirm('Delete user {{ u.username }}? This cannot be undone.')) document.querySelector('.delete-form-{{ u.id }}').submit()">
                                 <i data-lucide="trash-2" class="icon-sm"></i> Delete
                             </a>
                             {% endif %}

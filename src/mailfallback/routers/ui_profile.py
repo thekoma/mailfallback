@@ -128,7 +128,8 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
         return RedirectResponse("/login", status_code=303)
 
     form = await request.form()
-    current = form["current_password"]
+    # SSO-provisioned users have no password_hash and the form omits the field
+    current = form.get("current_password", "")
     new = form["new_password"]
     confirm = form["confirm_password"]
 
