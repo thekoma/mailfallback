@@ -1,0 +1,17 @@
+# Existing-claims fixture: all volumes reuse pre-provisioned PVCs.
+webmail:
+  enabled: true
+
+tika:
+  enabled: true
+
+storage:
+  maildirs:
+    existingClaim: mfb-maildirs
+  maildirs2:
+    enabled: true
+    existingClaim: mfb-maildirs2
+  dovecotConfd:
+    existingClaim: mfb-dovecot-confd
+  webmailConf:
+    existingClaim: mfb-webmail-conf
