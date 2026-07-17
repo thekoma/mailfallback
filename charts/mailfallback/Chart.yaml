@@ -1,0 +1,16 @@
+apiVersion: v2
+name: mailfallback
+description: Self-hosted email backup service (mbsync + web UI) with read-only Dovecot IMAP fallback and optional Roundcube webmail
+type: application
+# version/appVersion are injected by the release pipeline (CalVer); dev placeholder:
+version: 0.0.0-dev
+appVersion: 0.0.0-dev
+kubeVersion: ">=1.28.0"
+home: https://github.com/thekoma/mailfallback
+sources:
+  - https://github.com/thekoma/mailfallback
+dependencies:
+  - name: common
+    # renovate: datasource=helm depName=common registryUrl=https://bjw-s-labs.github.io/helm-charts
+    version: 5.0.1
+    repository: https://bjw-s-labs.github.io/helm-charts

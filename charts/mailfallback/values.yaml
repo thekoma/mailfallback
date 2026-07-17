@@ -1,0 +1,108 @@
+# -- MailFallBack application image
+image:
+  repository: ghcr.io/thekoma/mailfallback
+  # -- defaults to the chart appVersion when empty
+  tag: ""
+
+# -- External hostname of the MFB UI (used by route.enabled and NOTES)
+hostname: ""
+
+# -- Existing Secrets holding the environment (the chart NEVER renders secret material).
+# Required keys are listed in NOTES.txt / README.
+existingSecrets:
+  # -- envFrom for the app AND dovecot containers (DB, crypto, dovecot API key, SSO, providers)
+  app: mailfallback-env
+  # -- envFrom for roundcube (ROUNDCUBEMAIL_*); required when webmail.enabled
+  roundcube: roundcube-env
+
+dovecot:
+  image:
+    repository: dovecot/dovecot
+    # renovate: datasource=docker depName=dovecot/dovecot
+    tag: 2.4.4
+
+webmail:
+  enabled: true
+  # -- External hostname of the webmail (route + MAILFALLBACK_WEBMAIL_URL)
+  hostname: ""
+  image:
+    repository: roundcube/roundcubemail
+    # renovate: datasource=docker depName=roundcube/roundcubemail
+    tag: 1.7.1-apache
+
+tika:
+  enabled: true
+  image:
+    repository: apache/tika
+    # renovate: datasource=docker depName=apache/tika
+    tag: 3.3.1.0-full
+
+initImage:
+  repository: docker.io/library/busybox
+  # renovate: datasource=docker depName=docker.io/library/busybox
+  tag: "1.37"
+
+storage:
+  maildirs:
+    size: 20Gi
+    storageClass: ""
+    accessModes: [ReadWriteMany]
+    # -- reuse an existing PVC (takes precedence over size/storageClass)
+    existingClaim: ""
+  maildirs2:
+    enabled: false
+    size: 10Gi
+    storageClass: ""
+    accessModes: [ReadWriteMany]
+    existingClaim: ""
+  dovecotConfd:
+    size: 1Gi
+    storageClass: ""
+    accessModes: [ReadWriteMany]
+    existingClaim: ""
+  webmailConf:
+    size: 1Gi
+    storageClass: ""
+    accessModes: [ReadWriteMany]
+    existingClaim: ""
+
+imaps:
+  # -- expose IMAPS (31993) with TLS; sets MAILFALLBACK_DOVECOT_TLS and mounts the secret
+  enabled: false
+  # -- kubernetes.io/tls secret mounted at /etc/dovecot/ssl
+  existingTlsSecret: ""
+  # -- convenience cert-manager Certificate (creates existingTlsSecret's content)
+  certificate:
+    enabled: false
+    secretName: mailfallback-imaps-tls  # pragma: allowlist secret
+    issuerRef:
+      name: ""
+      kind: ClusterIssuer
+    dnsNames: []
+  service:
+    type: LoadBalancer
+    loadBalancerIP: ""
+    annotations: {}
+
+route:
+  # -- Gateway API HTTPRoutes for the app (hostname) and webmail (webmail.hostname)
+  enabled: false
+  gateway:
+    name: ""
+    namespace: ""
+  # -- Envoy Gateway SecurityPolicy pair opting the routes OUT of a gateway-level extAuth
+  noSsoPolicy: false
+
+resources:
+  app:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "2", memory: 1Gi}
+  dovecot:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 1Gi}
+  webmail:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}
+  tika:
+    requests: {cpu: 100m, memory: 512Mi}
+    limits: {cpu: "2", memory: 2Gi}
