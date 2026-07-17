@@ -45,13 +45,20 @@ service stats {
 """
 
 
-def _dovecot_mail_conf() -> str:
-    return """\
+def _dovecot_mail_conf(settings: Any) -> str:
+    conf = """\
 # Override image defaults -- Lua userdb creates all namespaces dynamically.
 mail_path =
 mail_home =
 mailbox_list_layout = fs
 """
+    if getattr(settings, "dovecot_nfs", False):
+        conf += """\
+# NFS-backed maildirs: avoid mmap on network storage, fsync every write.
+mmap_disable = yes
+mail_fsync = always
+"""
+    return conf
 
 
 def _dovecot_acl_conf() -> str:
@@ -348,7 +355,7 @@ _DOVECOT_FILES: list[tuple[str, Any]] = [
     ("mfb-ssl.conf", _dovecot_ssl_conf),
     ("mfb-service.conf", _dovecot_service_conf),
     ("mfb-stats.conf", _dovecot_stats_conf),
-    ("mfb-mail.conf", _dovecot_mail_conf),
+    ("mfb-mail.conf", None),
     ("mfb-acl.conf", _dovecot_acl_conf),
     ("mfb-fts.conf", None),
     ("mfb-auth.conf", None),
@@ -400,6 +407,8 @@ def generate_dovecot_config(settings: Any) -> list[Path]:
         dest = base / rel_path
         if factory is not None:
             content = factory()
+        elif rel_path == "mfb-mail.conf":
+            content = _dovecot_mail_conf(settings)
         elif rel_path == "mfb-fts.conf":
             content = _dovecot_fts_conf(settings)
         elif rel_path == "mfb-auth.conf":

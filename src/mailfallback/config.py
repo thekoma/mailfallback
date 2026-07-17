@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     dovecot_api_key: str = ""
     dovecot_imap_host: str = "dovecot"
     dovecot_imap_port: int = 31143
+    dovecot_nfs: bool = False  # emit NFS-safe mail settings (mmap_disable, mail_fsync)
 
     webmail_enabled: bool = False
     webmail_url: str = ""
