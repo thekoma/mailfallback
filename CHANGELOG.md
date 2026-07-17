@@ -1,3 +1,32 @@
+## [2026.07.2] - 2026-07-17
+
+### Documentation
+
+- NOTES and README with secret contract and install guide *(chart)*
+
+### Features
+
+- Native TLS config via MAILFALLBACK_DOVECOT_TLS *(dovecot)*
+- Restore https scheme behind TLS-terminating proxies in generated custom.php *(webmail)*
+- Skeleton — Chart.yaml, values contract, bjw-s common 5.0.1 dependency *(chart)*
+- Common-library translation layer (4 controllers, journal invariants baked in) *(chart)*
+- Optional Certificate, HTTPRoutes and no-SSO SecurityPolicies (default off) *(chart)*
+
+### Fixes
+
+- RunAsUser 1000 on wait-config init + robust route-shield restore *(chart)*
+- Register bjw-s helm repo before dependency build *(ci)*
+
+### Maintenance
+
+- Lint + render assertions + kubeconform *(chart)*
+- Package and push the helm chart to ghcr OCI (before tagging) *(release)*
+
+### Other
+
+- Merge pull request #203 from thekoma/feat/helm-chart
+
+Official Helm chart (bjw-s common) + native TLS/proxy config generation
 ## [2026.07.1] - 2026-07-17
 
 ### Features
