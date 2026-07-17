@@ -123,7 +123,7 @@ jobs:
       - name: Kubeconform
         run: |
           curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
-          for f in minimal full existing-claims; do
+          for f in minimal full existing-claims inline-secrets; do
             helm template mailfallback charts/mailfallback -n mailfallback -f charts/mailfallback/ci/${f}-values.yaml \
               | ./kubeconform -strict -ignore-missing-schemas -summary
           done

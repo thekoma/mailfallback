@@ -41,7 +41,9 @@ def check(cond, msg):
         failures.append(msg)
 
 
-for fixture in ("minimal-values.yaml", "full-values.yaml", "existing-claims-values.yaml"):
+NO_SECRET_FIXTURES = ("minimal-values.yaml", "full-values.yaml", "existing-claims-values.yaml")
+
+for fixture in (*NO_SECRET_FIXTURES, "inline-secrets-values.yaml"):
     docs = render(fixture)
     deps, svcs = by(docs, "Deployment"), by(docs, "Service")
     # 1. service name constraint (Lua)
@@ -81,8 +83,9 @@ for fixture in ("minimal-values.yaml", "full-values.yaml", "existing-claims-valu
         app_env.get("MAILFALLBACK_DOVECOT_NFS") == "true",
         f"{fixture}: DOVECOT_NFS not true (default values are RWX)",
     )
-    # no secret material rendered
-    check(not by(docs, "Secret"), f"{fixture}: chart rendered a Secret")
+    # no secret material rendered (defaults / existingSecrets mode)
+    if fixture in NO_SECRET_FIXTURES:
+        check(not by(docs, "Secret"), f"{fixture}: chart rendered a Secret")
 
 # fixture-specific
 docs_min = render("minimal-values.yaml")
@@ -121,6 +124,57 @@ check(not by(docs_ec, "PersistentVolumeClaim"), "existing-claims: chart must not
 check(
     len(by(render("minimal-values.yaml"), "PersistentVolumeClaim")) == 3,
     "minimal: expected 3 chart-managed PVCs (maildirs, confd, webmail-conf)",
+)
+
+# inline-secrets mode: chart-rendered env Secrets with derivation/override/annotations
+docs_inline = render("inline-secrets-values.yaml")
+secrets = by(docs_inline, "Secret")
+check(
+    set(secrets) == {"mailfallback-app-env", "mailfallback-roundcube-env"},
+    f"inline: secret names {set(secrets)}",
+)
+app_sd = secrets.get("mailfallback-app-env", {}).get("stringData", {})
+rc_sd = secrets.get("mailfallback-roundcube-env", {}).get("stringData", {})
+check(
+    app_sd.get("DOVEADM_PASSWORD") == app_sd.get("MAILFALLBACK_DOVECOT_API_KEY"),
+    "inline: DOVEADM_PASSWORD not derived from the API key",
+)
+check(
+    rc_sd.get("ROUNDCUBEMAIL_DEFAULT_HOST") == "mailfallback-dovecot",
+    "inline: DEFAULT_HOST not derived",
+)
+check(
+    rc_sd.get("ROUNDCUBEMAIL_DEFAULT_PORT") == "31993",
+    "inline: explicit DEFAULT_PORT override lost",
+)
+for name in ("mailfallback-app-env", "mailfallback-roundcube-env"):
+    ann = secrets.get(name, {}).get("metadata", {}).get("annotations") or {}
+    check(
+        ann.get("vaultsync/watch") == "secret/data/mailfallback",
+        f"inline: {name} annotations missing",
+    )
+inline_deps = by(docs_inline, "Deployment")
+
+
+def envfrom_names(dep):
+    return {
+        ef["secretRef"]["name"]
+        for c in dep["spec"]["template"]["spec"]["containers"]
+        for ef in c.get("envFrom", [])
+    }
+
+
+check(
+    envfrom_names(inline_deps["mailfallback"]) == {"mailfallback-app-env"},
+    "inline: app envFrom wrong",
+)
+check(
+    envfrom_names(inline_deps["mailfallback-dovecot"]) == {"mailfallback-app-env"},
+    "inline: dovecot envFrom wrong",
+)
+check(
+    envfrom_names(inline_deps["mailfallback-webmail"]) == {"mailfallback-roundcube-env"},
+    "inline: webmail envFrom wrong",
 )
 
 if failures:
