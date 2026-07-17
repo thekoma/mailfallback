@@ -9,6 +9,8 @@ repos:
         exclude: '^src/mailfallback/static/vendor/'
       - id: check-yaml
         args: ['--unsafe']
+        # Helm chart templates are Go templates, not parseable YAML
+        exclude: '^charts/.*/templates/'
       - id: check-json
       - id: check-toml
       - id: check-added-large-files
