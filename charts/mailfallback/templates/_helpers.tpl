@@ -11,3 +11,10 @@ mailfallback
 {{- define "mailfallback.isRwx" -}}
 {{- if has "ReadWriteMany" .Values.storage.maildirs.accessModes }}true{{ else }}false{{ end -}}
 {{- end -}}
+{{/* Secret names for envFrom: chart-managed when inline is enabled, else the user-provided existing Secret. */}}
+{{- define "mailfallback.appSecretName" -}}
+{{- if .Values.inlineSecrets.app.enabled }}{{ .Release.Name }}-app-env{{ else }}{{ .Values.existingSecrets.app }}{{ end -}}
+{{- end -}}
+{{- define "mailfallback.roundcubeSecretName" -}}
+{{- if .Values.inlineSecrets.roundcube.enabled }}{{ .Release.Name }}-roundcube-env{{ else }}{{ .Values.existingSecrets.roundcube }}{{ end -}}
+{{- end -}}
