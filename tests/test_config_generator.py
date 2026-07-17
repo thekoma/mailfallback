@@ -21,6 +21,7 @@ class FakeSettings:
     dovecot_imap_host = "dovecot"
     dovecot_imap_port = 31143
     dovecot_nfs = False
+    dovecot_tls = False
     tika_enabled = False
     tika_url = "http://tika:9998"
     webmail_enabled = False
@@ -245,3 +246,21 @@ def test_mail_conf_nfs_mode_adds_safety_settings(tmp_path):
     content = (tmp_path / "dovecot" / "mfb-mail.conf").read_text()
     assert "mmap_disable = yes" in content
     assert "mail_fsync = always" in content
+
+
+def test_ssl_conf_default_is_plaintext(tmp_path):
+    settings = _make_settings(tmp_path)
+    generate_dovecot_config(settings)
+    content = (tmp_path / "dovecot" / "mfb-ssl.conf").read_text()
+    assert content == "ssl = no\nauth_allow_cleartext = yes\n"
+
+
+def test_ssl_conf_tls_mode_enables_imaps(tmp_path):
+    settings = _make_settings(tmp_path, dovecot_tls=True)
+    generate_dovecot_config(settings)
+    content = (tmp_path / "dovecot" / "mfb-ssl.conf").read_text()
+    assert "ssl = yes" in content
+    assert "ssl_server_cert_file = /etc/dovecot/ssl/tls.crt" in content
+    assert "ssl_server_key_file = /etc/dovecot/ssl/tls.key" in content
+    assert "auth_allow_cleartext = yes" in content  # in-cluster Roundcube uses plain 31143
+    assert "ssl = no" not in content

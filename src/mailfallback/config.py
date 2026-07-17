@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     dovecot_imap_host: str = "dovecot"
     dovecot_imap_port: int = 31143
     dovecot_nfs: bool = False  # emit NFS-safe mail settings (mmap_disable, mail_fsync)
+    dovecot_tls: bool = False  # emit ssl=yes + cert paths (mounted kubernetes.io/tls secret)
 
     webmail_enabled: bool = False
     webmail_url: str = ""
