@@ -1,3 +1,19 @@
+## [2026.07.1] - 2026-07-17
+
+### Features
+
+- Env-gated NFS-safe mail settings (MAILFALLBACK_DOVECOT_NFS) *(dovecot)*
+
+### Fixes
+
+- SSO users can set their first password; fix portaled kebab actions in admin users *(profile)*
+- Uv run --no-sync — the runtime must never revalidate against PyPI (venv is baked at build) *(docker)*
+
+### Other
+
+- Merge pull request #201 from thekoma/feat/dovecot-nfs
+
+NFS-safe dovecot settings + SSO first-password fix + admin kebab actions fix
 ## [2026.07.0] - 2026-07-13
 
 ### Dependencies
