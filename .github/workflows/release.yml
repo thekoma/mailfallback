@@ -157,6 +157,7 @@ jobs:
       - name: Package and push
         run: |
           VER="${{ needs.version.outputs.version }}"
+          helm repo add bjw-s https://bjw-s-labs.github.io/helm-charts
           helm dependency build charts/mailfallback
           helm package charts/mailfallback --version "$VER" --app-version "$VER" -d /tmp/pkg
           helm push /tmp/pkg/mailfallback-"$VER".tgz oci://ghcr.io/thekoma/charts
