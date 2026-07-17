@@ -232,6 +232,20 @@ def test_webmail_config_without_oauth(tmp_path):
     assert "$config['db_prefix'] = 'rc_'" in content
 
 
+def test_custom_php_restores_https_behind_proxy(tmp_path):
+    settings = _make_settings(tmp_path, webmail_enabled=True)
+    generate_webmail_config(settings)
+    content = (tmp_path / "webmail" / "custom.php").read_text()
+    assert content.startswith("<?php\n")
+    proxy_block = (
+        "if (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') {\n"
+        "    $_SERVER['HTTPS'] = 'on';\n"
+        "}"
+    )
+    assert proxy_block in content
+    assert content.index(proxy_block) < content.index("db_prefix")  # runs before any config
+
+
 def test_mail_conf_default_has_no_nfs_settings(tmp_path):
     settings = _make_settings(tmp_path)
     generate_dovecot_config(settings)

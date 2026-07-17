@@ -341,6 +341,11 @@ $config['oauth_login_redirect'] = false;
 
     return f"""\
 <?php
+// TLS terminates at the reverse proxy: restore the original scheme so
+// Roundcube builds https URLs (SSO redirect_uri, secure cookies).
+if (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') {{
+    $_SERVER['HTTPS'] = 'on';
+}}
 $config['db_prefix'] = 'rc_';
 $config['use_subscriptions'] = false;
 $config['check_all_folders'] = true;
