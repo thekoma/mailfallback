@@ -367,3 +367,31 @@ def test_parse_failure_on_known_file_does_not_soft_delete(db_session, maildir_ac
         .count()
     )
     assert deleted == 0  # known files are never re-parsed, so they stay alive
+
+
+def test_incremental_new_message_inserted_without_touching_others(db_session, maildir_account):
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    rows_before = {
+        r.message_id_hash: (r.folder_path, r.maildir_filename, r.last_seen_at, r.deleted_at)
+        for r in db_session.query(index_service.MailIndexMessage).all()
+    }
+    # Drop a single new message (distinct Message-Id) into the existing folder.
+    inbox_cur = os.path.join(maildir_account.maildir_path, "INBOX", "cur")
+    new_fn = "1234567892.M3.host:2,"
+    with open(os.path.join(inbox_cur, new_fn), "wb") as f:
+        f.write(
+            b"From: dave@example.com\r\nSubject: Fresh\r\nMessage-Id: <ghi@host>\r\n\r\nnew body"
+        )
+
+    touched = index_service.upsert_message_set(db_session, maildir_account.id)
+    assert touched == 1  # only the new row was written
+
+    rows_after = {
+        r.message_id_hash: (r.folder_path, r.maildir_filename, r.last_seen_at, r.deleted_at)
+        for r in db_session.query(index_service.MailIndexMessage).all()
+    }
+    new_hash = index_service._hash_message_id("<ghi@host>")
+    assert new_hash in rows_after and new_hash not in rows_before
+    assert rows_after[new_hash][:2] == ("INBOX", new_fn)
+    # Every pre-existing row is byte-for-byte unchanged (incl. last_seen_at).
+    assert {h: v for h, v in rows_after.items() if h != new_hash} == rows_before
