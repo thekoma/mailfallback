@@ -1,3 +1,26 @@
+## [2026.07.3] - 2026-07-18
+
+### Documentation
+
+- Inline secrets guide, derivations table and conditional NOTES *(chart)*
+
+### Features
+
+- Opt-in inlineSecrets mode — chart-rendered env Secrets with vault-pointer passthrough and coupled-key derivation *(chart)*
+
+### Fixes
+
+- String-coerce inline secret annotation values *(chart)*
+
+### Maintenance
+
+- Inline-secrets fixture + derivation/override/annotation assertions *(chart)*
+
+### Other
+
+- Merge pull request #207 from thekoma/feat/chart-inline-secrets
+
+Chart: opt-in inlineSecrets mode (vault-pointer friendly)
 ## [2026.07.2] - 2026-07-17
 
 ### Documentation
