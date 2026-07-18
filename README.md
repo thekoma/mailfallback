@@ -86,7 +86,7 @@ Cloud email providers can lock you out without warning. If your entire digital l
 
 ### Deployment
 - **Docker Compose** with PostgreSQL, the mailfallback app, and Dovecot; optional `webmail` (Roundcube) and `tika` (attachment content search) profiles
-- **Kubernetes** with Helm (bjw-s-labs charts)
+- **Kubernetes** with the official Helm chart (see [Deploy on Kubernetes](#deploy-on-kubernetes-helm))
 - Config **export/import** API for portability between deployments
 - Multi-architecture Docker images (amd64 + arm64)
 
@@ -140,6 +140,23 @@ uv sync --dev
 uv run alembic upgrade head
 uv run uvicorn mailfallback.app:app --host 0.0.0.0 --port 8000
 ```
+
+### Deploy on Kubernetes (Helm)
+
+The official chart is published as an OCI artifact on GHCR. Chart version equals
+the app version (CalVer), so always pass `--version` explicitly:
+
+```bash
+helm install mailfallback oci://ghcr.io/thekoma/charts/mailfallback \
+  --version 2026.07.4 -n mailfallback --create-namespace \
+  -f values.yaml
+```
+
+> **Note:** version-less tag discovery does **not** work with the CalVer scheme
+> (Helm can't semver-match `2026.07.x`) — always pin `--version`.
+
+See the [chart README](charts/mailfallback/README.md) for the full step-by-step
+guide (external PostgreSQL, secrets, storage, exposure, upgrades).
 
 ## Configuration
 

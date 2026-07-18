@@ -158,7 +158,13 @@ jobs:
         run: |
           VER="${{ needs.version.outputs.version }}"
           helm repo add bjw-s https://bjw-s-labs.github.io/helm-charts
-          helm dependency build charts/mailfallback
+          # The bjw-s common library is fetched from GitHub Pages; a transient
+          # 503/timeout there should not fail the release. Retry with backoff.
+          for i in 1 2 3; do
+            helm dependency build charts/mailfallback && break
+            [ "$i" = 3 ] && exit 1
+            echo "dependency build failed (attempt $i), retrying..."; sleep $((i * 10))
+          done
           helm package charts/mailfallback --version "$VER" --app-version "$VER" -d /tmp/pkg
           helm push /tmp/pkg/mailfallback-"$VER".tgz oci://ghcr.io/thekoma/charts
 
