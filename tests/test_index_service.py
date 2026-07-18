@@ -1,5 +1,7 @@
 """Tests for index_service — Mail Index lifecycle."""
 
+import os
+import shutil
 from unittest.mock import patch
 
 import pytest
@@ -264,3 +266,104 @@ def test_backfill_snapshots_skips_already_processed(mock_restic, db_session, mai
     # snapDONE should be SKIPPED — list_files only called for snapNEW
     assert "snapDONE" not in list_files_call_args
     assert "snapNEW" in list_files_call_args
+
+
+def _locate_on_disk(maildir_path, folder_path, filename):
+    """Absolute path of an indexed (folder, filename) coordinate on disk, or None."""
+    for base in index_service.maildir_folder_bases(maildir_path, folder_path):
+        for sub in ("cur", "new"):
+            p = os.path.join(base, sub, filename)
+            if os.path.exists(p):
+                return p
+    return None
+
+
+def test_second_run_unchanged_maildir_writes_nothing(db_session, maildir_account, monkeypatch):
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    rows_before = {
+        r.message_id_hash: (r.folder_path, r.maildir_filename, r.last_seen_at, r.deleted_at)
+        for r in db_session.query(index_service.MailIndexMessage).all()
+    }
+    parse_calls = []
+    real_parse = index_service._parse_headers
+    monkeypatch.setattr(
+        index_service,
+        "_parse_headers",
+        lambda p: parse_calls.append(p) or real_parse(p),
+    )
+    touched = index_service.upsert_message_set(db_session, maildir_account.id)
+    rows_after = {
+        r.message_id_hash: (r.folder_path, r.maildir_filename, r.last_seen_at, r.deleted_at)
+        for r in db_session.query(index_service.MailIndexMessage).all()
+    }
+    assert touched == 0
+    assert parse_calls == []  # zero parses for known files
+    assert rows_after == rows_before  # zero row writes (incl. last_seen_at)
+
+
+def test_flag_rename_relocates_row(db_session, maildir_account):
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    row = db_session.query(index_service.MailIndexMessage).first()
+    # simulate mbsync flag rename: fn -> fn:2,S  (locate the file on disk first)
+    src = _locate_on_disk(maildir_account.maildir_path, row.folder_path, row.maildir_filename)
+    assert src is not None
+    new_fn = row.maildir_filename + ":2,S"
+    os.rename(src, os.path.join(os.path.dirname(src), new_fn))
+    touched = index_service.upsert_message_set(db_session, maildir_account.id)
+    db_session.refresh(row)
+    assert touched == 1
+    assert row.maildir_filename == new_fn
+    assert row.deleted_at is None
+
+
+def test_duplicate_copies_keep_stable_pointer(db_session, maildir_account):
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    row = db_session.query(index_service.MailIndexMessage).first()
+    orig = (row.folder_path, row.maildir_filename)
+    # add a second on-disk copy of the same message in another folder (same Message-Id)
+    src = _locate_on_disk(maildir_account.maildir_path, row.folder_path, row.maildir_filename)
+    assert src is not None
+    dup_dir = os.path.join(maildir_account.maildir_path, "Dup", "cur")
+    os.makedirs(dup_dir, exist_ok=True)
+    shutil.copy(src, os.path.join(dup_dir, "dupcopy"))
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    db_session.refresh(row)
+    assert (row.folder_path, row.maildir_filename) == orig  # pointer stable
+    # delete the stored copy -> pointer must relocate to the surviving duplicate
+    os.remove(src)
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    db_session.refresh(row)
+    assert (row.folder_path, row.maildir_filename) == ("Dup", "dupcopy")
+    assert row.deleted_at is None
+
+
+def test_reappearing_file_undeletes_row(db_session, maildir_account):
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    row = db_session.query(index_service.MailIndexMessage).first()
+    src = _locate_on_disk(maildir_account.maildir_path, row.folder_path, row.maildir_filename)
+    assert src is not None
+    # Stash the file OUTSIDE any cur/new dir so it truly leaves the walk (a
+    # rename inside cur/ would look like a relocation, not a deletion).
+    stash = os.path.join(maildir_account.maildir_path, ".stash")
+    os.makedirs(stash, exist_ok=True)
+    saved = os.path.join(stash, "saved")
+    os.rename(src, saved)
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    db_session.refresh(row)
+    assert row.deleted_at is not None
+    os.rename(saved, src)
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    db_session.refresh(row)
+    assert row.deleted_at is None
+
+
+def test_parse_failure_on_known_file_does_not_soft_delete(db_session, maildir_account, monkeypatch):
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    monkeypatch.setattr(index_service, "_parse_headers", lambda p: None)  # everything unparseable
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    deleted = (
+        db_session.query(index_service.MailIndexMessage)
+        .filter(index_service.MailIndexMessage.deleted_at.isnot(None))
+        .count()
+    )
+    assert deleted == 0  # known files are never re-parsed, so they stay alive

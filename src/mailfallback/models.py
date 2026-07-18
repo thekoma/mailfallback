@@ -624,6 +624,9 @@ class MailIndexMessage(Base):
         default=_utcnow,
         server_default=text("now()"),
     )
+    # Written when the row is written (insert/relocate/un-delete/delete) — NOT
+    # a per-run heartbeat; no reader depends on freshness (index-walk
+    # optimization, 2026-07-18).
     last_seen_at = Column(
         DateTime(timezone=True),
         nullable=False,

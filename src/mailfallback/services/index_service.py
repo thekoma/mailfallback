@@ -252,8 +252,14 @@ def maildir_folder_bases(maildir_path: str, folder_path: str) -> tuple[str, ...]
 
 
 def upsert_message_set(db: Session, account_id: str) -> int:
-    """Walk the account's live Maildir, upsert every mail's headers, mark
-    rows missing-from-disk as deleted. Returns count of rows touched.
+    """Walk the account's live Maildir and reconcile the index with disk.
+
+    Cost model: one bulk SELECT of the account's rows; files whose
+    (folder, filename) coordinates are already indexed are skipped without
+    opening them (Maildir files are content-immutable — every change is a
+    rename). Rows are written only for real changes: new mail, relocated
+    files (flag renames / folder moves), reappearing mail, disappeared mail.
+    Returns the count of rows written.
     """
     account = db.query(Account).filter(Account.id == account_id).first()
     if not account:
@@ -271,73 +277,134 @@ def upsert_message_set(db: Session, account_id: str) -> int:
         rs.state = "live_indexing"
     db.commit()
 
+    # One bulk read instead of one SELECT per message.
+    by_file: dict[tuple[str, str], bytes] = {}
+    by_hash: dict[bytes, tuple[str, str, bool]] = {}
+    for h, folder, fn, deleted_at in (
+        db.query(
+            MailIndexMessage.message_id_hash,
+            MailIndexMessage.folder_path,
+            MailIndexMessage.maildir_filename,
+            MailIndexMessage.deleted_at,
+        )
+        .filter(MailIndexMessage.account_id == account_id)
+        .yield_per(BATCH_SIZE)
+    ):
+        by_file[(folder, fn)] = h
+        by_hash[h] = (folder, fn, deleted_at is not None)
+
     seen_hashes: set[bytes] = set()
+    seen_files: set[tuple[str, str]] = set()
+    relocations: dict[bytes, tuple[str, str]] = {}
     touched = 0
     _reset_tika_stats()
     try:
         for folder, filename, full_path in _walk_maildir(account.maildir_path):
+            key = (folder, filename)
+            seen_files.add(key)
+            known = by_file.get(key)
+            if known is not None:
+                # Content-immutable file already indexed: nothing to do.
+                seen_hashes.add(known)
+                continue
             parsed = _parse_headers(full_path)
             if not parsed:
                 continue
-            seen_hashes.add(parsed["message_id_hash"])
-            existing = (
-                db.query(MailIndexMessage)
-                .filter(
-                    MailIndexMessage.account_id == account_id,
-                    MailIndexMessage.message_id_hash == parsed["message_id_hash"],
-                )
-                .first()
-            )
+            h = parsed["message_id_hash"]
+            seen_hashes.add(h)
+            if h in by_hash:
+                # Known message under new coordinates (flag rename, folder
+                # move, or an additional duplicate copy) — decide after the
+                # walk, when seen_files is complete.
+                relocations.setdefault(h, key)
+                continue
+            by_hash[h] = (folder, filename, False)
+            by_file[key] = h
+            atts = _parse_attachments(full_path)
             now = datetime.now(UTC)
-            if existing:
-                existing.last_seen_at = now
-                existing.deleted_at = None
-                existing.folder_path = folder
-                existing.maildir_filename = filename
-            else:
-                atts = _parse_attachments(full_path)
+            db.add(
+                MailIndexMessage(
+                    account_id=account_id,
+                    folder_path=folder,
+                    maildir_filename=filename,
+                    has_attachments=bool(atts),
+                    # parse failure (None) stays NULL so the backfill
+                    # (attachments_indexed_at IS NULL) retries the file
+                    attachments_indexed_at=now if atts is not None else None,
+                    **parsed,
+                )
+            )
+            for a in atts or []:
                 db.add(
-                    MailIndexMessage(
+                    MailIndexAttachment(
                         account_id=account_id,
-                        folder_path=folder,
-                        maildir_filename=filename,
-                        has_attachments=bool(atts),
-                        # parse failure (None) stays NULL so the backfill
-                        # (attachments_indexed_at IS NULL) retries the file
-                        attachments_indexed_at=now if atts is not None else None,
-                        **parsed,
+                        message_id_hash=h,
+                        **a,
                     )
                 )
-                for a in atts or []:
-                    db.add(
-                        MailIndexAttachment(
-                            account_id=account_id,
-                            message_id_hash=parsed["message_id_hash"],
-                            **a,
-                        )
-                    )
             touched += 1
             # Bound transaction size for big mailboxes (150k+ messages)
             if touched % BATCH_SIZE == 0:
                 db.commit()
-        # Mark missing rows as deleted
-        alive = (
-            db.query(MailIndexMessage)
-            .filter(
-                MailIndexMessage.account_id == account_id,
-                MailIndexMessage.deleted_at.is_(None),
-            )
-            .all()
-        )
+
         now = datetime.now(UTC)
-        deleted_in_batch = 0
-        for row in alive:
-            if row.message_id_hash not in seen_hashes:
-                row.deleted_at = now
+
+        # Relocations and un-deletes: write only rows whose stored pointer is
+        # stale or whose deleted flag must flip. A stored pointer that still
+        # exists on disk stays put (Gmail keeps duplicate copies; rewriting
+        # the pointer every run would ping-pong between them).
+        for h in seen_hashes:
+            stored = by_hash.get(h)
+            if stored is None:
+                continue
+            folder, fn, is_deleted = stored
+            pointer_stale = (folder, fn) not in seen_files
+            new_coords = relocations.get(h)
+            if pointer_stale and new_coords is None:
+                # Every known copy vanished but the hash was seen: the seen
+                # copy IS one of the walked files, so it can only be here if
+                # it matched by_file — pointer can't be stale. Defensive skip.
+                continue
+            if pointer_stale or is_deleted:
+                row = (
+                    db.query(MailIndexMessage)
+                    .filter(
+                        MailIndexMessage.account_id == account_id,
+                        MailIndexMessage.message_id_hash == h,
+                    )
+                    .first()
+                )
+                if row is None:
+                    continue
+                if pointer_stale:
+                    row.folder_path, row.maildir_filename = new_coords
+                row.deleted_at = None
+                row.last_seen_at = now
                 touched += 1
-                deleted_in_batch += 1
-                if deleted_in_batch % BATCH_SIZE == 0:
+                if touched % BATCH_SIZE == 0:
                     db.commit()
+
+        # Soft-delete: alive rows whose hash was not seen anywhere on disk.
+        deleted_in_batch = 0
+        for h, (_folder, _fn, is_deleted) in by_hash.items():
+            if is_deleted or h in seen_hashes:
+                continue
+            row = (
+                db.query(MailIndexMessage)
+                .filter(
+                    MailIndexMessage.account_id == account_id,
+                    MailIndexMessage.message_id_hash == h,
+                )
+                .first()
+            )
+            if row is None:
+                continue
+            row.deleted_at = now
+            row.last_seen_at = now
+            touched += 1
+            deleted_in_batch += 1
+            if deleted_in_batch % BATCH_SIZE == 0:
+                db.commit()
         rs.state = "idle"
         rs.last_indexed_at = now
         rs.last_error = None
