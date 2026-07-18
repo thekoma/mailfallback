@@ -62,10 +62,15 @@ The dovecot and webmail pods have an init container that WAITS for those files
 This is expected -- give it about 30 seconds on a brand-new deployment.
 
 ============================================================================
-4. Required Secrets (the chart NEVER renders secret material)
+4. Required Secrets
 ============================================================================
-This chart consumes two pre-existing Secrets. Create them BEFORE / alongside
-install. See the README for full "kubectl create secret generic" examples.
+{{- if and .Values.inlineSecrets.app.enabled .Values.inlineSecrets.roundcube.enabled }}
+Secrets are chart-managed (inlineSecrets mode).
+{{- else }}
+This chart consumes pre-existing Secrets (it does NOT render secret material
+unless inlineSecrets is enabled). Create them BEFORE / alongside install. See
+the README for full "kubectl create secret generic" examples.
+{{- if not .Values.inlineSecrets.app.enabled }}
 
 --- existingSecrets.app  (Secret "{{ .Values.existingSecrets.app }}") ---
 Consumed by the app AND dovecot containers. Required keys:
@@ -87,7 +92,8 @@ Consumed by the app AND dovecot containers. Required keys:
     MAILFALLBACK_GOOGLE_*          Google OAuth2 (account backup)
     MAILFALLBACK_MICROSOFT_*       Microsoft OAuth2 (account backup)
     MAILFALLBACK_METRICS_API_KEY   protects /metrics
-{{- if .Values.webmail.enabled }}
+{{- end }}
+{{- if and .Values.webmail.enabled (not .Values.inlineSecrets.roundcube.enabled) }}
 
 --- existingSecrets.roundcube  (Secret "{{ .Values.existingSecrets.roundcube }}") ---
 Consumed by the webmail container. Required keys:
@@ -98,6 +104,7 @@ Consumed by the webmail container. Required keys:
     ROUNDCUBEMAIL_SKIN             skin name (e.g. elastic)
     ROUNDCUBEMAIL_PLUGINS          "archive,zipdownload,subscriptions_option"
     ROUNDCUBEMAIL_DES_KEY          Roundcube DES key (24 chars)
+{{- end }}
 {{- end }}
 
 ============================================================================

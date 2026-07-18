@@ -144,6 +144,75 @@ route:
     namespace: envoy-gateway-system
 ```
 
+## Inline secrets
+
+By default the chart references two pre-existing Secrets (see Install above) and
+never renders secret material itself. As an alternative, `inlineSecrets` lets
+the chart render the Secrets for you from values — one for the app + dovecot
+(`<release>-app-env`) and one for Roundcube (`<release>-roundcube-env`). When a
+mode is enabled its `envFrom` switches from `existingSecrets.<name>` to the
+chart-managed Secret automatically, so you do not touch `existingSecrets`.
+
+This is designed for a vault-webhook workflow (see below), where the `values`
+hold vault *pointers* rather than plaintext.
+
+```yaml
+inlineSecrets:
+  app:
+    enabled: true
+    annotations:
+      vaultsync/watch: "secret/data/mailfallback"
+    values:
+      MAILFALLBACK_DATABASE_URL: "postgresql://mfb:${vault:secret/data/mailfallback#db_password}@db:5432/mfb"
+      MAILFALLBACK_DB_PASSWORD: "${vault:secret/data/mailfallback#db_password}"
+      MAILFALLBACK_SECRET_KEY: "${vault:secret/data/mailfallback#secret_key}"
+      MAILFALLBACK_SESSION_SECRET: "${vault:secret/data/mailfallback#session_secret}"
+      MAILFALLBACK_DOVECOT_API_KEY: "${vault:secret/data/mailfallback#api_key}"
+      # DOVEADM_PASSWORD auto-derived
+```
+
+The `values` map holds the same keys documented under Install — the whole
+required set for the app Secret, and the `ROUNDCUBEMAIL_*` set for the roundcube
+Secret. Anything you place under `annotations` is copied verbatim onto the
+rendered Secret's `metadata.annotations`.
+
+**Plaintext warning:** Without a vault webhook or SOPS, inline values land in git, `helm get values` output and the Helm release Secret. Use `existingSecrets` if that is not acceptable.
+
+### Derivations
+
+Three keys are filled in for you when you omit them, so you only supply the
+material a vault actually holds. Supplying the key yourself always wins.
+
+| Key | Derived from | How to override |
+| --- | --- | --- |
+| `DOVEADM_PASSWORD` (app) | Copy of `MAILFALLBACK_DOVECOT_API_KEY` in the same `values` (string copy — a vault pointer survives intact) | Set `DOVEADM_PASSWORD` explicitly in `inlineSecrets.app.values` |
+| `ROUNDCUBEMAIL_DEFAULT_HOST` (roundcube) | The in-cluster dovecot Service name `<release>-dovecot` | Set `ROUNDCUBEMAIL_DEFAULT_HOST` explicitly in `inlineSecrets.roundcube.values` |
+| `ROUNDCUBEMAIL_DEFAULT_PORT` (roundcube) | The plain IMAP port `"31143"` | Set `ROUNDCUBEMAIL_DEFAULT_PORT` explicitly in `inlineSecrets.roundcube.values` |
+
+### Vault-webhook pattern
+
+The intended use is a mutating webhook (e.g. Vault Agent Injector, Vault Secrets
+Operator, or an in-cluster syncer) that resolves `${vault:...}` pointers into
+the live Secret after Helm renders it. The chart's job is only to emit the
+Secret shell plus the pointers and annotations; the webhook does the resolution.
+
+Point the webhook at the Secret with `inlineSecrets.<mode>.annotations` — those
+annotations land on the rendered Secret, which is what the webhook watches.
+Because ArgoCD setups typically `ignoreDifferences` on Secret `data` (so the
+webhook-resolved payload is not reverted on every sync), rotation does **not**
+flow through a data change. Instead bump a trigger annotation — the
+`vaultsync/trigger`-style pattern — so the annotation diff forces a
+re-reconcile and the webhook re-pulls the secret:
+
+```yaml
+inlineSecrets:
+  app:
+    enabled: true
+    annotations:
+      vaultsync/watch: "secret/data/mailfallback"
+      vaultsync/trigger: "2026-07-17T10:00:00Z"   # bump to rotate
+```
+
 ## Values
 
 One row per leaf key in `values.yaml`.
@@ -155,6 +224,12 @@ One row per leaf key in `values.yaml`.
 | `hostname` | `""` | External hostname of the MFB UI (used by `route.enabled` and NOTES) |
 | `existingSecrets.app` | `mailfallback-env` | Secret with env for app + dovecot |
 | `existingSecrets.roundcube` | `roundcube-env` | Secret with env for roundcube |
+| `inlineSecrets.app.enabled` | `false` | Render the app+dovecot Secret `<release>-app-env` from values instead of using `existingSecrets.app` |
+| `inlineSecrets.app.values` | `{}` | Env keys for the rendered app Secret; `DOVEADM_PASSWORD` auto-derived from `MAILFALLBACK_DOVECOT_API_KEY` when absent |
+| `inlineSecrets.app.annotations` | `{}` | Extra `metadata.annotations` on the rendered app Secret (e.g. vault-webhook pointers) |
+| `inlineSecrets.roundcube.enabled` | `false` | Render the roundcube Secret `<release>-roundcube-env` from values instead of using `existingSecrets.roundcube` |
+| `inlineSecrets.roundcube.values` | `{}` | Env keys for the rendered roundcube Secret; `ROUNDCUBEMAIL_DEFAULT_HOST`/`PORT` auto-derived when absent |
+| `inlineSecrets.roundcube.annotations` | `{}` | Extra `metadata.annotations` on the rendered roundcube Secret |
 | `dovecot.image.repository` | `dovecot/dovecot` | Dovecot image |
 | `dovecot.image.tag` | `2.4.4` | Dovecot image tag |
 | `webmail.enabled` | `true` | Deploy Roundcube webmail |

@@ -15,6 +15,26 @@ existingSecrets:
   # -- envFrom for roundcube (ROUNDCUBEMAIL_*); required when webmail.enabled
   roundcube: roundcube-env
 
+# -- Opt-in alternative to existingSecrets: the chart renders the Secrets from
+# these values. Vault-pointer strings (e.g. "${vault:secret/data/x#key}") pass
+# through verbatim; use annotations for webhook/vaultsync integration.
+# WITHOUT a vault webhook or SOPS, these values land in git, `helm get values`
+# and the Helm release Secret — prefer existingSecrets for plaintext setups.
+inlineSecrets:
+  app:
+    enabled: false
+    # -- env keys rendered into Secret <release>-app-env.
+    # DOVEADM_PASSWORD is auto-derived from MAILFALLBACK_DOVECOT_API_KEY when absent.
+    values: {}
+    # -- extra metadata.annotations for the rendered Secret
+    annotations: {}
+  roundcube:
+    enabled: false
+    # -- env keys rendered into Secret <release>-roundcube-env.
+    # ROUNDCUBEMAIL_DEFAULT_HOST/PORT are auto-derived when absent.
+    values: {}
+    annotations: {}
+
 dovecot:
   image:
     repository: dovecot/dovecot

@@ -33,7 +33,7 @@ controllers:
           {{- end }}
         envFrom:
           - secretRef:
-              name: {{ .Values.existingSecrets.app }}
+              name: {{ include "mailfallback.appSecretName" . }}
         probes:
           readiness:
             enabled: true
@@ -72,7 +72,7 @@ controllers:
           tag: {{ .Values.dovecot.image.tag }}
         envFrom:
           - secretRef:
-              name: {{ .Values.existingSecrets.app }}   # provides DOVEADM_PASSWORD
+              name: {{ include "mailfallback.appSecretName" . }}   # provides DOVEADM_PASSWORD
         probes:
           readiness:
             enabled: true
@@ -111,7 +111,7 @@ controllers:
           tag: {{ .Values.webmail.image.tag }}
         envFrom:
           - secretRef:
-              name: {{ .Values.existingSecrets.roundcube }}
+              name: {{ include "mailfallback.roundcubeSecretName" . }}
         probes:
           readiness:
             enabled: true
