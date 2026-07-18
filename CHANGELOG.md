@@ -1,3 +1,18 @@
+## [2026.07.4] - 2026-07-18
+
+### Other
+
+- Merge pull request #210 from thekoma/feat/index-walk-optimization
+
+Index walk optimization: zero-write steady state (fixes the WAL churn from bug.md)
+
+### Performance
+
+- Skip-parse walk with write-on-change reconcile — one bulk SELECT, zero writes at steady state *(index)*
+
+### Testing
+
+- Pin incremental insert leaves existing rows untouched *(index)*
 ## [2026.07.3] - 2026-07-18
 
 ### Documentation
