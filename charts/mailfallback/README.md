@@ -6,6 +6,153 @@ Maildir and serves them read-only over IMAP as a fallback.
 
 Source & docs: https://github.com/thekoma/mailfallback
 
+## Step-by-step deployment
+
+An end-to-end walkthrough for a fresh cluster install. Each step links to the
+reference section below for the full detail — this is the connective tissue, not
+a replacement for those sections.
+
+### 1. Check prerequisites
+
+- Kubernetes ≥ 1.28 and Helm ≥ 3.14 (OCI registry support is on by default).
+- An **external PostgreSQL** reachable from the cluster — the chart ships no
+  database. See [Prerequisites → External PostgreSQL](#external-postgresql).
+- An **RWX-capable `StorageClass`** (NFS, CephFS, …) whose storage root is
+  writable by **uid 1000** (the chart sets no `fsGroup`). See
+  [Prerequisites → RWX storage](#rwx-storage).
+
+### 2. Create the namespace
+
+```bash
+kubectl create namespace mailfallback
+```
+
+(You can skip this and pass `--create-namespace` to `helm install` in step 6.)
+
+### 3. Create the PostgreSQL role and database
+
+MFB and Roundcube share one database (Roundcube tables use the `rc_` prefix).
+Create an empty database and a login role — the app runs Alembic migrations on
+first boot, so you do not create the schema yourself. Use the CloudNativePG
+`Cluster` example or the plain `psql` snippet in
+[Prerequisites → External PostgreSQL](#external-postgresql).
+
+### 4. Choose the secret mode
+
+The chart needs two sets of secret material (app + dovecot, and Roundcube).
+Pick one mode:
+
+- **Mode A — `existingSecrets` (recommended).** You create the two Secrets with
+  `kubectl create secret` and the chart references them by name. Follow
+  [Install → 1. Create the two Secrets](#1-create-the-two-secrets) for the exact
+  `kubectl` commands and the full key list.
+- **Mode B — `inlineSecrets`.** The chart renders the Secrets from values,
+  intended for a vault-webhook workflow. See [Inline secrets](#inline-secrets).
+  **Plaintext warning:** without a vault webhook or SOPS, inline values land in
+  git, `helm get values`, and the Helm release Secret — use Mode A if that is
+  not acceptable.
+
+### 5. Write a minimal `values.yaml`
+
+**Mode A** (references the Secrets from step 4):
+
+```yaml
+hostname: mail.example.com
+webmail:
+  enabled: true
+  hostname: webmail.example.com
+existingSecrets:
+  app: mailfallback-env
+  roundcube: roundcube-env
+storage:
+  maildirs:
+    size: 50Gi
+    storageClass: nfs-rwx
+route:
+  enabled: true
+  gateway:
+    name: eg
+    namespace: envoy-gateway-system
+```
+
+**Mode B** (chart renders the Secrets — see [Inline secrets](#inline-secrets)
+for the full key set and vault-pointer syntax):
+
+```yaml
+hostname: mail.example.com
+webmail:
+  enabled: true
+  hostname: webmail.example.com
+storage:
+  maildirs:
+    size: 50Gi
+    storageClass: nfs-rwx
+inlineSecrets:
+  app:
+    enabled: true
+    values:                                   # + the DB_* keys, see Inline secrets
+      MAILFALLBACK_DATABASE_URL: "postgresql+psycopg://mailfallback:<DB_PASSWORD>@mailfallback-db-rw:5432/mailfallback"
+      MAILFALLBACK_SECRET_KEY: "<fernet-key>"
+      MAILFALLBACK_SESSION_SECRET: "<random-string>"
+      MAILFALLBACK_DOVECOT_API_KEY: "<random-string>"  # DOVEADM_PASSWORD auto-derived
+  roundcube:
+    enabled: true
+    values:                                   # + the DB_* keys, see Inline secrets
+      ROUNDCUBEMAIL_DES_KEY: "<24-char-random-string>"
+```
+
+### 6. Install the chart
+
+The chart is an OCI artifact on GHCR. Chart version **equals** the app version
+(CalVer), so always pass `--version` explicitly:
+
+```bash
+helm install mailfallback oci://ghcr.io/thekoma/charts/mailfallback \
+  --version <VER> -n mailfallback -f values.yaml
+```
+
+Replace `<VER>` with a released version (e.g. `2026.07.4`). Version-less tag
+discovery does **not** work with the CalVer scheme — Helm cannot semver-match
+`2026.07.x`, so omitting `--version` fails to resolve a chart. Always pin it.
+
+### 7. Verify first boot
+
+On a fresh install the app first generates the Dovecot and Roundcube config
+files; the dovecot and webmail pods have init containers that wait (~30s) for
+those files, so they sit in `Init` until the app has written them.
+
+```bash
+kubectl -n mailfallback get pods -w        # wait for all pods to reach Running
+kubectl -n mailfallback port-forward svc/mailfallback 8000:8000
+curl http://localhost:8000/healthz         # -> {"status":"ok","version":"..."}
+```
+
+Then open the UI (via `hostname`/route, or the port-forward above), log in with
+`admin` / `changeme` (you are forced to change the password on first login), and
+add your first account.
+
+### 8. Expose the service
+
+Choose Gateway API (built in) or bring your own Ingress — see
+[Exposure](#exposure). To reach Dovecot over TLS IMAPS externally, see
+[IMAPS](#imaps). For UI/webmail SSO, see [SSO](#sso).
+
+### 9. Upgrade and rollback
+
+To upgrade, bump the pinned chart version (chart version == app version):
+
+```bash
+helm upgrade mailfallback oci://ghcr.io/thekoma/charts/mailfallback \
+  -n mailfallback --version <YYYY.MM.INC> -f values.yaml
+```
+
+Migrations run automatically on rollout; check the release notes for migration
+callouts first. See [Upgrading](#upgrading). To roll back a bad upgrade:
+
+```bash
+helm rollback mailfallback -n mailfallback
+```
+
 ## Prerequisites
 
 ### External PostgreSQL
@@ -163,7 +310,7 @@ inlineSecrets:
     annotations:
       vaultsync/watch: "secret/data/mailfallback"
     values:
-      MAILFALLBACK_DATABASE_URL: "postgresql://mfb:${vault:secret/data/mailfallback#db_password}@db:5432/mfb"
+      MAILFALLBACK_DATABASE_URL: "postgresql+psycopg://mfb:${vault:secret/data/mailfallback#db_password}@db:5432/mfb"
       MAILFALLBACK_DB_PASSWORD: "${vault:secret/data/mailfallback#db_password}"
       MAILFALLBACK_SECRET_KEY: "${vault:secret/data/mailfallback#secret_key}"
       MAILFALLBACK_SESSION_SECRET: "${vault:secret/data/mailfallback#session_secret}"

@@ -113,7 +113,14 @@ jobs:
       - name: Add chart repos
         run: helm repo add bjw-s https://bjw-s-labs.github.io/helm-charts
       - name: Dependency build
-        run: helm dependency build charts/mailfallback
+        # The bjw-s common library is fetched from GitHub Pages on every run;
+        # a transient 503/timeout there should not fail CI. Retry with backoff.
+        run: |
+          for i in 1 2 3; do
+            helm dependency build charts/mailfallback && break
+            [ "$i" = 3 ] && exit 1
+            echo "dependency build failed (attempt $i), retrying..."; sleep $((i * 10))
+          done
       - name: Lint
         run: helm lint charts/mailfallback
       - name: Render assertions
