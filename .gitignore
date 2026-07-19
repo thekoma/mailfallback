@@ -65,3 +65,4 @@ site/
 
 # Helm chart dependencies (fetched via `helm dependency build`)
 charts/mailfallback/charts/
+bug.md
