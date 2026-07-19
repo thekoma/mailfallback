@@ -2,6 +2,10 @@
 
 MailFallBack runs as a set of Docker containers managed by Docker Compose. This guide covers the standard deployment.
 
+!!! tip "Running on Kubernetes?"
+    Use the official Helm chart instead — see [Kubernetes](kubernetes.md). It is
+    the supported path for cluster deployments.
+
 ## Prerequisites
 
 - **Docker** 24.0 or later
