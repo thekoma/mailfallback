@@ -1,3 +1,62 @@
+## [2026.07.5] - 2026-07-27
+
+### Dependencies
+
+- Update actions/setup-python action to v7 *(deps)*
+- Update azure/setup-helm action to v5 *(deps)*
+- Update docker.io/library/busybox docker tag to v1.38 *(deps)*
+- Update roundcube/roundcubemail docker tag to v1.7.2 *(deps)*
+- Update dependency lucide to v1.25.0 *(deps)*
+- Update actions/checkout digest to 3d3c42e *(deps)*
+- Update docker/login-action digest to abd2ef4 *(deps)*
+- Update astral-sh/setup-uv action to v9 *(deps)*
+- Update dependency lucide to v1.27.0 *(deps)*
+
+### Documentation
+
+- Kubernetes page rewritten around the official Helm chart *(site)*
+
+### Maintenance
+
+- Retry transient dependency fetches in CI; docs: step-by-step deploy guide + drift fixes *(chart)*
+- Sync lucide.min.js to 1.25.0 *(vendor)*
+- Sync lucide.min.js to 1.27.0 *(vendor)*
+
+### Other
+
+- Merge pull request #212 from thekoma/chore/chart-ci-retry-and-deploy-docs
+
+Chart CI retry + step-by-step deploy guide + docs drift fixes
+- Merge pull request #215 from thekoma/docs/site-kubernetes-chart
+
+Docs site: Kubernetes page rewritten around the official Helm chart
+- Merge pull request #216 from thekoma/renovate/actions-setup-python-7.x
+
+chore(deps): update actions/setup-python action to v7
+- Merge pull request #208 from thekoma/renovate/azure-setup-helm-5.x
+
+chore(deps): update azure/setup-helm action to v5
+- Merge pull request #206 from thekoma/renovate/docker.io-library-busybox-1.x
+
+chore(deps): update docker.io/library/busybox docker tag to v1.38
+- Merge pull request #205 from thekoma/renovate/roundcube-roundcubemail-1.x
+
+chore(deps): update roundcube/roundcubemail docker tag to v1.7.2
+- Merge pull request #200 from thekoma/renovate/lucide-monorepo
+
+chore(deps): update dependency lucide to v1.25.0
+- Merge pull request #217 from thekoma/renovate/actions-checkout-digest
+
+chore(deps): update actions/checkout digest to 3d3c42e
+- Merge pull request #220 from thekoma/renovate/docker-login-action-digest
+
+chore(deps): update docker/login-action digest to abd2ef4
+- Merge pull request #218 from thekoma/renovate/astral-sh-setup-uv-9.x
+
+chore(deps): update astral-sh/setup-uv action to v9
+- Merge pull request #219 from thekoma/renovate/lucide-monorepo
+
+chore(deps): update dependency lucide to v1.27.0
 ## [2026.07.4] - 2026-07-18
 
 ### Other
