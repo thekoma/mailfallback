@@ -8,16 +8,16 @@ set has to rediscover the hard way.
 
 ```bash
 helm install mailfallback oci://ghcr.io/thekoma/charts/mailfallback \
-  --version 2026.07.4 -n mailfallback --create-namespace -f values.yaml
+  --version 2026.07.5 -n mailfallback --create-namespace -f values.yaml
 ```
 
 The chart version **equals** the app version and both follow CalVer
 (`YYYY.MM.INC`). There is no separate chart-version axis: to run app
-`2026.07.4` you install chart `2026.07.4`.
+`2026.07.5` you install chart `2026.07.5`.
 
 !!! warning "Always pass `--version`"
     Version-less tag discovery does **not** work with the CalVer scheme. Helm
-    cannot semver-match a tag like `2026.07.4` (the leading zero and the shape
+    cannot semver-match a tag like `2026.07.5` (the leading zero and the shape
     are not valid semver ranges), so `helm pull`/`helm show`/`helm install`
     without `--version` fails to resolve a chart. Always pin an explicit
     released version.
@@ -160,7 +160,7 @@ route:
 
 ```bash
 helm install mailfallback oci://ghcr.io/thekoma/charts/mailfallback \
-  --version 2026.07.4 -n mailfallback -f values.yaml
+  --version 2026.07.5 -n mailfallback -f values.yaml
 ```
 
 ### 7. Verify first boot
@@ -263,6 +263,23 @@ run a `wait-config` init container that blocks until its awaited file exists, so
 those pods stay in `Init` on a first boot until the app has generated the
 config. This is why the app and dovecot cannot simply start in parallel.
 
+## Monitoring
+
+Both halves of the deployment expose Prometheus metrics, on different ports and
+with different auth:
+
+| Endpoint | Port | Auth |
+| --- | --- | --- |
+| MFB app — `/metrics` (accounts, pending jobs, sync outcomes, maildir sizes) | `8000` | `Authorization: Bearer <MAILFALLBACK_METRICS_API_KEY>` |
+| Dovecot — stats HTTP listener | `9900` | none (in-cluster only) |
+
+The app endpoint returns **401 unless `MAILFALLBACK_METRICS_API_KEY` is set** and
+the request carries the matching bearer token, so add it to the app Secret before
+pointing a scraper at it. With the Prometheus Operator, scrape both via
+`ServiceMonitor` resources against the `mailfallback` and `dovecot` Services —
+the app one needs an `authorization` section referencing a Secret holding the
+same key.
+
 ## Container images
 
 The chart pins every image; override tags under the matching values key. Verify
@@ -272,11 +289,42 @@ against `charts/mailfallback/values.yaml` for the version you install.
 |-----------|-------|------------|
 | MFB app | `ghcr.io/thekoma/mailfallback:<CalVer>` (empty tag = chart `appVersion`) | `image.*` |
 | Dovecot | `dovecot/dovecot:2.4.4` | `dovecot.image.*` |
-| Roundcube | `roundcube/roundcubemail:1.7.1-apache` | `webmail.image.*` |
+| Roundcube | `roundcube/roundcubemail:1.7.2-apache` | `webmail.image.*` |
 | Tika | `apache/tika:3.3.1.0-full` | `tika.image.*` |
-| Init (wait-config) | `docker.io/library/busybox:1.37` | `initImage.*` |
+| Init (wait-config) | `docker.io/library/busybox:1.38` | `initImage.*` |
 
 PostgreSQL is **not** part of the chart — bring your own (see the prerequisites).
+
+## Deploying without the chart
+
+The chart is the supported path, but if you prefer your own manifests these are
+the constraints it encodes — get them wrong and the failures are slow and
+confusing rather than loud:
+
+- **Shared maildir storage.** The app writes via mbsync and Dovecot reads via
+  IMAP, both against the same files: use an RWX PVC across pods, or run Dovecot
+  as a sidecar in the app pod with a single-node PVC.
+- **UID consistency.** Every container runs as uid/gid **1000**. Set
+  `runAsUser: 1000` / `runAsGroup: 1000` in the pod security context and avoid
+  `fsGroup` on root-squashed NFS — see [Storage and uid 1000](#storage-and-uid-1000).
+- **Config volumes.** The app generates the Dovecot and Roundcube configuration
+  at boot; share `/confs/dovecot` and `/confs/webmail` with the consuming
+  containers (Dovecot mounts its config at `/etc/dovecot/conf.d`) and gate their
+  startup on the files existing — see
+  [Config-generation init wait](#config-generation-init-wait).
+- **Single writer.** Only one mbsync writer and one Dovecot index owner may
+  touch the maildirs at a time, so both workloads need the `Recreate` update
+  strategy rather than a rolling update.
+- **Probes.** Liveness `GET /healthz` and readiness `GET /readyz`, both on port
+  `8000`.
+- **Service naming.** The app Service must be named `mailfallback` and listen on
+  `8000` — the Dovecot Lua userdb hardcodes `http://mailfallback:8000`.
+- **Ports.** App `8000` (HTTP), Dovecot `31143` (IMAP) / `31993` (IMAPS) /
+  `9900` (metrics) / `8080` (doveadm HTTP API, in-cluster only), Roundcube `80`,
+  Tika `9998`.
+
+The [chart templates](https://github.com/thekoma/mailfallback/tree/main/charts/mailfallback/templates)
+are the reference implementation for all of the above.
 
 ## See also
 
