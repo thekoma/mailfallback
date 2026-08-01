@@ -10,7 +10,14 @@ from sqlalchemy.orm import Session, selectinload
 
 from mailfallback.config import settings
 from mailfallback.dependencies import get_db
-from mailfallback.models import Account, SyncJob, User, UserRole
+from mailfallback.models import (
+    Account,
+    BackupPolicy,
+    BackupStatus,
+    SyncJob,
+    User,
+    UserRole,
+)
 from mailfallback.services.account_service import get_accounts_for_user
 from mailfallback.services.user_service import authenticate_user
 from mailfallback.version import __version__
@@ -258,6 +265,38 @@ async def login_submit(request: Request, db: Session = Depends(get_db)):
     return RedirectResponse("/", status_code=303)
 
 
+def _backup_attention_items(accounts, policies) -> list[dict]:
+    """Attention entries for off-site backup state.
+
+    Kept OUT of the per-account if/elif chain in the dashboard on purpose:
+    that chain branches on sync state, so a mailbox that syncs fine but whose
+    backup is broken would otherwise produce no entry at all.
+    """
+    by_id = {a.id: a for a in accounts}
+    items: list[dict] = []
+    for p in policies:
+        account = by_id.get(p.account_id)
+        if account is None:
+            continue
+        if p.last_status == BackupStatus.running:
+            reason = "Off-site backup running"
+            elapsed = _duration_human(p.last_run_at, None) if p.last_run_at else "—"
+            if elapsed != "—":
+                reason = f"{reason} · {elapsed}"
+            items.append({"id": account.id, "name": account.name, "type": "info", "reason": reason})
+        elif p.last_status == BackupStatus.failed:
+            items.append(
+                {
+                    "id": account.id,
+                    "name": account.name,
+                    "type": "error",
+                    "reason": (p.last_error or "Off-site backup failed")[:80],
+                    "backup": True,
+                }
+            )
+    return items
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
     user = _get_session_user(request, db)
@@ -302,6 +341,9 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
     stale_cutoff = datetime.now(UTC) - timedelta(days=7)
     attention = []
+    # NOTE: the loop below is an if/elif chain on SYNC state. Backup entries
+    # are appended separately, after it — folding them in as another elif
+    # would hide a broken backup behind a healthy sync.
     for a in accounts:
         if a.sync_state.value == "needs_reauth":
             # Revoked/expired OAuth token (e.g. provider password change) —
@@ -338,6 +380,14 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             )
 
     account_ids = [a.id for a in accounts]
+    if account_ids:
+        attention.extend(
+            _backup_attention_items(
+                accounts,
+                db.query(BackupPolicy).filter(BackupPolicy.account_id.in_(account_ids)).all(),
+            )
+        )
+
     recent_jobs = []
     if account_ids:
         jobs = (
@@ -374,7 +424,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
     from sqlalchemy import func
 
-    from mailfallback.models import BackupPolicy, BackupStatus, Repository, SyncState
+    from mailfallback.models import Repository, SyncState
 
     # Wave 4: chain summary feeds the dashboard hero card. Four stages:
     # Source (mailboxes connected) → Mirror (local sync health) →

@@ -163,7 +163,13 @@
             <a href="/accounts/{{ item.id }}"><strong>{{ item.name }}</strong></a>
             <span class="text-small text-muted">— {{ item.reason }}</span>
         </div>
-        {% if item.type == 'error' %}
+        {% if item.type == 'error' and item.backup %}
+        <form method="post" action="/accounts/{{ item.id }}/backup/now">
+            <button type="submit" class="icon-btn primary">
+                <i data-lucide="cloud-upload" class="icon-sm"></i> Back up now
+            </button>
+        </form>
+        {% elif item.type == 'error' %}
         <button class="icon-btn primary" hx-post="/api/sync/{{ item.id }}" hx-swap="none" hx-on::after-request="location.reload()">
             <i data-lucide="refresh-cw" class="icon-sm"></i> Retry
         </button>
