@@ -864,7 +864,7 @@ async def account_backup_now(account_id: str, request: Request, db: Session = De
 
     from mailfallback.services.backup_worker import submit_backup
 
-    submit_backup(backup.id)
+    submit_backup(backup.id, source="manual")
 
     log_action(
         db,

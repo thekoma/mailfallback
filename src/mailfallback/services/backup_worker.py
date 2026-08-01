@@ -2,20 +2,27 @@
 
 import contextlib
 import logging
+import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
 from mailfallback.db import SessionLocal
-from mailfallback.models import Account, BackupPolicy, BackupStatus
+from mailfallback.models import Account, BackupJob, BackupPolicy, BackupStatus, JobStatus
 from mailfallback.services import index_service, restic_service
+from mailfallback.services.backup_service import cleanup_old_backup_jobs
 from mailfallback.services.restic_service import account_tags
 
 logger = logging.getLogger(__name__)
 
 _backup_executor: ThreadPoolExecutor | None = None
 _backup_progress: dict[str, dict] = {}
+# Live restic processes by job id. A wedged backup can only be killed through
+# a handle kept here; the boot sweep also uses membership to tell a genuinely
+# running job from a zombie row.
+_running_backup_procs: dict[str, subprocess.Popen] = {}
 
 
 def get_backup_executor() -> ThreadPoolExecutor:
@@ -44,7 +51,7 @@ def get_backup_progress(backup_id: str) -> dict | None:
     return _backup_progress.get(backup_id)
 
 
-def execute_backup(db: Session, account_backup_id: str) -> None:
+def execute_backup(db: Session, account_backup_id: str, source: str = "schedule") -> None:
     """Main backup function: init repo, run backup, apply retention, update DB."""
     backup = db.query(BackupPolicy).filter(BackupPolicy.id == account_backup_id).first()
     if not backup:
@@ -59,29 +66,61 @@ def execute_backup(db: Session, account_backup_id: str) -> None:
         return
 
     now = datetime.now(UTC)
+    job = BackupJob(
+        policy_id=backup.id,
+        account_id=account.id,
+        status=JobStatus.running,
+        source=source,
+        requested_at=now,
+        started_at=now,
+    )
+    db.add(job)
+
     backup.last_status = BackupStatus.running
     backup.last_error = None
     backup.last_run_at = now
     db.commit()
+    db.refresh(job)
+    job_id = job.id
 
-    _backup_progress[account_backup_id] = {"phase": "starting"}
+    def _tick(event: dict) -> None:
+        """Heartbeat. Every restic message refreshes updated_ts, which is what
+        recover_stalled_backup_jobs reads to tell 'slow' from 'wedged'."""
+        prog = _backup_progress.setdefault(job_id, {})
+        prog["updated_ts"] = time.time()
+        if "percent_done" in event:
+            prog["percent_done"] = event["percent_done"]
+        if "bytes_done" in event:
+            prog["bytes_done"] = event["bytes_done"]
+
+    def _register(proc: subprocess.Popen) -> None:
+        _running_backup_procs[job_id] = proc
+
+    _backup_progress[job_id] = {"phase": "starting", "updated_ts": time.time()}
 
     try:
         # Phase 1: init repo
-        _backup_progress[account_backup_id] = {"phase": "init"}
+        _backup_progress[job_id] = {"phase": "init", "updated_ts": time.time()}
         if not restic_service.init_repo(backup.destination, account.id):
             raise RuntimeError("Failed to initialize restic repository")
 
         # Phase 2: run backup
-        _backup_progress[account_backup_id] = {"phase": "backup"}
+        _backup_progress[job_id] = {"phase": "backup", "updated_ts": time.time()}
         tags = account_tags(account)
         summary = restic_service.run_backup(
-            backup.destination, account.id, account.maildir_path, tags=tags
+            backup.destination,
+            account.id,
+            account.maildir_path,
+            tags=tags,
+            on_event=_tick,
+            register=_register,
         )
-        _backup_progress[account_backup_id] = {"phase": "backup", "summary": summary}
+        if not isinstance(summary, dict):
+            summary = {}
+        _tick({})
 
         # Index hook: record_snapshot for the freshly-created snapshot.
-        snapshot_id = summary.get("snapshot_id") if isinstance(summary, dict) else None
+        snapshot_id = summary.get("snapshot_id")
         if snapshot_id:
             try:
                 index_service.record_snapshot(db, backup.account_id, snapshot_id)
@@ -94,7 +133,7 @@ def execute_backup(db: Session, account_backup_id: str) -> None:
                 )
 
         # Phase 3: apply retention
-        _backup_progress[account_backup_id] = {"phase": "retention"}
+        _backup_progress[job_id] = {"phase": "retention", "updated_ts": time.time()}
         retention_result = restic_service.apply_retention(
             backup.destination,
             account.id,
@@ -118,6 +157,13 @@ def execute_backup(db: Session, account_backup_id: str) -> None:
         backup.last_backup_at = success_at
         backup.last_successful_run_at = success_at
         backup.last_error = None
+
+        job.status = JobStatus.completed
+        job.completed_at = success_at
+        job.snapshot_id = snapshot_id
+        job.bytes_processed = int(summary.get("total_bytes_processed") or 0)
+        job.bytes_added = int(summary.get("data_added") or 0)
+
         try:
             snapshots = restic_service.list_snapshots(backup.destination, account.id)
             backup.last_snapshot_count = len(snapshots)
@@ -132,20 +178,29 @@ def execute_backup(db: Session, account_backup_id: str) -> None:
     except Exception as e:
         backup.last_status = BackupStatus.failed
         backup.last_error = str(e)
+        job.status = JobStatus.failed
+        job.failure_kind = "error"
+        job.completed_at = datetime.now(UTC)
+        job.log = str(e)
         logger.error("Backup failed for account %s: %s", account.id, e)
 
     finally:
-        _backup_progress.pop(account_backup_id, None)
+        _backup_progress.pop(job_id, None)
+        _running_backup_procs.pop(job_id, None)
         db.commit()
+        # Retention is best-effort: losing old history must never turn a
+        # successful backup into a failed one.
+        with contextlib.suppress(Exception):
+            cleanup_old_backup_jobs(db, account.id)
 
 
-def submit_backup(account_backup_id: str) -> None:
+def submit_backup(account_backup_id: str, source: str = "schedule") -> None:
     """Submit a backup job to the bounded thread pool."""
 
     def _run():
         db = SessionLocal()
         try:
-            execute_backup(db, account_backup_id)
+            execute_backup(db, account_backup_id, source=source)
         finally:
             db.close()
 
