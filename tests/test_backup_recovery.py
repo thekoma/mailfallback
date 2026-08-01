@@ -318,3 +318,50 @@ class TestSchedulerWiring:
             assert any(j.id == "backup-watchdog" for j in scheduler.get_jobs())
         finally:
             stop_scheduler()
+
+
+class TestWatchdogRaceWithWorker:
+    """Reaping kills restic, which makes run_backup raise inside the still-live
+    execute_backup. Its except block must not overwrite the classification the
+    watchdog just recorded."""
+
+    def test_worker_error_path_preserves_a_watchdog_verdict(self, db_session, account_backup=None):
+        from unittest.mock import patch
+
+        from mailfallback.models import Account, BackupJob, MailStore, Repository
+        from mailfallback.services import backup_worker
+
+        store = db_session.query(MailStore).first() or MailStore(name="s", path="/data/mailboxes")
+        db_session.add(store)
+        db_session.commit()
+        account = Account(
+            name="Main gMail",
+            imap_host="imap.gmail.com",
+            maildir_path="/data/mailboxes/u",
+            store_id=store.id,
+        )
+        repo = Repository(name="R", backend_type="s3", restic_password="enc")
+        db_session.add_all([account, repo])
+        db_session.commit()
+        pol = BackupPolicy(account_id=account.id, destination_id=repo.id)
+        db_session.add(pol)
+        db_session.commit()
+
+        def reap_then_die(dest, account_id, path, tags=None, on_event=None, register=None):
+            # Simulate the watchdog closing this job mid-run, then restic
+            # dying because the watchdog killed it.
+            job = db_session.query(BackupJob).one()
+            backup_worker._close_job(
+                job, db_session, failure_kind="stalled", marker="[reaped] no restic progress"
+            )
+            db_session.commit()
+            raise RuntimeError("Restic backup failed: signal: killed")
+
+        with patch("mailfallback.services.backup_worker.restic_service") as mock_restic:
+            mock_restic.init_repo.return_value = True
+            mock_restic.run_backup.side_effect = reap_then_die
+            backup_worker.execute_backup(db_session, pol.id)
+
+        job = db_session.query(BackupJob).one()
+        assert job.failure_kind == "stalled", "watchdog verdict must survive"
+        assert "[reaped]" in job.log, "the reaped marker must not be overwritten"

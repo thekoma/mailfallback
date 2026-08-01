@@ -296,12 +296,23 @@ def execute_backup(db: Session, account_backup_id: str, source: str = "schedule"
         logger.info("Backup completed for account %s", account.name)
 
     except Exception as e:
+        # The watchdog may have reaped this very job a moment ago — reaping
+        # kills restic, which is what raised us here. Its verdict is the more
+        # informative one ("stalled", not "restic died"), so don't overwrite a
+        # classification that is already recorded; just append the detail.
+        with contextlib.suppress(Exception):
+            db.refresh(job)
+        already_closed = job.status == JobStatus.failed and job.failure_kind
+
         backup.last_status = BackupStatus.failed
-        backup.last_error = str(e)
         job.status = JobStatus.failed
-        job.failure_kind = "error"
-        job.completed_at = datetime.now(UTC)
-        job.log = str(e)
+        job.completed_at = job.completed_at or datetime.now(UTC)
+        if already_closed:
+            job.log = f"{job.log}\n{e}" if job.log else str(e)
+        else:
+            backup.last_error = str(e)
+            job.failure_kind = "error"
+            job.log = str(e)
         logger.error("Backup failed for account %s: %s", account.id, e)
 
     finally:
