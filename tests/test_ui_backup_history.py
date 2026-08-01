@@ -47,9 +47,19 @@ def test_clock_skew_does_not_render_a_negative_duration():
 
 
 def test_filter_is_registered_on_the_jinja_env():
+    """Assert the registered filter BEHAVES, not that it is the same object.
+
+    test_ui.py purges mailfallback.routers.ui from sys.modules to force a
+    reload, so under xdist this module may hold a different function object
+    with the same name — an identity check fails depending on which worker
+    runs what first, and would be testing an implementation detail anyway.
+    """
     from mailfallback.routers.ui import templates
 
-    assert templates.env.filters["duration_human"] is _duration_human
+    registered = templates.env.filters["duration_human"]
+    assert registered.__name__ == "_duration_human"
+    start = datetime(2026, 8, 1, 2, 0, 0, tzinfo=UTC)
+    assert registered(start, start + timedelta(seconds=42)) == "42s"
 
 
 class _Policy:
