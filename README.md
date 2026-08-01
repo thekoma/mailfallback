@@ -9,7 +9,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://github.com/thekoma/mailfallback/actions/workflows/ci.yml"><img src="https://github.com/thekoma/mailfallback/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/thekoma/mailfallback/actions/workflows/release.yml"><img src="https://github.com/thekoma/mailfallback/actions/workflows/release.yml/badge.svg" alt="Release"></a>
-  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.12+-blue.svg" alt="Python 3.12+"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.14+-blue.svg" alt="Python 3.14+"></a>
   <a href="https://github.com/thekoma/mailfallback/pkgs/container/mailfallback"><img src="https://img.shields.io/badge/docker-ghcr.io%2Fthekoma%2Fmailfallback-blue?logo=docker" alt="Docker"></a>
 </p>
 
@@ -132,6 +132,10 @@ Open `http://localhost:8000` — default login: `admin` / `changeme1234!` (you'l
 Connect an IMAP client to `localhost:31143` (plaintext) to read the local sync's mail.
 
 ### From Source
+
+**Requires Python 3.14+.** That is the version the published container is built
+on (`docker/Dockerfile` uses `python:3.14-slim`) and the only version CI tests,
+so it is the only one supported. `uv` installs it for you if it is missing.
 
 ```bash
 git clone https://github.com/thekoma/mailfallback.git
@@ -272,7 +276,7 @@ To enable IMAPS (port 31993):
 
 ## Tech Stack
 
-- **Backend**: Python 3.12+, FastAPI, SQLAlchemy, Alembic, APScheduler
+- **Backend**: Python 3.14+, FastAPI, SQLAlchemy, Alembic, APScheduler
 - **Frontend**: Jinja2, HTMX, Pico CSS, Lucide icons
 - **Database**: PostgreSQL 18
 - **Sync**: mbsync/isync

@@ -6,7 +6,7 @@ Self-hosted email backup service wrapping mbsync/isync with a web UI. Backs up I
 
 ## Tech Stack
 
-- **Backend**: Python 3.12+, FastAPI, SQLAlchemy, Alembic, APScheduler
+- **Backend**: Python 3.14+ (the version the container ships and the only one CI tests), FastAPI, SQLAlchemy, Alembic, APScheduler
 - **Frontend**: Jinja2 templates, HTMX, Pico CSS, Lucide icons
 - **Database**: PostgreSQL (only supported backend)
 - **Sync**: mbsync/isync (subprocess)
