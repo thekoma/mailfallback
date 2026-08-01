@@ -5,10 +5,11 @@ import logging
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from mailfallback.config import settings
 from mailfallback.db import SessionLocal
 from mailfallback.models import Account, BackupJob, BackupPolicy, BackupStatus, JobStatus
 from mailfallback.services import index_service, restic_service
@@ -97,6 +98,77 @@ def recover_zombie_backup_jobs(db: Session) -> int:
         db.commit()
         logger.info("Recovered %d zombie backup job(s) after restart", recovered)
     return recovered
+
+
+def stop_backup_job(job_id: str) -> bool:
+    """SIGTERM the tracked restic process, escalating to SIGKILL. Mirrors
+    stop_sync_job.
+
+    Safe by construction: an interrupted restic backup creates no snapshot, and
+    partial packs are reclaimed by the next `forget --prune`.
+    """
+    proc = _running_backup_procs.get(job_id)
+    if proc is None:
+        return False
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    return True
+
+
+def recover_stalled_backup_jobs(db: Session) -> int:
+    """Periodic watchdog: close running backups whose restic heartbeat died.
+
+    NOTE the deliberate difference from recover_stalled_sync_jobs, which skips
+    a job while its process is alive::
+
+        if fresh_tick or proc_alive:   # sync
+            continue
+
+    For backups the target failure IS a live process: restic wedged on an S3
+    call keeps ``poll()`` at None forever while emitting nothing. Liveness must
+    therefore NOT excuse a job here — a missing heartbeat past the threshold is
+    the whole signal, and we kill the process ourselves. Reusing the sync
+    condition would mean the reaper never fires in the one case it exists for.
+    """
+    now = datetime.now(UTC)
+    grace = timedelta(seconds=settings.backup_stall_grace_s)
+    threshold = settings.backup_stall_threshold_s
+    now_wall = time.time()
+    reaped = 0
+
+    for job in db.query(BackupJob).filter(BackupJob.status == JobStatus.running).all():
+        started = job.started_at
+        if started is None:
+            continue
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        if now - started < grace:
+            continue
+
+        prog = _backup_progress.get(job.id)
+        fresh_tick = prog is not None and (now_wall - prog.get("updated_ts", 0)) < threshold
+        if fresh_tick:
+            continue
+
+        reaped += 1
+        _close_job(
+            job,
+            db,
+            failure_kind="stalled",
+            marker="[reaped] no restic progress — closed as stalled",
+        )
+        with contextlib.suppress(Exception):
+            stop_backup_job(job.id)
+        _backup_progress.pop(job.id, None)
+        _running_backup_procs.pop(job.id, None)
+
+    if reaped:
+        db.commit()
+        logger.warning("Reaped %d stalled backup job(s)", reaped)
+    return reaped
 
 
 def execute_backup(db: Session, account_backup_id: str, source: str = "schedule") -> None:

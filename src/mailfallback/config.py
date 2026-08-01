@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     sync_watchdog_interval_s: int = 60  # reaper cadence
     sync_job_max_runtime_s: int = 21600  # hard wall-clock cap per mbsync invocation (6h)
 
+    # Off-site backup watchdog (env: MAILFALLBACK_BACKUP_*). See
+    # docs/superpowers/specs/2026-08-01-backup-job-observability-design.md.
+    # Grace is wide because a first backup of a 14 G mailbox is legitimately
+    # long; reaping a healthy first run would be worse than the bug being fixed.
+    backup_stall_grace_s: int = 1800  # min age before a run is reapable
+    backup_stall_threshold_s: int = 900  # no restic event for this long ⇒ stalled
+
     recovery_ephemeral_ttl_minutes: int = 30
     recovery_max_parallel_mounts: int = 5
     recovery_backend: str = "restore"  # "restore" (default) | "fuse" (future)
