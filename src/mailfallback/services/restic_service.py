@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import subprocess
+import threading
+from collections import deque
 
 from mailfallback.config import settings
 from mailfallback.models import Repository
@@ -95,6 +97,86 @@ def _run_restic(
     return subprocess.run(cmd, capture_output=True, text=True, env=full_env)
 
 
+# Keep only the tail of stderr. The whole stream is never needed — only the
+# last lines, for the failure message — and buffering all of restic's output
+# is part of what pushed the container over its memory limit.
+_STDERR_TAIL_LINES = 200
+
+
+def _restic_cmd(args: list[str], insecure_tls: bool) -> list[str]:
+    """Build the restic argv. Split out so tests can substitute a fake binary."""
+    cmd = ["restic"]
+    if insecure_tls:
+        cmd.append("--insecure-tls")
+    cmd.extend(args)
+    return cmd
+
+
+def _stream_restic(
+    args: list[str],
+    env: dict[str, str],
+    insecure_tls: bool = False,
+    on_event=None,
+    register=None,
+) -> tuple[int, dict, str]:
+    """Run restic, streaming its --json output instead of buffering it.
+
+    Returns ``(returncode, last summary message, stderr tail)``.
+
+    ``on_event`` is called with every parsed JSON message as it arrives; that
+    is what feeds the stall watchdog's heartbeat. ``register`` is handed the
+    live Popen so callers can kill a wedged process.
+
+    stderr is drained by a separate thread: reading stdout to EOF while restic
+    fills the stderr pipe buffer would deadlock.
+    """
+    cmd = _restic_cmd(args, insecure_tls)
+    full_env = {**os.environ, **env}
+    logger.debug("Streaming: %s", " ".join(cmd))
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+        env=full_env,
+    )
+    if register is not None:
+        register(proc)
+
+    tail: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
+
+    def _drain_stderr() -> None:
+        for line in proc.stderr:
+            tail.append(line)
+
+    err_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    err_thread.start()
+
+    summary: dict = {}
+    try:
+        for raw_line in proc.stdout:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if on_event is not None:
+                on_event(parsed)
+            if parsed.get("message_type") == "summary":
+                summary = parsed
+    finally:
+        proc.stdout.close()
+        returncode = proc.wait()
+        err_thread.join(timeout=5)
+        proc.stderr.close()
+
+    return returncode, summary, "".join(tail)
+
+
 def _is_insecure(destination: Repository) -> bool:
     return getattr(destination, "insecure_tls", False)
 
@@ -139,25 +221,24 @@ def run_backup(
     account_id: str,
     maildir_path: str,
     tags: list[str] | None = None,
+    on_event=None,
+    register=None,
 ) -> dict:
-    """Run a restic backup of the maildir path. Returns parsed JSON output."""
+    """Run a restic backup of the maildir path. Returns the summary message.
+
+    Output is streamed rather than buffered: ``on_event`` sees every restic
+    JSON message as it arrives, which is what feeds the stall watchdog's
+    heartbeat, and only the last summary is retained.
+    """
     env = build_env(destination, account_id)
     args = ["backup", "--json"]
     args.extend(f"--tag={t}" for t in tags or [])
     args.append(maildir_path)
-    result = _run_restic(args, env, _is_insecure(destination))
-    if result.returncode != 0:
-        raise RuntimeError(f"Restic backup failed: {result.stderr}")
-
-    # restic --json outputs one JSON object per line; the last one is the summary
-    summary = {}
-    for line in result.stdout.strip().splitlines():
-        try:
-            parsed = json.loads(line)
-            if parsed.get("message_type") == "summary":
-                summary = parsed
-        except json.JSONDecodeError:
-            continue
+    returncode, summary, stderr_tail = _stream_restic(
+        args, env, _is_insecure(destination), on_event=on_event, register=register
+    )
+    if returncode != 0:
+        raise RuntimeError(f"Restic backup failed: {stderr_tail.strip()}")
     return summary
 
 
