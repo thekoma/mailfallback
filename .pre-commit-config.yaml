@@ -53,3 +53,30 @@ repos:
         files: '^(src/mailfallback/templates/.*\.html|src/mailfallback/routers/.*\.py)$'
         pass_filenames: false
         verbose: true
+
+      # Full suite before the code leaves the machine. On pre-push, not
+      # pre-commit: ~40s per commit would make the hook something to skip,
+      # while a push is exactly the moment before CI would run it anyway —
+      # and this laptop is far faster than the CI runners.
+      - id: pytest-full
+        name: Full test suite (pre-push)
+        entry: uv run pytest tests/ -n auto -q
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+
+      # Same suite, few workers. Test grouping under xdist depends on the
+      # worker count, so this laptop (~10) and a CI runner (2-4) can land
+      # interacting tests on different workers and disagree — that is exactly
+      # how a module-purging test collided with a filter-identity assertion
+      # and reached CI green-locally (fixed in ad055e1). Measured on that bug:
+      # -n auto passed, -n 4 caught it in 75s, -n 2 caught it in 145s. Four is
+      # the cheap end of the range that still reproduces CI's grouping.
+      - id: pytest-ci-grouping
+        name: Full test suite with CI-like worker count (pre-push)
+        entry: uv run pytest tests/ -n 4 -q
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true

@@ -61,6 +61,21 @@ src/mailfallback/
 
 ## Commands
 
+Local hooks catch what CI would, before the code leaves the machine — this
+laptop is much faster than the CI runners, so a failure found here costs
+seconds instead of minutes. Install both hook types once:
+
+```bash
+uv run pre-commit install --hook-type pre-commit --hook-type pre-push
+```
+
+- **pre-commit**: ruff, secrets, alembic drift, lexicon.
+- **pre-push**: the full suite twice — `-n auto` (fast) and `-n 4`. The second
+  is not redundant: xdist groups tests differently depending on worker count,
+  so a laptop with ~10 workers and a CI runner with 2-4 can disagree. A test
+  that purges a module from `sys.modules` once passed locally and failed in CI
+  for exactly this reason.
+
 ```bash
 # Run tests (parallel, ~7s)
 uv run pytest tests/ -n auto -v
