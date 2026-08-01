@@ -1,3 +1,37 @@
+## [2026.08.0] - 2026-08-01
+
+### Documentation
+
+- Add Monitoring and no-chart sections to the Kubernetes page *(site)*
+
+### Features
+
+- Add BackupJob table and backup_service queries *(backup)*
+- Stream restic --json output instead of buffering it *(backup)*
+- Record a BackupJob per run with a restic heartbeat *(backup)*
+- Boot sweep closes backup runs orphaned by a crash *(backup)*
+- Watchdog reaps wedged restic backups *(backup)*
+- Backup history with duration, and fix dead status pill branches *(ui)*
+- Surface off-site backup state per mailbox on the dashboard *(ui)*
+
+### Fixes
+
+- Worker error path must not overwrite a watchdog verdict *(backup)*
+- Assert the duration_human filter behaves, not its identity *(test)*
+
+### Maintenance
+
+- Test only Python 3.14, the version we actually ship
+- Run the full suite on pre-push, including a CI-like worker count
+
+### Other
+
+- Merge pull request #221 from thekoma/docs/k8s-monitoring-and-manual
+
+docs: Monitoring and no-chart sections on the Kubernetes page
+- Merge pull request #225 from thekoma/feat/backup-job-observability
+
+feat(backup): per-run history, crash recovery and stall watchdog
 ## [2026.07.5] - 2026-07-27
 
 ### Dependencies
