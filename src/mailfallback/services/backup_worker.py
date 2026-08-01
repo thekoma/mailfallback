@@ -51,6 +51,54 @@ def get_backup_progress(backup_id: str) -> dict | None:
     return _backup_progress.get(backup_id)
 
 
+_RECOVERED_MARKER = "[recovered] container restarted mid-backup — closed as interrupted"
+
+
+def _close_job(job: BackupJob, db: Session, *, failure_kind: str, marker: str) -> None:
+    """Close a job row and heal its policy. Shared by both recovery sweeps."""
+    job.status = JobStatus.failed
+    job.failure_kind = failure_kind
+    job.completed_at = datetime.now(UTC)
+    job.log = f"{job.log}\n{marker}" if job.log else marker
+
+    policy = db.query(BackupPolicy).filter(BackupPolicy.id == job.policy_id).first()
+    if policy and policy.last_status == BackupStatus.running:
+        # The policy is what the dashboard counts and what the account page
+        # renders. Leaving it on "running" is the whole bug this exists to
+        # prevent. Guarded on running so a newer successful run is never
+        # clobbered by sweeping an older row.
+        policy.last_status = BackupStatus.failed
+        policy.last_error = marker
+
+
+def recover_zombie_backup_jobs(db: Session) -> int:
+    """Boot-time crash recovery for off-site backups.
+
+    A SIGKILL skips execute_backup's ``finally``, so a crashed run leaves its
+    BackupJob at running/pending and its policy at "running" forever. On a
+    fresh boot ``_running_backup_procs`` is empty, so every such row is a
+    zombie; the membership check only matters for an idempotent re-call.
+
+    Boot-time contract, as for sync: run before the executor accepts new work,
+    or a mid-flight row would be wrongly closed.
+    """
+    zombies = (
+        db.query(BackupJob)
+        .filter(BackupJob.status.in_([JobStatus.running, JobStatus.pending]))
+        .all()
+    )
+    recovered = 0
+    for job in zombies:
+        if job.id in _running_backup_procs:
+            continue  # genuinely alive
+        recovered += 1
+        _close_job(job, db, failure_kind="interrupted", marker=_RECOVERED_MARKER)
+    if recovered:
+        db.commit()
+        logger.info("Recovered %d zombie backup job(s) after restart", recovered)
+    return recovered
+
+
 def execute_backup(db: Session, account_backup_id: str, source: str = "schedule") -> None:
     """Main backup function: init repo, run backup, apply retention, update DB."""
     backup = db.query(BackupPolicy).filter(BackupPolicy.id == account_backup_id).first()
