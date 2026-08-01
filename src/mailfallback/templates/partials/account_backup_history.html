@@ -1,0 +1,50 @@
+{% macro backup_row(job) %}
+<tr>
+    <td>{{ job.started_at.strftime('%Y-%m-%d %H:%M') if job.started_at else '—' }}</td>
+    <td>{{ job.source }}</td>
+    <td>
+        {% if job.status.value == 'completed' %}<span class="badge badge-idle">completed</span>
+        {% elif job.status.value == 'running' %}<span class="badge badge-syncing">running</span>
+        {% elif job.status.value == 'failed' %}<span class="badge badge-error">{{ job.failure_kind or 'failed' }}</span>
+        {% else %}<span class="badge">{{ job.status.value }}</span>
+        {% endif %}
+    </td>
+    <td>{{ job.started_at | duration_human(job.completed_at) }}</td>
+    <td>{% if job.snapshot_id %}<code>{{ job.snapshot_id[:8] }}</code>{% else %}—{% endif %}</td>
+    <td>{% if job.bytes_added %}{{ job.bytes_added | filesizeformat }}{% else %}—{% endif %}</td>
+    <td>{% if job.log %}<button class="icon-btn" onclick="showLogModal(this)" data-log="{{ job.log|e }}">View</button>{% endif %}</td>
+</tr>
+{% endmacro %}
+
+<h3><i data-lucide="history" class="icon-lg icon-inline"></i>Backup History</h3>
+
+{% if not backup_jobs %}
+<p class="text-muted text-small">No off-site backup has run for this mailbox yet.</p>
+{% else %}
+<table>
+    <thead>
+        <tr>
+            <th>Started</th><th>Trigger</th><th>Status</th>
+            <th>Duration</th><th>Snapshot</th><th>Added</th><th>Log</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for job in backup_jobs[:5] %}
+        {{ backup_row(job) }}
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if backup_jobs|length > 5 %}
+<details>
+    <summary class="text-muted text-small">Show {{ backup_jobs|length - 5 }} older runs</summary>
+    <table>
+        <tbody>
+            {% for job in backup_jobs[5:] %}
+            {{ backup_row(job) }}
+            {% endfor %}
+        </tbody>
+    </table>
+</details>
+{% endif %}
+{% endif %}

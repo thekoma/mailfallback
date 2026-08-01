@@ -64,6 +64,30 @@ def _cron_human(value):
     return value
 
 
+def _duration_human(started, completed):
+    """Human duration between two timestamps.
+
+    A missing ``completed`` means the run is still going, so measure against
+    now — that is what makes the history table's Duration column useful while
+    a backup is in flight.
+    """
+    if not started:
+        return "—"
+    start = started.replace(tzinfo=UTC) if started.tzinfo is None else started
+    if completed is None:
+        end = datetime.now(UTC)
+    else:
+        end = completed.replace(tzinfo=UTC) if completed.tzinfo is None else completed
+    secs = int((end - start).total_seconds())
+    if secs < 0:
+        return "—"
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m {secs % 60}s"
+    return f"{secs // 3600}h {(secs % 3600) // 60}m"
+
+
 def _time_ago(value):
     if not value:
         return "Never"
@@ -125,6 +149,7 @@ def _number_format(value):
 templates.env.filters["filesizeformat"] = _filesizeformat
 templates.env.filters["cron_human"] = _cron_human
 templates.env.filters["time_ago"] = _time_ago
+templates.env.filters["duration_human"] = _duration_human
 templates.env.filters["time_ago_class"] = _time_ago_class
 templates.env.filters["number"] = _number_format
 templates.env.globals["webmail_url"] = settings.webmail_url

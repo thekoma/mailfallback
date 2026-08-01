@@ -476,6 +476,16 @@
         {% include "partials/account_history.html" %}
         </div>
     </details>
+    {% if backup_config %}
+    <details>
+        <summary><strong>Backup history</strong></summary>
+        <div id="backup-history-section"
+             hx-get="/accounts/{{ account.id }}/partials/backup-history"
+             hx-trigger="load, every 30s"
+             hx-swap="innerHTML">
+        </div>
+    </details>
+    {% endif %}
     {% if recoveries %}
     <details>
         <summary><strong>Recoveries</strong> ({{ recoveries|length }})</summary>
