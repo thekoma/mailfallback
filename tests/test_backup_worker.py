@@ -275,3 +275,155 @@ class TestBackupExecutor:
 
         # Should not raise when no executor exists
         shutdown_backup_executor()
+
+
+class TestBackupJobRows:
+    """execute_backup must leave a per-run record behind — the thing whose
+    absence let the 2026-08-01 OOMKill strand a policy on "running"."""
+
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_successful_run_creates_a_completed_job(self, mock_restic, db_session, account_backup):
+        from mailfallback.models import BackupJob, JobStatus
+
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.return_value = {
+            "message_type": "summary",
+            "snapshot_id": "snap1",
+            "total_bytes_processed": 14_000_000_000,
+            "data_added": 4096,
+        }
+        mock_restic.apply_retention.return_value = {"pruned": True}
+        mock_restic.list_snapshots.return_value = []
+
+        execute_backup(db_session, account_backup.id)
+
+        job = db_session.query(BackupJob).one()
+        assert job.status == JobStatus.completed
+        assert job.snapshot_id == "snap1"
+        assert job.bytes_processed == 14_000_000_000
+        assert job.bytes_added == 4096
+        assert job.started_at is not None
+        assert job.completed_at is not None
+        assert job.account_id == account_backup.account_id
+        assert job.policy_id == account_backup.id
+
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_failed_run_creates_a_failed_job_with_the_error(
+        self, mock_restic, db_session, account_backup
+    ):
+        from mailfallback.models import BackupJob, JobStatus
+
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.side_effect = RuntimeError(
+            "Restic backup failed: repository is locked"
+        )
+
+        execute_backup(db_session, account_backup.id)
+
+        job = db_session.query(BackupJob).one()
+        assert job.status == JobStatus.failed
+        assert job.failure_kind == "error"
+        assert "repository is locked" in job.log
+        assert job.completed_at is not None
+
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_source_defaults_to_schedule(self, mock_restic, db_session, account_backup):
+        from mailfallback.models import BackupJob
+
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.return_value = {}
+        mock_restic.apply_retention.return_value = {"pruned": True}
+        mock_restic.list_snapshots.return_value = []
+
+        execute_backup(db_session, account_backup.id)
+
+        assert db_session.query(BackupJob).one().source == "schedule"
+
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_source_records_a_manual_trigger(self, mock_restic, db_session, account_backup):
+        from mailfallback.models import BackupJob
+
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.return_value = {}
+        mock_restic.apply_retention.return_value = {"pruned": True}
+        mock_restic.list_snapshots.return_value = []
+
+        execute_backup(db_session, account_backup.id, source="manual")
+
+        assert db_session.query(BackupJob).one().source == "manual"
+
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_a_missing_summary_does_not_break_the_job_row(
+        self, mock_restic, db_session, account_backup
+    ):
+        """restic can exit 0 with no summary; byte counters must stay 0, not None."""
+        from mailfallback.models import BackupJob, JobStatus
+
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.return_value = {}
+        mock_restic.apply_retention.return_value = {"pruned": True}
+        mock_restic.list_snapshots.return_value = []
+
+        execute_backup(db_session, account_backup.id)
+
+        job = db_session.query(BackupJob).one()
+        assert job.status == JobStatus.completed
+        assert job.bytes_processed == 0
+        assert job.bytes_added == 0
+        assert job.snapshot_id is None
+
+
+class TestBackupHeartbeat:
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_restic_events_refresh_the_heartbeat(self, mock_restic, db_session, account_backup):
+        """on_event must stamp updated_ts — the watchdog reads exactly this."""
+        from mailfallback.services import backup_worker
+
+        captured = {}
+
+        def fake_run_backup(dest, account_id, path, tags=None, on_event=None, register=None):
+            job_id = next(iter(backup_worker._backup_progress))
+            on_event({"message_type": "status", "percent_done": 0.5, "bytes_done": 123})
+            captured["progress"] = dict(backup_worker._backup_progress[job_id])
+            return {}
+
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.side_effect = fake_run_backup
+        mock_restic.apply_retention.return_value = {"pruned": True}
+        mock_restic.list_snapshots.return_value = []
+
+        execute_backup(db_session, account_backup.id)
+
+        assert captured["progress"]["updated_ts"] > 0
+        assert captured["progress"]["percent_done"] == 0.5
+        assert captured["progress"]["bytes_done"] == 123
+
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_progress_and_proc_registry_are_cleaned_up(
+        self, mock_restic, db_session, account_backup
+    ):
+        from mailfallback.services import backup_worker
+
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.return_value = {}
+        mock_restic.apply_retention.return_value = {"pruned": True}
+        mock_restic.list_snapshots.return_value = []
+
+        execute_backup(db_session, account_backup.id)
+
+        assert backup_worker._backup_progress == {}
+        assert backup_worker._running_backup_procs == {}
+
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_registry_is_cleaned_up_after_a_failure_too(
+        self, mock_restic, db_session, account_backup
+    ):
+        from mailfallback.services import backup_worker
+
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.side_effect = RuntimeError("boom")
+
+        execute_backup(db_session, account_backup.id)
+
+        assert backup_worker._backup_progress == {}
+        assert backup_worker._running_backup_procs == {}

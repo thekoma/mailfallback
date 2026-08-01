@@ -6,7 +6,7 @@ Self-hosted email backup service wrapping mbsync/isync with a web UI. Backs up I
 
 ## Tech Stack
 
-- **Backend**: Python 3.12+, FastAPI, SQLAlchemy, Alembic, APScheduler
+- **Backend**: Python 3.14+ (the version the container ships and the only one CI tests), FastAPI, SQLAlchemy, Alembic, APScheduler
 - **Frontend**: Jinja2 templates, HTMX, Pico CSS, Lucide icons
 - **Database**: PostgreSQL (only supported backend)
 - **Sync**: mbsync/isync (subprocess)
@@ -60,6 +60,21 @@ src/mailfallback/
 ```
 
 ## Commands
+
+Local hooks catch what CI would, before the code leaves the machine — this
+laptop is much faster than the CI runners, so a failure found here costs
+seconds instead of minutes. Install both hook types once:
+
+```bash
+uv run pre-commit install --hook-type pre-commit --hook-type pre-push
+```
+
+- **pre-commit**: ruff, secrets, alembic drift, lexicon.
+- **pre-push**: the full suite twice — `-n auto` (fast) and `-n 4`. The second
+  is not redundant: xdist groups tests differently depending on worker count,
+  so a laptop with ~10 workers and a CI runner with 2-4 can disagree. A test
+  that purges a module from `sys.modules` once passed locally and failed in CI
+  for exactly this reason.
 
 ```bash
 # Run tests (parallel, ~7s)

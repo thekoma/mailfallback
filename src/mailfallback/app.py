@@ -84,17 +84,23 @@ def _backfill_allowed_stores(db):
 
 
 def _recover_zombie_jobs(db):
-    # Delegated to the worker's sweep — it owns _running_procs and the
-    # budget/pause resume policy (sync-budget spec §9). Error-isolated:
-    # a sweep failure must never block boot, and the shared lifespan
-    # session must stay clean for the next boot step.
+    # Delegated to each worker's sweep — they own their in-memory process
+    # registries and their resume policy (sync-budget spec §9). Error-isolated
+    # SEPARATELY: a failure in one sweep must not skip the other, must never
+    # block boot, and must leave the shared lifespan session clean for the
+    # next boot step.
+    from mailfallback.services.backup_worker import recover_zombie_backup_jobs
     from mailfallback.services.sync_worker import recover_zombie_sync_jobs
 
-    try:
-        recover_zombie_sync_jobs(db)
-    except Exception:
-        logger.exception("Zombie sync job sweep failed — continuing boot")
-        db.rollback()
+    for sweep, label in (
+        (recover_zombie_sync_jobs, "Zombie sync job sweep"),
+        (recover_zombie_backup_jobs, "Zombie backup job sweep"),
+    ):
+        try:
+            sweep(db)
+        except Exception:
+            logger.exception("%s failed — continuing boot", label)
+            db.rollback()
 
 
 def _cleanup_temp_restore_users(db):

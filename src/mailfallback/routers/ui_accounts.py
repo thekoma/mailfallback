@@ -253,6 +253,26 @@ def account_history_partial(account_id: str, request: Request, db: Session = Dep
     )
 
 
+@router.get("/accounts/{account_id}/partials/backup-history", response_class=HTMLResponse)
+def account_backup_history_partial(
+    account_id: str, request: Request, db: Session = Depends(get_db)
+):
+    from mailfallback.services.backup_service import list_jobs_for_account as list_backup_jobs
+
+    user = _get_session_user(request, db)
+    if not user:
+        return HTMLResponse("")
+    account = get_account(db, account_id, user)
+    if not account:
+        return HTMLResponse("")
+
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/account_backup_history.html",
+        context={"account": account, "backup_jobs": list_backup_jobs(db, account_id)},
+    )
+
+
 @router.get("/accounts/new", response_class=HTMLResponse)
 def account_form(request: Request, db: Session = Depends(get_db)):
     from mailfallback.config import settings

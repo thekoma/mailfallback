@@ -60,7 +60,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.12", "3.13"]
+        # Only the version we actually ship: docker/Dockerfile is
+        # python:3.14-slim. Testing 3.12/3.13 exercised versions that never
+        # reach a user while leaving the released one untested.
+        python-version: ["3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 

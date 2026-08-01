@@ -164,26 +164,27 @@ class TestInitRepo:
 
 
 class TestRunBackup:
-    @patch("mailfallback.services.restic_service._run_restic")
-    def test_backup_success(self, mock_run, s3_destination):
+    # run_backup streams via _stream_restic rather than buffering through
+    # _run_restic, so these mock the streaming entry point. Its own parsing,
+    # stderr bounding and deadlock safety live in test_restic_streaming.py.
+    @patch("mailfallback.services.restic_service._stream_restic")
+    def test_backup_success(self, mock_stream, s3_destination):
         summary = {"message_type": "summary", "files_new": 10, "data_added": 1024}
-        stdout_lines = [
-            json.dumps({"message_type": "status", "percent_done": 0.5}),
-            json.dumps(summary),
-        ]
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="\n".join(stdout_lines), stderr=""
-        )
+        mock_stream.return_value = (0, summary, "")
         result = restic_service.run_backup(s3_destination, "acc-123", "/data/mail")
         assert result["message_type"] == "summary"
         assert result["files_new"] == 10
 
-    @patch("mailfallback.services.restic_service._run_restic")
-    def test_backup_failure(self, mock_run, s3_destination):
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="backup error"
-        )
+    @patch("mailfallback.services.restic_service._stream_restic")
+    def test_backup_failure(self, mock_stream, s3_destination):
+        mock_stream.return_value = (1, {}, "backup error")
         with pytest.raises(RuntimeError, match="Restic backup failed"):
+            restic_service.run_backup(s3_destination, "acc-123", "/data/mail")
+
+    @patch("mailfallback.services.restic_service._stream_restic")
+    def test_backup_failure_surfaces_the_stderr_tail(self, mock_stream, s3_destination):
+        mock_stream.return_value = (1, {}, "Fatal: repository is already locked\n")
+        with pytest.raises(RuntimeError, match="repository is already locked"):
             restic_service.run_backup(s3_destination, "acc-123", "/data/mail")
 
 
@@ -361,9 +362,9 @@ class TestPasswordOverride:
 
 
 class TestBackupTags:
-    @patch("mailfallback.services.restic_service._run_restic")
-    def test_run_backup_passes_tag_flags(self, mock_run, s3_destination):
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    @patch("mailfallback.services.restic_service._stream_restic")
+    def test_run_backup_passes_tag_flags(self, mock_stream, s3_destination):
+        mock_stream.return_value = (0, {}, "")
 
         restic_service.run_backup(
             s3_destination,
@@ -372,17 +373,17 @@ class TestBackupTags:
             tags=["mfb:email=a@b.c", "mfb:name=Work"],
         )
 
-        args = mock_run.call_args.args[0]
+        args = mock_stream.call_args.args[0]
         assert "--tag=mfb:email=a@b.c" in args
         assert "--tag=mfb:name=Work" in args
 
-    @patch("mailfallback.services.restic_service._run_restic")
-    def test_run_backup_without_tags_unchanged(self, mock_run, s3_destination):
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    @patch("mailfallback.services.restic_service._stream_restic")
+    def test_run_backup_without_tags_unchanged(self, mock_stream, s3_destination):
+        mock_stream.return_value = (0, {}, "")
 
         restic_service.run_backup(s3_destination, "acc-id", "/data/m/x")
 
-        args = mock_run.call_args.args[0]
+        args = mock_stream.call_args.args[0]
         assert not any(a.startswith("--tag") for a in args)
 
 

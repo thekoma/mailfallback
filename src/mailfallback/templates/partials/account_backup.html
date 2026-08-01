@@ -48,14 +48,18 @@
 
 {% else %}
 <div class="flex gap-05 flex-wrap items-center mb-05" role="status" aria-live="polite">
-    {% if backup_config.last_successful_run_at %}
-    <span class="stats-pill"><span class="stats-dot stats-dot-ok"></span>
-        Last back-up {{ backup_config.last_successful_run_at | time_ago }}
-    </span>
-    {% elif backup_config.last_status.value == "running" %}
+    {# Current state FIRST. Testing last_successful_run_at first made the
+       running and failed branches unreachable for any mailbox that had ever
+       backed up successfully — during the 2026-08-01 incident this pill read
+       "Last back-up 1 day ago" while the policy had been running for 18h. #}
+    {% if backup_config.last_status.value == "running" %}
     <span class="stats-pill"><span class="stats-dot stats-dot-syncing"></span> Back-up running</span>
     {% elif backup_config.last_status.value == "failed" %}
     <span class="stats-pill"><span class="stats-dot stats-dot-error"></span> Last back-up failed</span>
+    {% elif backup_config.last_successful_run_at %}
+    <span class="stats-pill"><span class="stats-dot stats-dot-ok"></span>
+        Last back-up {{ backup_config.last_successful_run_at | time_ago }}
+    </span>
     {% else %}
     <span class="stats-pill"><span class="stats-dot"></span> Off-site policy set — no successful back-up yet</span>
     {% endif %}

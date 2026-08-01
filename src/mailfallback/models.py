@@ -503,6 +503,51 @@ class BackupPolicy(Base):
 AccountBackup = BackupPolicy
 
 
+class BackupJob(Base):
+    """One off-site backup execution.
+
+    Sibling of SyncJob. BackupPolicy holds the schedule plus the denormalized
+    ``last_*`` current state; this table holds the per-run history that crash
+    recovery, the stall watchdog and the UI duration column all need. Without
+    it a run killed mid-flight leaves no trace but a policy stuck on
+    "running" (production incident 2026-08-01).
+    """
+
+    __tablename__ = "backup_jobs"
+
+    id = Column(String, primary_key=True, default=_new_uuid)
+    policy_id = Column(
+        String,
+        ForeignKey("account_backups.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # Denormalized so history survives the policy being repointed at another
+    # repository, and per-account queries need no join.
+    account_id = Column(
+        String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status = Column(Enum(JobStatus), nullable=False, default=JobStatus.pending)
+    source = Column(String, nullable=False, default="schedule")  # schedule | manual
+    requested_at = Column(DateTime(timezone=True), default=_utcnow)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    # Plain string by design, like SyncJob.failure_kind: interrupted |
+    # stalled | error. New kinds must not need a migration.
+    failure_kind = Column(String, nullable=True)
+    log = Column(Text, nullable=True)
+    snapshot_id = Column(String, nullable=True)
+    # BigInteger: a single mailbox exceeds INTEGER (~2.1 GB). See migration 023.
+    bytes_processed = Column(BigInteger, nullable=False, default=0, server_default=text("0"))
+    bytes_added = Column(BigInteger, nullable=False, default=0, server_default=text("0"))
+
+    policy = relationship(
+        "BackupPolicy",
+        backref=backref("jobs", passive_deletes=True, cascade="all, delete-orphan"),
+    )
+    account = relationship("Account", backref=backref("backup_jobs", passive_deletes=True))
+
+
 class Recovery(Base):
     """A snapshot recovered from a Repository, attached to its source Account.
 

@@ -313,6 +313,24 @@ def start_scheduler(db: Session) -> None:
             id="sync-watchdog",
             replace_existing=True,
         )
+    if not any(j.id == "backup-watchdog" for j in scheduler.get_jobs()):
+        from mailfallback.services.backup_worker import recover_stalled_backup_jobs
+
+        def _run_backup_watchdog() -> None:
+            db = SessionLocal()
+            try:
+                recover_stalled_backup_jobs(db)
+            except Exception:
+                logger.exception("Backup watchdog tick failed")
+            finally:
+                db.close()
+
+        scheduler.add_job(
+            _run_backup_watchdog,
+            CronTrigger(minute="*"),
+            id="backup-watchdog",
+            replace_existing=True,
+        )
     if not any(j.id == "stale-notify" for j in scheduler.get_jobs()):
 
         def _run_stale_notify() -> None:
