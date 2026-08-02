@@ -85,7 +85,12 @@ def _table(name: str) -> Table:
 def _jsonable(value):
     if isinstance(value, enum.Enum):
         return value.value
+    # datetime BEFORE date: datetime is a subclass of date, and we want the
+    # full timestamp for DateTime columns, the day-only form for Date columns
+    # (e.g. accounts.traffic_date — #226, unhandled dates broke json.dumps).
     if isinstance(value, datetime.datetime):
+        return value.isoformat()
+    if isinstance(value, datetime.date):
         return value.isoformat()
     return value
 
@@ -153,9 +158,17 @@ def _coerce_types(table: Table, record: dict) -> dict:
     out = dict(record)
     for col in table.columns:
         v = out.get(col.name)
-        if v is not None and isinstance(v, str) and isinstance(col.type, sa.DateTime):
+        if v is None or not isinstance(v, str):
+            continue
+        # DateTime before Date: sa.DateTime is NOT a subclass of sa.Date, so
+        # the branches are exclusive, but a Date parse on a full timestamp
+        # string would raise — keep them separate and ordered.
+        if isinstance(col.type, sa.DateTime):
             with contextlib.suppress(ValueError):
                 out[col.name] = datetime.datetime.fromisoformat(v)
+        elif isinstance(col.type, sa.Date):
+            with contextlib.suppress(ValueError):
+                out[col.name] = datetime.date.fromisoformat(v)
     return out
 
 
