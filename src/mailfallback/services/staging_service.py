@@ -54,13 +54,34 @@ def _safe_username(username: str) -> str:
 
 
 def staging_dir(user: User) -> str:
-    """{store}/.dovecot-home/{username}/staging — same home the userdb serves.
+    """{store}/.dovecot-home/{username}/root-inbox/Staging — the "Staging" mailbox.
 
-    Single source of truth for the staging Maildir location: the Dovecot
-    userdb endpoint publishes exactly this string as the namespace mail_path,
-    so the construction must stay byte-identical to the home it serves
-    (rstrip + sanitization included), or webmail silently shows an empty
-    Staging/ folder.
+    Single source of truth for the staging Maildir location. It sits INSIDE the
+    mfb_root namespace's mail_path ({home}/root-inbox, set by the Lua userdb),
+    so Dovecot lists it as the plain mailbox "Staging" with no namespace of its
+    own. Two reasons it must live here:
+
+    - Dovecot's ACL `mailbox` filters match the namespace-INTERNAL name, with
+      the namespace prefix stripped. Behind a dedicated "Staging/" namespace the
+      mailbox was seen by the ACL as "INBOX", so `mailbox Staging` never matched
+      and the global read-only grant applied: flag changes and expunges were
+      accepted on the wire and silently dropped.
+    - With `mailbox_list_layout = fs` a namespace's mailboxes are subdirectories
+      of its mail_path. A Maildir at the namespace root is not a listable
+      mailbox at all, so staged messages had no IMAP mailbox to appear in.
+
+    Keep the construction byte-identical to the home the userdb serves (rstrip
+    and sanitisation included), or webmail silently shows an empty folder.
+    """
+    store_path = user.store.path.rstrip("/")
+    return f"{store_path}/.dovecot-home/{_safe_username(user.username)}/root-inbox/Staging"
+
+
+def _legacy_staging_dir(user: User) -> str:
+    """Pre-move location: {home}/staging, its own "Staging/" Dovecot namespace.
+
+    Areas created before the move left a Maildir here. Nothing reads it; it is
+    purged alongside the current one so the move leaves no orphans behind.
     """
     store_path = user.store.path.rstrip("/")
     return f"{store_path}/.dovecot-home/{_safe_username(user.username)}/staging"
@@ -79,11 +100,11 @@ def _is_expired(area: StagingArea) -> bool:
 
 
 def _remove_staging_dir(user: User) -> None:
-    sdir = staging_dir(user)
-    if os.path.isdir(sdir):
-        shutil.rmtree(sdir, ignore_errors=True)
+    for sdir in (staging_dir(user), _legacy_staging_dir(user)):
         if os.path.isdir(sdir):
-            logger.warning("Staging dir %s not fully removed; leftovers remain on disk", sdir)
+            shutil.rmtree(sdir, ignore_errors=True)
+            if os.path.isdir(sdir):
+                logger.warning("Staging dir %s not fully removed; leftovers remain on disk", sdir)
 
 
 def get_status(db: Session, user: User) -> dict:
