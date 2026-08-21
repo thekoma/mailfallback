@@ -23,6 +23,11 @@ controllers:
           MAILFALLBACK_DOVECOT_IMAP_PORT: "31143"
           MAILFALLBACK_DOVECOT_NFS: {{ include "mailfallback.isRwx" . | quote }}
           MAILFALLBACK_DOVECOT_TLS: {{ .Values.imaps.enabled | quote }}
+          MAILFALLBACK_MCP_ENABLED: {{ .Values.mcp.enabled | quote }}
+          {{- if and .Values.mcp.enabled .Values.mcp.publicUrl }}
+          MAILFALLBACK_MCP_PUBLIC_URL: {{ .Values.mcp.publicUrl }}
+          {{- end }}
+          MAILFALLBACK_MCP_DNS_REBINDING_PROTECTION: {{ .Values.mcp.dnsRebindingProtection | quote }}
           MAILFALLBACK_TIKA_ENABLED: {{ .Values.tika.enabled | quote }}
           {{- if .Values.tika.enabled }}
           MAILFALLBACK_TIKA_URL: http://{{ include "mailfallback.tikaServiceName" . }}:9998

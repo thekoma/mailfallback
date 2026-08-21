@@ -11,6 +11,9 @@ This page is aimed at whoever is wiring an agent up to it. For how the
 authentication and scope model is built, see the
 [Security Model](../architecture/security.md#agent-api-authentication).
 
+The same tokens also work over [MCP](#model-context-protocol), for a client
+that speaks that protocol instead of raw HTTP.
+
 ## Creating a token
 
 On the **Profile** page, under **Access tokens**, create a token with a name
@@ -259,9 +262,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 
 `resolved` keys are namespace-prefixed folder names exactly as Dovecot
 publishes them — `SELECT` them as-is, a bare folder name will not match.
-Values are real IMAP UIDs. Message-IDs beyond the first 500 in a single
+Values are real IMAP UIDs. Message-IDs beyond the first 200 in a single
 request are silently ignored (neither resolved nor reported missing) — cap
-each request to 500 IDs or fewer.
+each request to 200 IDs or fewer.
 
 `imap_unavailable: true` means Dovecot itself could not be reached, so every
 ID that would otherwise have been resolved landed in `missing` for that
@@ -380,3 +383,135 @@ UIDs that client can `SELECT`/`FETCH` directly.
 - **`mail:read` does not imply `imap`.** A token needs the `imap` scope
   separately to use as an IMAP/Roundcube password; `mail:read` only unlocks
   this HTTP API's read endpoints.
+
+## Model Context Protocol
+
+MFB also exposes the same mailbox operations as an MCP server, for clients
+that talk MCP instead of HTTP — an agent framework's MCP client, an IDE, or
+any tool that lets you add a remote MCP server by URL. It's the same tokens,
+the same scopes, and (mostly) the same operations as the REST API above,
+wrapped as MCP tools instead of routes.
+
+### Enabling it
+
+MCP is **off by default**. A deployment needs two settings:
+
+- `MAILFALLBACK_MCP_ENABLED=true`
+- `MAILFALLBACK_MCP_PUBLIC_URL` — the externally-reachable base URL MFB is
+  served at (e.g. `https://mfb.example.com`, no path, no query string).
+
+Setting only the first does not half-start the server: at boot, if
+`mcp_enabled` is true but `mcp_public_url` is empty, MFB logs an error and
+does not mount `/mcp` at all — there is no sensible default to guess for a
+public URL, so it refuses to build a server that would advertise the wrong
+one.
+
+`mcp_public_url` is not cosmetic. It feeds the MCP SDK's transport-security
+settings on two axes:
+
+- **Issuer/resource metadata** — it's the URL MFB claims to be, in the
+  protected-resource metadata a client fetches during discovery.
+- **The host allowlist** — the SDK's DNS-rebinding protection rejects any
+  request whose `Host` (or `Origin`) doesn't match an allowed value. Get the
+  public URL wrong (or leave it as an internal/Docker-network hostname) and
+  *every* request gets rejected with `421` or `403` — which looks exactly
+  like an authentication failure but isn't one; the token is never even
+  reached.
+
+Disabling this (`MAILFALLBACK_MCP_DNS_REBINDING_PROTECTION=false`) skips more
+than the `Host` check: it also skips the SDK's `Origin` check, and a reverse
+proxy that validates `Host` does not validate `Origin` for you — the two are
+independent headers a client controls independently. So a `Host`-validating
+proxy in front of MFB does not make disabling this setting fully safe by
+itself. It remains practically low-risk here specifically because MCP
+authenticates with a static bearer header rather than a cookie: a
+browser-based attacker exploiting a DNS-rebinding or cross-origin request has
+no way to attach the token, so it cannot authenticate even with both checks
+off. Leave the protection enabled unless you have a specific reason not to.
+
+### Connecting
+
+Point an MCP client at `https://<host>/mcp/` (streamable HTTP transport,
+**with the trailing slash**) with the token as a bearer header, same as the
+REST API:
+
+```
+Authorization: Bearer mfb_abc123..._def456...
+```
+
+The app is mounted at the path, so the endpoint is the trailing-slash form; a
+POST to `https://<host>/mcp` (no slash) gets a `307` redirect to the
+slash form. Configure the slash form directly — not every HTTP client
+follows a redirect on `POST`, and some that do drop the request body, so a
+client pointed at the bare path can fail with nothing in the response to
+suggest the URL, rather than the token, is the problem.
+
+The scheme name is matched case-insensitively (`bearer`, `Bearer`, `BEARER`
+all work), same as the REST surface — and same as the REST surface, a
+different scheme is rejected outright rather than silently ignored.
+
+**MFB is not an OAuth 2.1 resource server, and that's a real limitation.**
+The MCP specification's authorization model expects a remote server to
+support OAuth 2.1 discovery and token issuance. MFB doesn't do that — it
+authenticates MCP the same way it authenticates IMAP and the REST API: one
+static bearer token, created once on the Profile page, used everywhere. That
+means one credential model to reason about instead of three, but it also
+means an MCP client that insists on driving a full OAuth discovery-and-grant
+flow before it will talk to a server will not connect here. A client that
+lets you configure a static `Authorization` header for a remote MCP server
+works fine.
+
+### Scopes and tools
+
+Same three scopes as the REST API (`imap`, `mail:read`, `sync:trigger`) —
+see [Creating a token](#creating-a-token) above. A token holding only `imap`
+reaches the server (authentication succeeds) but every tool call on it is
+refused, because none of the eight tools accept the bare `imap` scope. That's
+intentional: `imap` is the scope the IMAP-only skills use, and it shouldn't
+imply anything more here either.
+
+Eight tools, mirroring the REST endpoints above:
+
+| Tool | Arguments | Scope | Read-only |
+|------|-----------|-------|-----------|
+| `list_mailboxes` | *(none)* | `mail:read` | yes |
+| `search_mail` | `query`, `account_ids`, `range_start`, `range_end`, `include_deleted`, `snapshot_id`, `deep`, `page`, `page_size` | `mail:read` | yes |
+| `search_attachments` | `query`, `account_ids`, `exts`, `min_size`, `max_size`, `include_content`, `range_start`, `range_end`, `page`, `page_size` | `mail:read` | yes |
+| `get_message` | `account_id`, `message_id_hash` | `mail:read` | yes |
+| `download_attachment` | `account_id`, `message_id_hash`, `part_index` | `mail:read` | yes |
+| `imap_coords` | `account_id`, `message_ids` | `mail:read` | yes |
+| `sync_now` | `account_id` | `sync:trigger` | **no** |
+| `sync_status` | `job_id` | `sync:trigger` | yes |
+
+Seven tools are annotated read-only (`read_only_hint: true`), so an MCP
+client that surfaces that hint can auto-approve them without a
+confirmation prompt. `sync_now` is the only one that changes state — it
+queues a sync job — and is annotated accordingly.
+
+The arguments and response shapes match their REST counterparts one for
+one (`search_mail` is `POST /search`, `imap_coords` is `POST /imap-coords`,
+and so on) — see the endpoint reference above for request fields, response
+fields, and the failure-mode table. The same rules apply here: `deep: true`
+on `search_mail` can come back with `partial: true` rather than an error,
+`sync_now` on an already-syncing mailbox returns the existing job with
+`already_queued: true` instead of failing, and `sync_now` refuses outright
+(rather than overriding, the way the web UI may) on a suspended, migrating,
+or self-recovering-paused account. **Admin role does not travel with a
+token here either**: a token minted by an admin sees only that admin's own
+mailboxes, exactly like every other token.
+
+Two tools carry MCP-specific notes worth calling out on their own:
+
+- **`download_attachment`** returns the attachment as base64 in
+  `content_base64`, inline in the tool result. A part over 5 MiB is refused
+  rather than served — base64 inflates the payload by a third and the whole
+  thing rides inside one JSON-RPC response, so the cap exists to keep that
+  response bounded. Read it as a route, not a dead end: the error names the
+  message's folder and points the caller at `imap_coords` to resolve IMAP
+  coordinates and fetch the same attachment directly over IMAP instead.
+- **`imap_coords`** returns namespace-prefixed IMAP folder keys (exactly as
+  Dovecot publishes them — `SELECT` them as-is) and real IMAP UIDs, the
+  bridge from an MCP search hit to fetching over an existing IMAP
+  connection. `imap_unavailable: true` means Dovecot itself could not be
+  reached, so every id that landed in `missing` was never actually checked
+  — the right response is to retry, not to conclude the mail is gone.
