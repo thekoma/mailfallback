@@ -82,6 +82,8 @@ nav:
     - SSO / OIDC: admin-guide/sso.md
     - OAuth Providers: admin-guide/oauth-providers.md
     - Disaster Recovery: admin-guide/disaster-recovery.md
+  - Guides:
+    - Agent API: guides/agent-api.md
   - Architecture:
     - Overview: architecture/overview.md
     - Runtime Flows: architecture/flows.md

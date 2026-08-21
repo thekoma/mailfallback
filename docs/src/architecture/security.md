@@ -2,8 +2,9 @@
 
 This page documents how MFB's security-relevant controls actually work: credential
 encryption, defenses against server-side request forgery (SSRF), the read-only IMAP
-boundary, multi-tenant isolation, OAuth CSRF protection, and the reserved restore
-username prefix. It describes the current model, not a history of fixes.
+boundary, multi-tenant isolation, agent API authentication, OAuth CSRF protection,
+and the reserved restore username prefix. It describes the current model, not a
+history of fixes.
 
 ## Credential encryption
 
@@ -204,6 +205,37 @@ All these endpoints are account-scoped: routes that call `get_account` or
 exists to an unauthorized user. Before touching any account's data, the endpoint
 resolves it for the requesting user. One tenant therefore cannot reach another's
 mailbox, snapshots, or recoveries by guessing an account ID (an IDOR guard).
+
+## Agent API authentication
+
+`/api/v1/agent` (see [the agent API guide](../guides/agent-api.md)) accepts two, and
+only two, ways to authenticate: an interactive session cookie, or an
+`Authorization: Bearer` access token. `dependencies.get_current_principal` resolves
+whichever one applies and produces a `Principal` — the user, plus the set of scopes
+they're calling with.
+
+The two paths differ in one important way: a session principal carries every valid
+scope, because an interactive user can already reach the same data through the UI, so
+a scope check must never be what stops them there. A token principal carries only the
+scopes chosen when the token was created (`mail:read`, `sync:trigger`, `imap`). If the
+`Authorization` header names the bearer scheme (matched case-insensitively) but the
+token fails to verify — revoked, expired, or malformed — the request is rejected with
+401 and never falls back to whatever session cookie happens to be attached. Falling
+back would let a token holder ride in on a browser session that isn't theirs.
+
+Scopes, not roles, gate what a token can do. Every route on the agent API depends on
+`require_scope(...)` rather than `get_current_user`, and **admin role does not travel
+with a token**: `include_all` does not exist anywhere on this surface, so a token
+minted by an admin sees only that admin's own mailboxes, exactly like any other
+user's token. There is no request shape on this API that can widen that.
+
+Because token verification depends on `settings.secret_key` (`security.hash_token` /
+`verify_token`, keyed HMAC-SHA256 over the token secret), rotating
+`MAILFALLBACK_SECRET_KEY` invalidates every existing access token at once, the same
+way it affects Fernet-encrypted credentials above. Token rows are also excluded from
+the encrypted configuration export/import (`config_backup_service._EXPORT_TABLES`
+has no `app_credentials` entry) — restoring a configuration snapshot never carries
+tokens along with it; each token has to be reissued afterwards.
 
 ## OAuth CSRF protection
 
