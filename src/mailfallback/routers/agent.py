@@ -303,6 +303,10 @@ class ImapCoordsRequest(BaseModel):
 class ImapCoordsResponseOut(BaseModel):
     resolved: dict[str, list[str]]
     missing: list[str]
+    # True only when Dovecot itself could not be reached: every id in
+    # `missing` was never actually checked, as opposed to checked and not
+    # found. A caller should retry rather than conclude the messages are gone.
+    imap_unavailable: bool = False
 
 
 class SyncJobOut(BaseModel):

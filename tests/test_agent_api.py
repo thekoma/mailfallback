@@ -347,7 +347,14 @@ class TestImapCoords:
     def test_resolves_message_ids_to_folders_and_uids(
         self, client, db_session, default_store, tmp_path, agent_user, read_token
     ):
-        """The bridge to the IMAP path: an agent searches here, fetches there."""
+        """The bridge to the IMAP path: an agent searches here, fetches there.
+
+        There is no Dovecot to connect to in this test environment, so this
+        is the unreachable case by construction: the ids must fold into
+        `missing` AND `imap_unavailable` must be True, so a caller can tell
+        "could not check" apart from "checked and gone" and retry instead of
+        concluding the messages don't exist.
+        """
         acc, row = _indexed_account(db_session, default_store, tmp_path, agent_user)
 
         resp = client.post(
@@ -358,11 +365,10 @@ class TestImapCoords:
 
         assert resp.status_code == 200
         body = resp.json()
-        assert set(body) == {"resolved", "missing"}
-        # No live IMAP server in the test environment, so every id lands in
-        # `missing` — what matters is the shape and that it does not error.
-        assert isinstance(body["resolved"], dict)
-        assert isinstance(body["missing"], list)
+        assert set(body) == {"resolved", "missing", "imap_unavailable"}
+        assert body["resolved"] == {}
+        assert body["missing"] == [row.message_id]
+        assert body["imap_unavailable"] is True
 
     def test_another_users_account_is_404(
         self, client, db_session, default_store, tmp_path, agent_user, read_token

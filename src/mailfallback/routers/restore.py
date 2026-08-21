@@ -1365,7 +1365,7 @@ class ResolveUidsRequest(BaseModel):
 
 def resolve_uids_for_account(
     db: Session, account: Account, message_ids: list[str]
-) -> dict[str, dict[str, list[str]] | list[str]]:
+) -> dict[str, dict[str, list[str]] | list[str] | bool]:
     """Resolve Message-Ids to live IMAP UIDs, grouped by ready-to-SELECT folder key.
 
     Shared by the restore-to-origin UI route and the agent API's IMAP-coords
@@ -1379,6 +1379,15 @@ def resolve_uids_for_account(
     (not indexed, deleted upstream, or not found via IMAP). The caller is
     responsible for truncating ``message_ids`` to whatever cap applies to it —
     this helper resolves exactly what it is given.
+
+    ``imap_unavailable`` distinguishes "checked, not there" from "could not
+    check at all": it is True only when the connection to Dovecot itself
+    failed, in which case every id that would otherwise have been resolved
+    still lands in ``missing`` but for a different reason — same pattern as
+    ``partial`` on deep search, a soft failure reported rather than erased. A
+    single folder's SELECT failing does NOT set it: that is "these messages
+    aren't resolvable", not "the server is unreachable", so it stays a plain
+    fold into ``missing`` with just a warning log.
     """
     rows = (
         db.query(MailIndexMessage)
@@ -1395,15 +1404,16 @@ def resolve_uids_for_account(
 
     resolved: dict[str, list[str]] = {}
     found_msgids: set[str] = set()
+    imap_unavailable = False
     if by_folder:
         try:
             conn, temp_user = _connect_dovecot_for_account(db, account)
         except Exception:
-            # Same drift class as a SELECT failure below: an unreachable
-            # Dovecot must not 500 the caller, since both callers (the
-            # restore-to-origin UI and the agent API) treat "not resolvable
-            # right now" as a normal, self-recovering outcome — everything
-            # in by_folder folds into missing instead.
+            # An unreachable Dovecot must not 500 the caller — but unlike a
+            # single SELECT failing, this means NOTHING here was actually
+            # checked, so the flag says so rather than silently reporting
+            # these ids as though they were looked up and not found.
+            imap_unavailable = True
             logger.warning(
                 "UID resolution: could not connect to Dovecot for account %s; "
                 "%d message-id(s) fold into missing",
@@ -1443,7 +1453,7 @@ def resolve_uids_for_account(
                     delete_temp_imap_user(db, temp_user)
 
     missing = [m for m in message_ids if m not in found_msgids]
-    return {"resolved": resolved, "missing": missing}
+    return {"resolved": resolved, "missing": missing, "imap_unavailable": imap_unavailable}
 
 
 @router.post("/resolve-uids")

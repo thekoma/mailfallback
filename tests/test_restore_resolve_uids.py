@@ -96,7 +96,11 @@ def test_owner_resolves_uid_grouped_by_namespaced_folder_key(
 
     assert resp.status_code == 200, resp.text
     ns = account_namespace_prefix(acc)
-    assert resp.json() == {"resolved": {f"{ns}INBOX": ["7"]}, "missing": []}
+    assert resp.json() == {
+        "resolved": {f"{ns}INBOX": ["7"]},
+        "missing": [],
+        "imap_unavailable": False,
+    }
     # SELECT must target the namespaced path on the temp-user connection,
     # read-only — exactly the string the restore worker will SELECT later.
     conn.select.assert_called_once_with(f'"{ns}INBOX"', readonly=True)
@@ -151,7 +155,11 @@ def test_admin_include_all_resolves_foreign_account(
 
     assert resp.status_code == 200, resp.text
     ns = account_namespace_prefix(acc)
-    assert resp.json() == {"resolved": {f"{ns}INBOX": ["7"]}, "missing": []}
+    assert resp.json() == {
+        "resolved": {f"{ns}INBOX": ["7"]},
+        "missing": [],
+        "imap_unavailable": False,
+    }
     # Deliberately NOT audited: resolve-uids is a lookup step — the restore
     # that consumes the mapping logs restore.start. Pin that decision.
     assert db_session.query(AuditLog).filter(AuditLog.action.like("restore.%")).count() == 0
@@ -221,7 +229,11 @@ def test_deleted_message_lands_in_missing_without_imap(
     )
 
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"resolved": {}, "missing": ["<p1@x>"]}
+    assert resp.json() == {
+        "resolved": {},
+        "missing": ["<p1@x>"],
+        "imap_unavailable": False,
+    }
     mock_connect.assert_not_called()
 
 
@@ -312,7 +324,11 @@ def test_select_failure_puts_messages_in_missing_and_cleans_up(
         )
 
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"resolved": {}, "missing": ["<p1@x>"]}
+    assert resp.json() == {
+        "resolved": {},
+        "missing": ["<p1@x>"],
+        "imap_unavailable": False,
+    }
     conn.uid.assert_not_called()
     conn.logout.assert_called_once()
     mock_delete.assert_called_once()
