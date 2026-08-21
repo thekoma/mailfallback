@@ -24,6 +24,8 @@ src/mailfallback/
 ├── models.py                 # All models (User, Account, SyncJob, MailStore, StoreMigration, Group)
 ├── security.py               # bcrypt + Fernet encryption
 ├── dependencies.py           # FastAPI deps (get_db, get_current_user, require_admin, get_current_principal, require_scope)
+├── mcp_server.py             # MCP server: eight tools over /mcp behind mcp_enabled
+├── mcp_auth.py               # Bridges the MCP SDK's TokenVerifier onto MFB access tokens
 ├── routers/                  # API + UI routes
 │   ├── agent.py               # /api/v1/agent — versioned, externally contracted agent-facing API
 │   ├── auth.py               # Login/logout + OIDC + Google/Microsoft OAuth2
@@ -131,6 +133,7 @@ docker compose exec mailfallback uv run alembic upgrade head
 - **Jinja2 filters**: `filesizeformat` for byte sizes, `cron_human` for human-readable cron schedules
 - **Agent API**: `/api/v1/agent` (`routers/agent.py`) is the only versioned, externally contracted surface in the codebase and the only place that declares `response_model=` — every other router forwards internal shapes because only the UI reads them. Every route there gates on `require_scope(...)`, never `get_current_user`. `include_all` deliberately does not exist on this surface: an agent, even an admin's, only ever sees that user's own mailboxes.
 - **`Principal`** (`dependencies.py`): resolves either a session cookie or an `Authorization: Bearer` access token via `get_current_principal`. A session principal carries every valid scope — an interactive user can already do all of this through the UI, so a scope check must never be what stops them. A bearer token principal carries only the scopes its credential was created with, and a bearer token that fails to verify is a 401 that never falls back to the session cookie.
+- **MCP server** (`mcp_server.py` + `mcp_auth.py`): mounted at `/mcp` over streamable HTTP behind `mcp_enabled` — off unless both `MAILFALLBACK_MCP_ENABLED` and `MAILFALLBACK_MCP_PUBLIC_URL` are set. `app.py`'s lifespan MUST enter `mcp.session_manager.run()`, because a mounted ASGI app's own lifespan never runs — skip it and every request against `/mcp` fails with an anyio task-group error instead of a readable response. The SDK's default host allowlist rejects non-localhost traffic, so `mcp_public_url` feeds `TransportSecuritySettings`'s allowed hosts/origins. Every tool is a sync `def`, never `async def`: the SDK runs sync tools in a worker thread, and an async tool doing blocking DB I/O would stall the whole event loop. Tools authorise by reading the verified token's scopes (`mail:read`, `sync:trigger`) exactly like `require_scope` on the REST agent API — there is no second, MCP-specific permission model.
 
 ## Maildir Layout
 

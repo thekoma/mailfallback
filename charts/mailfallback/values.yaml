@@ -57,6 +57,14 @@ tika:
     # renovate: datasource=docker depName=apache/tika
     tag: 3.3.1.0-full
 
+mcp:
+  # -- expose the MCP server at /mcp (agent access over the Model Context Protocol)
+  enabled: false
+  # -- externally-reachable base URL MFB is served at (no path, no query string),
+  # e.g. https://mfb.example.com. Required when mcp.enabled — without it MFB logs
+  # an error at boot and does not mount /mcp.
+  publicUrl: ""
+
 initImage:
   repository: docker.io/library/busybox
   # renovate: datasource=docker depName=docker.io/library/busybox

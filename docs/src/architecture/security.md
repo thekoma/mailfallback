@@ -237,6 +237,27 @@ the encrypted configuration export/import (`config_backup_service._EXPORT_TABLES
 has no `app_credentials` entry) — restoring a configuration snapshot never carries
 tokens along with it; each token has to be reissued afterwards.
 
+### A third consumer of the same token
+
+The [MCP server](../guides/agent-api.md#model-context-protocol) (`mcp_server.py`,
+`src/mailfallback/mcp_auth.py`) is a third consumer of this exact access token —
+after IMAP/Roundcube and the REST agent API above. `MfbTokenVerifier` (in
+`mcp_auth.py`) bridges the MCP SDK's own `TokenVerifier` interface onto
+`app_credential_service.verify_credential`, the same function the other two
+surfaces call; there is no separate MCP credential store and no separate
+validation logic to drift out of sync. Because verification is not cached —
+every MCP tool call re-verifies the token against the database, the same as
+every REST request — revoking a token from the Profile page takes effect on
+its very next use over any of the three surfaces, not on some delay.
+
+MCP grants nothing that IMAP and the REST API do not already grant: a tool
+call authorises by checking the verified token's scopes (`mail:read` for the
+six read tools, `sync:trigger` for the two that touch sync) exactly like
+`require_scope` on the REST surface, and admin role does not travel with a
+token here either — a token minted by an admin reaches only that admin's own
+mailboxes. MCP is a third transport onto the same authorization model, not a
+wider one.
+
 ## OAuth CSRF protection
 
 Google and Microsoft account linking uses the OAuth2 authorization-code flow
