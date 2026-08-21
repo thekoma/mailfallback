@@ -141,3 +141,74 @@ def test_using_a_token_records_the_api_kind(probe_client, db_session, default_st
     cred = db_session.query(AppCredential).one()
     assert cred.last_used_kind == "api"
     assert cred.last_used_at is not None
+
+
+def test_a_lowercase_bearer_scheme_with_a_valid_token_authenticates_as_the_token(
+    probe_client, db_session, default_store
+):
+    """RFC 7235 auth-scheme names are case-insensitive; a client that sends
+    ``bearer`` instead of ``Bearer`` must still take the token path."""
+    _, token = _user_with_token(db_session, default_store, [svc.SCOPE_MAIL_READ])
+
+    resp = probe_client.get("/_probe/principal", headers={"Authorization": f"bearer {token}"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"username": "agent", "is_token": True, "scopes": ["mail:read"]}
+
+
+def test_a_lowercase_bearer_scheme_with_a_bad_token_is_401_and_does_not_fall_back_to_the_session(
+    probe_client, db_session, default_store
+):
+    """The confused-deputy check must hold regardless of scheme casing: a
+    lowercase ``bearer`` with a bad token must not silently authenticate as
+    whatever session cookie happens to be attached."""
+    create_user(db_session, "human", "humanpass12345", UserRole.user, store_id=default_store.id)
+    probe_client.post(
+        "/login", data={"username": "human", "password": "humanpass12345"}, follow_redirects=False
+    )
+
+    resp = probe_client.get(
+        "/_probe/principal", headers={"Authorization": "bearer mfb_deadbeef_nope"}
+    )
+
+    assert resp.status_code == 401
+
+
+def test_a_mixed_case_bearer_scheme_resolves_to_a_token_principal(
+    probe_client, db_session, default_store
+):
+    _, token = _user_with_token(db_session, default_store, [svc.SCOPE_MAIL_READ])
+
+    resp = probe_client.get("/_probe/principal", headers={"Authorization": f"BeArEr {token}"})
+
+    assert resp.status_code == 200
+    assert resp.json()["is_token"] is True
+
+
+def test_a_bare_bearer_scheme_with_no_token_is_401_not_a_session_fallback(
+    probe_client, db_session, default_store
+):
+    """Declaring the bearer scheme is a commitment to the token path even when
+    nothing follows it — it must not fall through to the session."""
+    create_user(db_session, "human", "humanpass12345", UserRole.user, store_id=default_store.id)
+    probe_client.post(
+        "/login", data={"username": "human", "password": "humanpass12345"}, follow_redirects=False
+    )
+
+    resp = probe_client.get("/_probe/principal", headers={"Authorization": "Bearer"})
+
+    assert resp.status_code == 401
+
+
+def test_a_non_bearer_scheme_with_a_session_attached_resolves_to_the_session(
+    probe_client, db_session, default_store
+):
+    create_user(db_session, "human", "humanpass12345", UserRole.user, store_id=default_store.id)
+    probe_client.post(
+        "/login", data={"username": "human", "password": "humanpass12345"}, follow_redirects=False
+    )
+
+    resp = probe_client.get("/_probe/principal", headers={"Authorization": "Basic dXNlcjpwYXNz"})
+
+    assert resp.status_code == 200
+    assert resp.json()["username"] == "human"

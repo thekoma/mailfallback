@@ -57,17 +57,25 @@ class Principal:
 def get_current_principal(request: Request, db: Session = Depends(get_db)) -> Principal:
     """Resolve a bearer token first, then the session cookie.
 
-    A caller who presented an ``Authorization: Bearer`` header meant to
-    authenticate as that token. If it fails to verify we return 401 rather than
-    silently falling back to whatever session cookie happens to be attached —
-    that fallback would be a confused deputy, acting with the browser user's
-    identity on a request the token holder made.
+    A caller who presented an ``Authorization`` header naming the bearer scheme
+    meant to authenticate as that token. The scheme name is matched
+    case-insensitively — RFC 7235 defines auth-scheme names as case-insensitive,
+    so ``bearer``/``Bearer``/``BEARER`` must all take this path, and a naive
+    ``startswith("Bearer ")`` would silently miss the lowercase form a real
+    client can send. Once the scheme is recognized as bearer, the request IS a
+    bearer attempt — including when the token part is empty or blank — and
+    verification failure returns 401 rather than falling back to whatever
+    session cookie happens to be attached. That fallback would be a confused
+    deputy, acting with the browser user's identity on a request the token
+    holder made. Only a genuinely different scheme (or no header at all) falls
+    through to the session.
     """
     from mailfallback.services import app_credential_service
 
     header = request.headers.get("Authorization", "")
-    if header.startswith("Bearer "):
-        token = header.removeprefix("Bearer ").strip()
+    scheme, _, rest = header.partition(" ")
+    if scheme.lower() == "bearer":
+        token = rest.strip()
         # required_scope is checked by require_scope(), not here: this
         # dependency answers "who is this", not "may they do that".
         result, cred = app_credential_service.verify_credential(
@@ -78,9 +86,7 @@ def get_current_principal(request: Request, db: Session = Depends(get_db)) -> Pr
         return Principal(user=cred.user, credential=cred, scopes=cred.scope_set)
 
     user = get_current_user(request, db)
-    return Principal(
-        user=user, credential=None, scopes=frozenset(app_credential_service.VALID_SCOPES)
-    )
+    return Principal(user=user, credential=None, scopes=app_credential_service.VALID_SCOPES)
 
 
 def require_scope(scope: str):
