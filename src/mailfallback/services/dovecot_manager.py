@@ -24,6 +24,7 @@ def reload_dovecot() -> bool:
             url,
             json=[["reload", {}, "tag1"]],
             auth=_doveadm_auth(),
+            timeout=5,
         )
         resp.raise_for_status()
         return True

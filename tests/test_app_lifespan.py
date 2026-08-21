@@ -32,3 +32,26 @@ def test_recover_zombie_jobs_failure_does_not_block_boot(monkeypatch):
 
     # The shared lifespan session is left clean for the next boot step.
     fake_db.rollback.assert_called_once()
+
+
+def test_reload_dovecot_after_config_calls_reload_dovecot(monkeypatch):
+    """Config is regenerated at every boot; nothing else tells Dovecot to
+    re-read it, so the lifespan must call reload_dovecot() itself."""
+    called = []
+    monkeypatch.setattr(
+        "mailfallback.services.dovecot_manager.reload_dovecot",
+        lambda: called.append(True) or True,
+    )
+
+    app_module._reload_dovecot_after_config()
+
+    assert called == [True]
+
+
+def test_reload_dovecot_after_config_survives_a_raising_reload(monkeypatch):
+    monkeypatch.setattr(
+        "mailfallback.services.dovecot_manager.reload_dovecot",
+        MagicMock(side_effect=RuntimeError("dovecot unreachable")),
+    )
+
+    app_module._reload_dovecot_after_config()  # must not raise
