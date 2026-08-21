@@ -1,3 +1,83 @@
+## [2026.08.1] - 2026-08-21
+
+### Documentation
+
+- Bring CLAUDE.md and architecture docs in line with access tokens + staging move
+- State the lua-file write-order fact on its own terms in CLAUDE.md
+- Document the bearer surface and its scopes *(agent-api)*
+- Complete the 401 causes, rename nav to Agent Guide *(agent-api)*
+- Correct the walkthrough, and document last_used_at timing *(agent-api)*
+- Document the MCP surface, its flag and its OAuth limitation *(mcp)*
+- Fix the /mcp trailing-slash gotcha, confirm bearer case-insensitivity *(mcp)*
+- Warn on the localhost URL, wire the DNS-rebinding chart value, correct the Origin-check claim *(mcp)*
+
+### Features
+
+- Keyed one-way hash for access-token secrets *(security)*
+- App_credentials table for per-user access tokens *(models)*
+- Access-token create/list/revoke/verify service *(tokens)*
+- Internal passdb endpoint for access tokens *(dovecot)*
+- Generate lua passdb for access tokens; close ACL create hole *(dovecot)*
+- Manage access tokens from the profile page *(ui)*
+- Allow token-only verification for bearer callers *(tokens)*
+- Principal resolved from bearer token or session, plus require_scope *(auth)*
+- Return part_index with search-result attachments *(search)*
+- Versioned read surface at /api/v1/agent *(agent-api)*
+- Attachment download, IMAP coordinates and sync control *(agent-api)*
+- Verify MFB access tokens through the SDK's TokenVerifier *(mcp)*
+- Mount a streamable-HTTP MCP server behind a feature flag *(mcp)*
+- Read tools for mailboxes, search and message retrieval *(mcp)*
+- Attachment download, IMAP coordinates and sync tools *(mcp)*
+
+### Fixes
+
+- Move the staging Maildir into the root namespace *(staging)*
+- Make passdb VerifyResult mapping exhaustive, fail safe on unknown *(dovecot)*
+- Reload Dovecot after config regeneration at boot *(dovecot)*
+- File-write ordering, stale comments, missing test *(dovecot,staging)*
+- Log the resolved username, not the possibly-None caller param *(tokens)*
+- Match the bearer scheme case-insensitively per RFC 7235 *(auth)*
+- Distinguish unreachable IMAP from resolved-but-missing *(agent-api)*
+- Close two minor review findings on sync/imap-coords *(agent-api)*
+- Describe what each token scope grants *(profile)*
+- Actually run the sync a trigger queues, and match the UI's guards *(agent-api)*
+- Report a mail-server outage as 502, not a false "not in live mail" *(restore)*
+- Tighten the request contract and close review minors *(agent-api)*
+- Always close the verifier's session, not just SessionLocal's *(mcp)*
+- Uniform object envelope for list_mailboxes *(mcp)*
+- Job-shaped sync_status wording, early attachment-size short-circuit *(mcp)*
+- Remove the ping scaffolding tool, eight tools not nine *(mcp)*
+- Bound search pagination and make refusals arrive as tool results *(mcp)*
+- Serve the advertised OAuth metadata URL, publish real output schemas, build the ASGI app once *(mcp)*
+- Make every tool return a model instance, closing the content-block leak *(mcp)*
+- Single-source the OAuth metadata, narrow a LookupError catch, harden tests *(mcp)*
+
+### Other
+
+- Merge pull request #233 from thekoma/fix/staging-mailbox-acl
+
+fix(staging): move the staging Maildir into the root namespace
+- Merge pull request #234 from thekoma/feat/agent-access-phase1
+
+feat(tokens): per-user access tokens as IMAP passwords
+- Merge pull request #235 from thekoma/feat/agent-access-phase2
+
+feat(agent-api): bearer auth and a versioned agent API
+- Merge pull request #236 from thekoma/feat/agent-access-phase3
+
+feat(mcp): MCP server over streamable HTTP
+
+### Testing
+
+- Exercise the naive-datetime branch in AppCredential.active *(models)*
+- Syntax-check generated lua files with luac *(dovecot)*
+- Live IMAP verification script for access-token login *(tokens)*
+- Fix docstring invocation and self-clean home dir *(tokens)*
+- Pin the I-1 reload call site; fix last stale Staging-namespace comment *(app)*
+- Extend the live verification script to the bearer surface *(agent-api)*
+- Cover all four sync_now refusal guards for zero-row invariant *(mcp)*
+- Live JSON-RPC verification of the mounted server *(mcp)*
+- Cover imap_coords and share REST's resolve-cap constant *(mcp)*
 ## [2026.08.0] - 2026-08-01
 
 ### Documentation
