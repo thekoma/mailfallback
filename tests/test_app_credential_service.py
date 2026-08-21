@@ -1,5 +1,6 @@
 """Access-token lifecycle and verification."""
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -316,6 +317,27 @@ class TestVerify:
             kind="imap",
         )
         assert result is svc.VerifyResult.unknown
+
+    def test_username_less_verification_logs_the_resolved_username(
+        self, db_session, token_user, caplog
+    ):
+        """Operator diagnostics on the bearer path must name the user: a log
+        line that cannot name the user is worse than no log line at all,
+        because it looks like it told you something."""
+        _, token = self._cred(db_session, token_user)
+
+        with caplog.at_level(logging.INFO, logger="mailfallback.services.app_credential_service"):
+            result, _ = svc.verify_credential(
+                db_session,
+                username=None,
+                token=token,
+                required_scope=svc.SCOPE_IMAP,
+                kind="api",
+            )
+
+        assert result is svc.VerifyResult.ok
+        assert "agentuser" in caplog.text
+        assert "None" not in caplog.text
 
 
 class TestListAndRevoke:

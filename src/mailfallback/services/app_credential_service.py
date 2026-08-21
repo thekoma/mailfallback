@@ -160,7 +160,9 @@ def verify_credential(
         return VerifyResult.unknown, None
 
     if not user.enabled or user.migrating:
-        logger.warning("Access token %s rejected: user %s disabled or migrating", prefix, username)
+        logger.warning(
+            "Access token %s rejected: user %s disabled or migrating", prefix, user.username
+        )
         return VerifyResult.rejected, None
     if not cred.active:
         logger.warning("Access token %s rejected: revoked or expired", prefix)
@@ -180,5 +182,5 @@ def verify_credential(
     cred.last_used_at = datetime.now(UTC)
     cred.last_used_kind = kind
     db.commit()
-    logger.info("Access token %s authenticated %s for %s", prefix, kind, username)
+    logger.info("Access token %s authenticated %s for %s", prefix, kind, user.username)
     return VerifyResult.ok, cred
