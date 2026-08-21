@@ -19,7 +19,7 @@ Two invariants hold for every route in this file:
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -67,6 +67,10 @@ class SearchHitOut(BaseModel):
     snapshots: list[str] = Field(default_factory=list)
     has_attachments: bool = False
     attachments: list[MessageAttachmentOut] = Field(default_factory=list)
+    # True/False when the request had deep=true and this hit's body was (or
+    # was not) part of the match; None when deep search was not requested, so
+    # a caller can't mistake "we didn't check" for "it didn't match".
+    body_matched: bool | None = None
 
 
 class SearchResponseOut(BaseModel):
@@ -284,3 +288,165 @@ def get_message(
     if out is None:
         raise HTTPException(status_code=404, detail="Message not found")
     return out
+
+
+_SYNC = require_scope(app_credential_service.SCOPE_SYNC_TRIGGER)
+
+RESOLVE_COORDS_MAX_IDS = 500
+
+
+class ImapCoordsRequest(BaseModel):
+    account_id: str
+    message_ids: list[str]
+
+
+class ImapCoordsResponseOut(BaseModel):
+    resolved: dict[str, list[str]]
+    missing: list[str]
+
+
+class SyncJobOut(BaseModel):
+    job_id: str
+    account_id: str
+    status: str
+    source: str
+    already_queued: bool = False
+    requested_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    failure_kind: str | None = None
+
+
+@router.get("/messages/{account_id}/{message_id_hash}/attachments/{part_index}")
+def download_attachment(
+    account_id: str,
+    message_id_hash: str,
+    part_index: int,
+    request: Request,
+    principal: Principal = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """Raw attachment bytes.
+
+    No response model: the body is the file. ALWAYS
+    application/octet-stream plus nosniff — a hostile HTML or SVG attachment
+    must download, never execute on our origin. Every download is audited,
+    like the UI's equivalent.
+    """
+    from mailfallback.routers import restore
+    from mailfallback.services.audit_service import log_action
+
+    account = _agent_account(db, principal, account_id)
+    msg_hash = _hash_from_hex(message_id_hash)
+    payload, filename, source = restore.extract_attachment_bytes(db, account, msg_hash, part_index)
+    log_action(
+        db,
+        user=principal.user,
+        action="attachment.download",
+        resource_type="attachment",
+        resource_id=account.id,
+        resource_name=filename,
+        details={
+            "message_id_hash": message_id_hash,
+            "part_index": part_index,
+            "source": source,
+            "via": "agent_api",
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+    return Response(
+        content=payload,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": restore._attachment_disposition(filename),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.post("/imap-coords", response_model=ImapCoordsResponseOut)
+def imap_coords(
+    req: ImapCoordsRequest,
+    principal: Principal = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """Message-Ids to live IMAP folder keys and UIDs.
+
+    This is the bridge to the IMAP path: search here, then FETCH over IMAP with
+    an existing client. Keys are namespace-prefixed exactly as Dovecot
+    publishes them, so they can be SELECTed as-is. Ids beyond
+    RESOLVE_COORDS_MAX_IDS are ignored entirely — neither resolved nor
+    reported missing.
+    """
+    from mailfallback.routers import restore
+
+    account = _agent_account(db, principal, req.account_id)
+    return restore.resolve_uids_for_account(db, account, req.message_ids[:RESOLVE_COORDS_MAX_IDS])
+
+
+@router.post("/sync/{account_id}", response_model=SyncJobOut)
+def trigger_sync(
+    account_id: str,
+    principal: Principal = Depends(_SYNC),
+    db: Session = Depends(get_db),
+):
+    """Queue a sync. Idempotent in practice: if one is already pending or
+    running, that job is returned with ``already_queued: true`` rather than an
+    error, so a polling agent needs no special case for the ordinary state."""
+    from mailfallback.models import JobStatus, SyncJob
+    from mailfallback.services import sync_service
+
+    account = _agent_account(db, principal, account_id)
+    job = sync_service.create_sync_job(db, account.id, source="agent")
+    already = False
+    if job is None:
+        already = True
+        job = (
+            db.query(SyncJob)
+            .filter(
+                SyncJob.account_id == account.id,
+                SyncJob.status.in_([JobStatus.pending, JobStatus.running]),
+            )
+            .order_by(SyncJob.requested_at.desc())
+            .first()
+        )
+        if job is None:  # raced to completion between the two queries
+            raise HTTPException(status_code=409, detail="Could not queue a sync; retry")
+    return SyncJobOut(
+        job_id=job.id,
+        account_id=job.account_id,
+        status=job.status.value,
+        source=job.source,
+        already_queued=already,
+        requested_at=job.requested_at,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        failure_kind=job.failure_kind,
+    )
+
+
+@router.get("/sync/jobs/{job_id}", response_model=SyncJobOut)
+def sync_job_status(
+    job_id: str,
+    principal: Principal = Depends(_SYNC),
+    db: Session = Depends(get_db),
+):
+    """Status of one sync job, scoped to the caller's own mailboxes."""
+    from mailfallback.services import sync_service
+
+    job = sync_service.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    # 404 rather than 403: a job id must not confirm a mailbox the caller
+    # cannot see.
+    _agent_account(db, principal, job.account_id)
+    return SyncJobOut(
+        job_id=job.id,
+        account_id=job.account_id,
+        status=job.status.value,
+        source=job.source,
+        requested_at=job.requested_at,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        failure_kind=job.failure_kind,
+    )

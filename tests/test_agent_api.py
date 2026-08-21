@@ -180,6 +180,18 @@ class TestSearch:
         # message_id_hash is the address the message and attachment endpoints take
         assert len(hit["message_id_hash"]) == 40
 
+    def test_body_matched_is_null_when_deep_not_requested(
+        self, client, db_session, default_store, tmp_path, agent_user, read_token
+    ):
+        _indexed_account(db_session, default_store, tmp_path, agent_user)
+
+        resp = client.post(f"{BASE}/search", json={"query": "invoice"}, headers=_bearer(read_token))
+
+        assert resp.status_code == 200
+        hit = resp.json()["results"][0]
+        assert "body_matched" in hit
+        assert hit["body_matched"] is None
+
     def test_does_not_reach_another_users_mail(
         self, client, db_session, default_store, tmp_path, agent_user, read_token
     ):
@@ -251,3 +263,198 @@ class TestAttachmentSearch:
         body = resp.json()
         assert set(body) == {"results", "total", "page", "page_size", "content_search_available"}
         assert isinstance(body["content_search_available"], bool)
+
+
+@pytest.fixture
+def sync_token(db_session, agent_user):
+    _, token = svc.create_credential(
+        db_session, agent_user, name="syncer", scopes=[svc.SCOPE_SYNC_TRIGGER]
+    )
+    return token
+
+
+class TestAttachmentDownload:
+    def test_a_read_token_can_fetch_attachment_bytes(
+        self, client, db_session, default_store, tmp_path, agent_user, read_token
+    ):
+        """Built with a real attachment so the part_index contract is exercised."""
+        import os
+        from email.message import EmailMessage
+
+        acc = Account(
+            name="withatt",
+            imap_host="h",
+            email_address="withatt@example.com",
+            maildir_path=str(tmp_path / "mail-att"),
+            store_id=default_store.id,
+        )
+        db_session.add(acc)
+        db_session.flush()
+        db_session.execute(account_owners.insert().values(account_id=acc.id, user_id=agent_user.id))
+        db_session.commit()
+
+        msg = EmailMessage()
+        msg["Message-Id"] = "<att@x>"
+        msg["From"] = "a@b.c"
+        msg["To"] = "d@e.f"
+        msg["Subject"] = "with attachment"
+        msg["Date"] = "Thu, 11 Jun 2026 10:00:00 +0200"
+        msg.set_content("see attached")
+        msg.add_attachment(
+            b"%PDF-1.4 fake", maintype="application", subtype="pdf", filename="invoice.pdf"
+        )
+        cur = os.path.join(acc.maildir_path, "cur")
+        os.makedirs(cur, exist_ok=True)
+        with open(os.path.join(cur, "200.att.host:2,S"), "wb") as f:
+            f.write(msg.as_bytes())
+        index_service.upsert_message_set(db_session, acc.id)
+        row = db_session.query(MailIndexMessage).filter_by(account_id=acc.id).one()
+
+        # the part_index comes from the search result — the Task 3 contract
+        hits = client.post(
+            f"{BASE}/search", json={"query": "attachment"}, headers=_bearer(read_token)
+        ).json()
+        att = hits["results"][0]["attachments"][0]
+
+        resp = client.get(
+            f"{BASE}/messages/{acc.id}/{row.message_id_hash.hex()}/attachments/{att['part_index']}",
+            headers=_bearer(read_token),
+        )
+
+        assert resp.status_code == 200
+        assert resp.content == b"%PDF-1.4 fake"
+        assert resp.headers["content-type"] == "application/octet-stream"
+        assert resp.headers["x-content-type-options"] == "nosniff"
+        assert "invoice.pdf" in resp.headers["content-disposition"]
+
+    def test_another_users_attachment_is_404(
+        self, client, db_session, default_store, tmp_path, agent_user, read_token
+    ):
+        other = create_user(
+            db_session, "other4", "otherpass12345", UserRole.user, store_id=default_store.id
+        )
+        acc, row = _indexed_account(db_session, default_store, tmp_path, other, name="theirs2")
+
+        resp = client.get(
+            f"{BASE}/messages/{acc.id}/{row.message_id_hash.hex()}/attachments/1",
+            headers=_bearer(read_token),
+        )
+
+        assert resp.status_code == 404
+
+
+class TestImapCoords:
+    def test_resolves_message_ids_to_folders_and_uids(
+        self, client, db_session, default_store, tmp_path, agent_user, read_token
+    ):
+        """The bridge to the IMAP path: an agent searches here, fetches there."""
+        acc, row = _indexed_account(db_session, default_store, tmp_path, agent_user)
+
+        resp = client.post(
+            f"{BASE}/imap-coords",
+            json={"account_id": acc.id, "message_ids": [row.message_id]},
+            headers=_bearer(read_token),
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body) == {"resolved", "missing"}
+        # No live IMAP server in the test environment, so every id lands in
+        # `missing` — what matters is the shape and that it does not error.
+        assert isinstance(body["resolved"], dict)
+        assert isinstance(body["missing"], list)
+
+    def test_another_users_account_is_404(
+        self, client, db_session, default_store, tmp_path, agent_user, read_token
+    ):
+        other = create_user(
+            db_session, "other5", "otherpass12345", UserRole.user, store_id=default_store.id
+        )
+        acc, row = _indexed_account(db_session, default_store, tmp_path, other, name="theirs3")
+
+        resp = client.post(
+            f"{BASE}/imap-coords",
+            json={"account_id": acc.id, "message_ids": [row.message_id]},
+            headers=_bearer(read_token),
+        )
+
+        assert resp.status_code == 404
+
+
+class TestSync:
+    def test_a_read_token_cannot_trigger_a_sync(
+        self, client, db_session, default_store, tmp_path, agent_user, read_token
+    ):
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, agent_user)
+
+        resp = client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(read_token))
+
+        assert resp.status_code == 403
+        assert "sync:trigger" in resp.json()["detail"]
+
+    def test_a_sync_token_queues_a_job(
+        self, client, db_session, default_store, tmp_path, agent_user, sync_token
+    ):
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, agent_user)
+
+        resp = client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(sync_token))
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["account_id"] == acc.id
+        assert body["status"] == "pending"
+        assert body["source"] == "agent"
+        assert body["already_queued"] is False
+
+    def test_a_second_trigger_reports_already_queued_rather_than_failing(
+        self, client, db_session, default_store, tmp_path, agent_user, sync_token
+    ):
+        """An agent polling a queue should not have to handle an error for the
+        ordinary "one is already running" case."""
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, agent_user)
+
+        first = client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(sync_token)).json()
+        resp = client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(sync_token))
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["already_queued"] is True
+        assert body["job_id"] == first["job_id"]
+
+    def test_job_status_is_readable(
+        self, client, db_session, default_store, tmp_path, agent_user, sync_token
+    ):
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, agent_user)
+        job_id = client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(sync_token)).json()["job_id"]
+
+        resp = client.get(f"{BASE}/sync/jobs/{job_id}", headers=_bearer(sync_token))
+
+        assert resp.status_code == 200
+        assert resp.json()["job_id"] == job_id
+
+    def test_another_users_job_is_404(
+        self, client, db_session, default_store, tmp_path, agent_user, sync_token
+    ):
+        from mailfallback.services import sync_service
+
+        other = create_user(
+            db_session, "other6", "otherpass12345", UserRole.user, store_id=default_store.id
+        )
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, other, name="theirs4")
+        job = sync_service.create_sync_job(db_session, acc.id, source="api")
+
+        resp = client.get(f"{BASE}/sync/jobs/{job.id}", headers=_bearer(sync_token))
+
+        assert resp.status_code == 404
+
+    def test_syncing_another_users_account_is_404(
+        self, client, db_session, default_store, tmp_path, agent_user, sync_token
+    ):
+        other = create_user(
+            db_session, "other7", "otherpass12345", UserRole.user, store_id=default_store.id
+        )
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, other, name="theirs5")
+
+        resp = client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(sync_token))
+
+        assert resp.status_code == 404
