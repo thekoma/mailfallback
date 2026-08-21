@@ -1,6 +1,7 @@
 # src/mailfallback/security.py
 import base64
 import hashlib
+import hmac
 import logging
 
 import bcrypt
@@ -80,3 +81,18 @@ def is_legacy_encrypted(encrypted: str, secret_key: str) -> bool:
             return True
         except InvalidToken:
             return False
+
+
+def hash_token(secret: str, secret_key: str) -> str:
+    """One-way keyed hash of an opaque access-token secret.
+
+    HMAC-SHA256 rather than bcrypt: the secret is 32 random bytes, so a work
+    factor buys nothing against a 256-bit search space, while cost-12 bcrypt
+    would add ~250 ms to every IMAP login — paid on each connection an agent
+    opens. The server key means a stolen database alone cannot verify tokens.
+    """
+    return hmac.new(secret_key.encode(), secret.encode(), hashlib.sha256).hexdigest()
+
+
+def verify_token(secret: str, hashed: str, secret_key: str) -> bool:
+    return hmac.compare_digest(hash_token(secret, secret_key), hashed)
