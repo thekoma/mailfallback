@@ -14,6 +14,7 @@ from mailfallback.db import SessionLocal
 from mailfallback.models import MigrationStatus, StoreMigration
 from mailfallback.routers import (
     accounts,
+    agent,
     auth,
     config_io,
     dovecot,
@@ -232,6 +233,7 @@ def create_app() -> FastAPI:
     app.include_router(ui_profile.router)
     app.include_router(auth.router)
     app.include_router(accounts.router)
+    app.include_router(agent.router)
     app.include_router(sync.router)
     app.include_router(health.router)
     app.include_router(config_io.router)
