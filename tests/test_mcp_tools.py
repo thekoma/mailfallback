@@ -402,6 +402,49 @@ class TestSyncTools:
         assert "suspended" in str(exc.value)
         assert db_session.query(SyncJob).count() == 0
 
+    def test_a_migrating_account_is_refused_and_queues_nothing(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        from mailfallback.models import SyncJob
+
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, tool_user, name="s4a")
+        acc.migrating = True
+        db_session.commit()
+        _as(monkeypatch, ["sync:trigger"], tool_user)
+
+        with pytest.raises(Exception) as exc:
+            _call(server, "sync_now", account_id=acc.id)
+
+        assert "migration" in str(exc.value)
+        assert db_session.query(SyncJob).count() == 0
+
+    def test_a_migrating_owner_is_refused_and_queues_nothing(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        """A CO-owner migrating, not the token's own user — the token owner's
+        own migrating flag is caught by the guard above; a shared account
+        with another owner mid-migration is what this guard protects."""
+        from mailfallback.models import SyncJob
+
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, tool_user, name="s4b")
+        co_owner = create_user(
+            db_session,
+            "mcp-co-owner",
+            "co-ownerpass12345",
+            UserRole.user,
+            store_id=default_store.id,
+        )
+        co_owner.migrating = True
+        db_session.execute(account_owners.insert().values(account_id=acc.id, user_id=co_owner.id))
+        db_session.commit()
+        _as(monkeypatch, ["sync:trigger"], tool_user)
+
+        with pytest.raises(Exception) as exc:
+            _call(server, "sync_now", account_id=acc.id)
+
+        assert "user migration" in str(exc.value)
+        assert db_session.query(SyncJob).count() == 0
+
     def test_a_paused_account_is_refused_with_its_reason(
         self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
     ):
