@@ -469,9 +469,13 @@ _DOVECOT_FILES: list[tuple[str, Any]] = [
     ("mfb-mail.conf", None),
     ("mfb-acl.conf", _dovecot_acl_conf),
     ("mfb-fts.conf", None),
-    ("mfb-auth.conf", None),
+    # The lua files must be written BEFORE mfb-auth.conf: that file's
+    # passdb/userdb blocks reference them via lua_file, and a Dovecot start
+    # or reload landing between the two would hit a config parse error on a
+    # missing file.
     ("mfb-lua-userdb.lua", None),
     ("mfb-lua-passdb.lua", None),
+    ("mfb-auth.conf", None),
 ]
 
 

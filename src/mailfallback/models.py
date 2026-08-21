@@ -790,7 +790,9 @@ class AppCredential(Base):
     expires_at = Column(DateTime(timezone=True), nullable=True)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     last_used_at = Column(DateTime(timezone=True), nullable=True)
-    last_used_kind = Column(String, nullable=True)  # imap | api | mcp
+    # Whatever protocol the caller reported, verbatim -- "imap" for IMAP logins
+    # via the passdb endpoint today; "api" / "mcp" arrive in later phases.
+    last_used_kind = Column(String, nullable=True)
 
     user = relationship(
         "User",

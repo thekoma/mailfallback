@@ -419,6 +419,24 @@ def test_passdb_returns_404_for_an_unknown_prefix(client, db_session, default_st
     assert resp.status_code == 404
 
 
+def test_passdb_returns_404_when_the_token_belongs_to_another_user(
+    client, db_session, default_store
+):
+    """A valid token presented for a different username is unknown, not a
+    mismatch: 404 (not 401) is what makes the Lua passdb fall through to the
+    SQL passdb, and it must not reveal that the token's prefix exists."""
+    owner = _create_user(db_session, default_store, username="alice")
+    token = _make_token(db_session, owner)
+    _create_user(db_session, default_store, username="bob")
+
+    resp = client.post(
+        "/api/internal/dovecot/passdb",
+        json={"username": "bob", "password": token, "protocol": "imap"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 404
+
+
 def test_passdb_returns_401_for_a_wrong_secret(client, db_session, default_store):
     from mailfallback.services import app_credential_service as svc
 
