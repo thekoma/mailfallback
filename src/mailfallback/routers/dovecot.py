@@ -2,6 +2,7 @@
 """Internal API for Dovecot Lua userdb lookups."""
 
 import hmac
+import logging
 import re
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -21,6 +22,8 @@ from mailfallback.models import (
 )
 from mailfallback.services import app_credential_service
 from mailfallback.services.recovery_service import namespace_prefix as recovery_namespace_prefix
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/internal/dovecot", tags=["dovecot-internal"])
 
@@ -176,4 +179,14 @@ def passdb_verify(req: PassdbRequest, db: Session = Depends(get_db)):
         app_credential_service.VerifyResult.unknown,
     ):
         raise HTTPException(status_code=404, detail="No such access token")
-    raise HTTPException(status_code=401, detail="Access token rejected")
+    if result is app_credential_service.VerifyResult.rejected:
+        raise HTTPException(status_code=401, detail="Access token rejected")
+    # Fail-safe, not fail-shut: a VerifyResult member this endpoint doesn't
+    # recognize (e.g. a future `expired`) must NOT be treated as 401, because
+    # 401 is PASSDB_RESULT_PASSWORD_MISMATCH and stops the Lua passdb from
+    # falling through to the SQL passdb -- an ordinary password login would
+    # break. 404 denies the token while still letting the real password try,
+    # so an unhandled member can only ever be too strict for the token, never
+    # break interactive/webmail login.
+    logger.error("passdb: unhandled VerifyResult member %r, denying as 404", result)
+    raise HTTPException(status_code=404, detail="No such access token")

@@ -466,3 +466,28 @@ def test_passdb_records_usage_on_success(client, db_session, default_store):
     cred = db_session.query(AppCredential).one()
     assert cred.last_used_at is not None
     assert cred.last_used_kind == "imap"
+
+
+def test_passdb_fails_safe_on_an_unrecognized_verify_result(
+    client, db_session, default_store, monkeypatch
+):
+    """An outcome this endpoint doesn't recognize must fail safe (404), not fail shut (401).
+
+    401 is PASSDB_RESULT_PASSWORD_MISMATCH and stops the Lua passdb from
+    falling through to the SQL passdb, so it would break ordinary password
+    logins. If a future VerifyResult member (e.g. a distinct `expired`) ever
+    reaches this endpoint without an explicit branch, it must be denied as a
+    404 -- wrong for the token, but harmless to interactive/webmail login --
+    never as a 401.
+    """
+    from mailfallback.services import app_credential_service as svc
+
+    _create_user(db_session, default_store)
+    monkeypatch.setattr(svc, "verify_credential", lambda *args, **kwargs: ("expired", None))
+
+    resp = client.post(
+        "/api/internal/dovecot/passdb",
+        json={"username": "alice", "password": "irrelevant", "protocol": "imap"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 404
