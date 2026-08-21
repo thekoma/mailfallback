@@ -522,3 +522,139 @@ class TestSyncAnnotation:
             t.name for t in tools if not getattr(t.annotations, "read_only_hint", False)
         ]
         assert not_read_only == ["sync_now"]
+
+
+class TestPagination:
+    """search_mail/search_attachments must reject what the REST models reject.
+
+    The REST request models pin ``page: Field(1, ge=1)`` and
+    ``page_size: Field(50, ge=1, le=200)`` — before this fix, the MCP tools
+    took bare ``int`` for both, so a zero-based agent's first guess
+    (``page=0``) or an unbounded ``page_size`` reached ``search_service``
+    unclamped, which builds ``OFFSET (page - 1) * page_size`` straight into
+    the query.
+    """
+
+    @pytest.mark.parametrize("tool_name", ["search_mail", "search_attachments"])
+    def test_page_zero_is_refused(self, server, tool_user, monkeypatch, tool_name):
+        _as(monkeypatch, ["mail:read"], tool_user)
+        with pytest.raises(Exception) as exc:
+            _call(server, tool_name, query="", page=0)
+        assert "page" in str(exc.value)
+
+    @pytest.mark.parametrize("tool_name", ["search_mail", "search_attachments"])
+    def test_an_oversized_page_size_is_refused(self, server, tool_user, monkeypatch, tool_name):
+        _as(monkeypatch, ["mail:read"], tool_user)
+        with pytest.raises(Exception) as exc:
+            _call(server, tool_name, query="", page_size=100000)
+        assert "page_size" in str(exc.value)
+
+    @pytest.mark.parametrize("tool_name", ["search_mail", "search_attachments"])
+    def test_the_bounds_are_published_in_the_input_schema(self, server, tool_name):
+        """An agent should be able to read the limit, not discover it by
+        crashing — so the schema itself must carry these bounds, not just the
+        runtime check. Dumping the schema means a future signature change
+        that drops the constraint fails this test rather than going silent.
+        """
+        tools = anyio.run(server.list_tools)
+        by_name = {t.name: t for t in tools}
+        properties = by_name[tool_name].input_schema["properties"]
+
+        assert properties["page"]["minimum"] == 1
+        assert properties["page_size"]["minimum"] == 1
+        assert properties["page_size"]["maximum"] == 200
+
+
+class TestRefusalsAreNotProtocolErrors:
+    """A refusal must be a tool-execution failure the SDK can wrap into an
+    ``is_error`` result, not an ``MCPError`` the SDK re-raises as a top-level
+    JSON-RPC protocol error — the latter never reaches a client's normal
+    "read the tool result" path. ``scripts/verify_mcp.py`` proves the
+    end-to-end shape of this over real JSON-RPC; these assert the underlying
+    condition that makes that possible: none of these refusals raise
+    ``MCPError`` anymore. "Not authenticated" (no token at all) is the one
+    exception left as ``MCPError``, and it is not reachable through a tool
+    call at all — the auth middleware refuses it first.
+    """
+
+    def test_a_missing_scope_is_not_an_mcperror(self, server, tool_user, monkeypatch):
+        from mcp.shared.exceptions import MCPError
+
+        _as(monkeypatch, ["imap"], tool_user)
+        with pytest.raises(Exception) as exc:
+            _call(server, "list_mailboxes")
+        assert not isinstance(exc.value.__cause__ or exc.value, MCPError)
+
+    def test_an_inaccessible_mailbox_is_not_an_mcperror(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        from mcp.shared.exceptions import MCPError
+
+        other = create_user(
+            db_session, "refusal-other", "otherpass12345", UserRole.user, store_id=default_store.id
+        )
+        acc, row = _indexed_account(
+            db_session, default_store, tmp_path, other, name="refusaltheirs"
+        )
+        _as(monkeypatch, ["mail:read"], tool_user)
+
+        with pytest.raises(Exception) as exc:
+            _call(
+                server,
+                "get_message",
+                account_id=acc.id,
+                message_id_hash=row.message_id_hash.hex(),
+            )
+        assert not isinstance(exc.value.__cause__ or exc.value, MCPError)
+
+    def test_the_over_cap_attachment_redirect_is_not_an_mcperror(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        """The over-cap message's entire purpose is to redirect the caller to
+        imap_coords — that redirect only works if the model actually sees the
+        text, which requires it to travel as an is_error result, not a
+        protocol error."""
+        from mcp.shared.exceptions import MCPError
+
+        import mailfallback.mcp_server as ms
+
+        acc, row = TestDownloadAttachment()._account_with_attachment(
+            db_session, default_store, tmp_path, tool_user
+        )
+        monkeypatch.setattr(ms, "MCP_ATTACHMENT_MAX_BYTES", 1)
+        _as(monkeypatch, ["mail:read"], tool_user)
+        hit = _call(server, "search_mail", query="attachment")["results"][0]
+
+        with pytest.raises(Exception) as exc:
+            _call(
+                server,
+                "download_attachment",
+                account_id=acc.id,
+                message_id_hash=row.message_id_hash.hex(),
+                part_index=hit["attachments"][0]["part_index"],
+            )
+        assert not isinstance(exc.value.__cause__ or exc.value, MCPError)
+
+    def test_sync_now_refusal_is_not_an_mcperror(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        from mcp.shared.exceptions import MCPError
+
+        acc, _ = _indexed_account(
+            db_session, default_store, tmp_path, tool_user, name="refusalsync"
+        )
+        acc.suspended = True
+        db_session.commit()
+        _as(monkeypatch, ["sync:trigger"], tool_user)
+
+        with pytest.raises(Exception) as exc:
+            _call(server, "sync_now", account_id=acc.id)
+        assert not isinstance(exc.value.__cause__ or exc.value, MCPError)
+
+    def test_sync_status_no_such_job_is_not_an_mcperror(self, server, tool_user, monkeypatch):
+        from mcp.shared.exceptions import MCPError
+
+        _as(monkeypatch, ["sync:trigger"], tool_user)
+        with pytest.raises(Exception) as exc:
+            _call(server, "sync_status", job_id="not-a-real-job-id")
+        assert not isinstance(exc.value.__cause__ or exc.value, MCPError)

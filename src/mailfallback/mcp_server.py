@@ -20,7 +20,7 @@ import base64
 import logging
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -28,7 +28,7 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
 from mcp.types import INVALID_REQUEST
-from pydantic import AnyHttpUrl
+from pydantic import AnyHttpUrl, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.applications import Starlette
@@ -68,14 +68,18 @@ MCP_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024
 def _require_scope(scope: str) -> str:
     """Return the caller's MFB user id, or raise if the scope is missing.
 
-    Mirrors dependencies.require_scope for the MCP surface. Raising MCPError
-    surfaces to the client as a tool error rather than a transport failure.
+    Mirrors dependencies.require_scope for the MCP surface. "Not authenticated"
+    is the one genuinely protocol-level condition here, so it alone is raised
+    as ``MCPError`` — the SDK re-raises that as a top-level JSON-RPC error. A
+    missing scope is a tool-EXECUTION failure, not a malformed request: it is
+    raised as a plain exception so the SDK instead delivers it as an
+    ``is_error`` ``CallToolResult``, the path a model is guaranteed to read.
     """
     token = get_access_token()
     if token is None:  # pragma: no cover — the middleware refuses first
         raise MCPError(code=INVALID_REQUEST, message="Not authenticated")
     if scope not in token.scopes:
-        raise MCPError(code=INVALID_REQUEST, message=f"This access token lacks the {scope} scope")
+        raise PermissionError(f"This access token lacks the {scope} scope")
     return token.subject
 
 
@@ -160,19 +164,23 @@ def _caller(scope: str):
     try:
         user = db.query(User).filter(User.id == user_id).first()
         if user is None:  # pragma: no cover — the token verified moments ago
-            raise MCPError(code=INVALID_REQUEST, message="Caller no longer exists")
+            raise LookupError("Caller no longer exists")
         yield db, user
     finally:
         db.close()
 
 
 def _mcp_account(db: Session, user: User, account_id: str) -> Account:
-    """The account, or an error that does not reveal whether it exists."""
+    """The account, or an error that does not reveal whether it exists.
+
+    A plain exception, not ``MCPError``: this is a tool-execution failure the
+    SDK must deliver as an ``is_error`` result, not a protocol-level error.
+    """
     if account_id not in search_service._accessible_account_ids(db, user):
-        raise MCPError(code=INVALID_REQUEST, message="No such mailbox")
+        raise LookupError("No such mailbox")
     account = db.query(Account).filter(Account.id == account_id).first()
     if account is None:
-        raise MCPError(code=INVALID_REQUEST, message="No such mailbox")
+        raise LookupError("No such mailbox")
     return account
 
 
@@ -181,17 +189,21 @@ def _mcp_hash(value: str) -> bytes:
     try:
         return bytes.fromhex(value)
     except ValueError:
-        raise MCPError(code=INVALID_REQUEST, message="Invalid message_id_hash") from None
+        raise ValueError("Invalid message_id_hash") from None
 
 
 def _attachment_cap_error(
     db: Session, account: Account, msg_hash: bytes, size_bytes: int
-) -> MCPError:
+) -> ValueError:
     """The over-cap error for one attachment: names its folder, points at imap_coords.
 
     Shared by both cap checks in ``download_attachment`` so the wording (and
     the folder lookup) does not drift between the cheap early exit and the
-    authoritative post-extraction one.
+    authoritative post-extraction one. A plain ``ValueError``, not
+    ``MCPError``: this message's entire purpose is to redirect the calling
+    model to ``imap_coords``, which only happens if it arrives as an
+    ``is_error`` result's text — a top-level JSON-RPC error is not
+    guaranteed to reach the model at all.
     """
     msg_row = (
         db.query(MailIndexMessage)
@@ -202,13 +214,10 @@ def _attachment_cap_error(
         .first()
     )
     folder = msg_row.folder_path if msg_row else "unknown"
-    return MCPError(
-        code=INVALID_REQUEST,
-        message=(
-            f"Attachment too large to return over MCP ({size_bytes} bytes, "
-            f"cap is {MCP_ATTACHMENT_MAX_BYTES}). It lives in {folder!r} — "
-            "resolve IMAP coordinates with imap_coords and fetch it over IMAP."
-        ),
+    return ValueError(
+        f"Attachment too large to return over MCP ({size_bytes} bytes, "
+        f"cap is {MCP_ATTACHMENT_MAX_BYTES}). It lives in {folder!r} — "
+        "resolve IMAP coordinates with imap_coords and fetch it over IMAP."
     )
 
 
@@ -271,8 +280,8 @@ def _register_tools(mcp: MCPServer) -> None:
         include_deleted: bool = True,
         snapshot_id: str | None = None,
         deep: bool = False,
-        page: int = 1,
-        page_size: int = 50,
+        page: Annotated[int, Field(ge=1)] = 1,
+        page_size: Annotated[int, Field(ge=1, le=200)] = 50,
     ) -> dict[str, Any]:
         """Indexed search across every mailbox this token's owner can see.
 
@@ -309,8 +318,8 @@ def _register_tools(mcp: MCPServer) -> None:
         include_content: bool = False,
         range_start: datetime | None = None,
         range_end: datetime | None = None,
-        page: int = 1,
-        page_size: int = 50,
+        page: Annotated[int, Field(ge=1)] = 1,
+        page_size: Annotated[int, Field(ge=1, le=200)] = 50,
     ) -> dict[str, Any]:
         """Search attachments by filename, and by extracted content when
         ``include_content`` is set and content search is enabled.
@@ -353,7 +362,7 @@ def _register_tools(mcp: MCPServer) -> None:
             account = _mcp_account(db, user, account_id)
             out = preview_service.get_preview(db, account, _mcp_hash(message_id_hash))
             if out is None:
-                raise MCPError(code=INVALID_REQUEST, message="Message not found")
+                raise LookupError("Message not found")
             return out
 
     @mcp.tool(annotations=_READ_ONLY)
@@ -460,25 +469,16 @@ def _register_tools(mcp: MCPServer) -> None:
             account = _mcp_account(db, user, account_id)
 
             if account.suspended:
-                raise MCPError(code=INVALID_REQUEST, message="Sync blocked: account is suspended")
+                raise ValueError("Sync blocked: account is suspended")
             if account.migrating:
-                raise MCPError(
-                    code=INVALID_REQUEST,
-                    message="Sync blocked: account migration in progress",
-                )
+                raise ValueError("Sync blocked: account migration in progress")
             for owner in account.owners:
                 if owner.migrating:
-                    raise MCPError(
-                        code=INVALID_REQUEST,
-                        message="Sync blocked: user migration in progress",
-                    )
+                    raise ValueError("Sync blocked: user migration in progress")
             if account.sync_paused_until is not None or account.pause_reason is not None:
-                raise MCPError(
-                    code=INVALID_REQUEST,
-                    message=(
-                        f"Sync blocked: paused ({account.pause_reason or 'unknown'}); "
-                        "an agent cannot override a self-recovering pause"
-                    ),
+                raise ValueError(
+                    f"Sync blocked: paused ({account.pause_reason or 'unknown'}); "
+                    "an agent cannot override a self-recovering pause"
                 )
 
             job = sync_service.create_sync_job(db, account.id, source="agent")
@@ -495,7 +495,7 @@ def _register_tools(mcp: MCPServer) -> None:
                     .first()
                 )
                 if job is None:  # raced to completion between the two queries
-                    raise MCPError(code=INVALID_REQUEST, message="Could not queue a sync; retry")
+                    raise RuntimeError("Could not queue a sync; retry")
             else:
                 # Only the newly-created-job branch submits — an already-running
                 # job must never be resubmitted to the executor.
@@ -536,11 +536,11 @@ def _register_tools(mcp: MCPServer) -> None:
         with _caller(app_credential_service.SCOPE_SYNC_TRIGGER) as (db, user):
             job = sync_service.get_job(db, job_id)
             if job is None:
-                raise MCPError(code=INVALID_REQUEST, message="No such job")
+                raise LookupError("No such job")
             try:
                 account = _mcp_account(db, user, job.account_id)
-            except MCPError:
-                raise MCPError(code=INVALID_REQUEST, message="No such job") from None
+            except LookupError:
+                raise LookupError("No such job") from None
             return {
                 "job_id": job.id,
                 "account_id": account.id,
