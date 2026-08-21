@@ -809,6 +809,62 @@ def test_app_credential_active_reflects_revocation_and_expiry(db_session, defaul
     assert cred.active is False
 
 
+def test_app_credential_active_handles_naive_datetime_after_db_round_trip(
+    db_session, default_store
+):
+    """Guards the tzinfo-is-None branch in AppCredential.active.
+
+    SQLite (used by the test DB, and by any real SQLite deployment) hands
+    back naive datetimes after a round trip through the database, even
+    though the column is declared with ``timezone=True`` and the value was
+    written as UTC-aware. Comparing that naive value directly against an
+    aware ``datetime.now(UTC)`` raises ``TypeError: can't compare
+    offset-naive and offset-aware datetimes``. ``active`` re-attaches UTC
+    tzinfo before comparing; this test forces a real reload (not just an
+    in-memory attribute set) so the naive branch is actually exercised.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from mailfallback.models import AppCredential, User, UserRole
+
+    user = User(
+        username="tokenuser4",
+        password_hash="x",
+        role=UserRole.user,
+        enabled=True,
+        store_id=default_store.id,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    expired = AppCredential(
+        user_id=user.id,
+        name="expired",
+        token_prefix="p3",
+        secret_hash="h",
+        scopes="imap",
+        expires_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+    active = AppCredential(
+        user_id=user.id,
+        name="active",
+        token_prefix="p4",
+        secret_hash="h",
+        scopes="imap",
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+    )
+    db_session.add_all([expired, active])
+    db_session.commit()
+
+    # Force a real reload from SQLite rather than reading the pending,
+    # still-aware Python attribute back off the session.
+    db_session.expire(expired)
+    db_session.expire(active)
+
+    assert expired.active is False
+    assert active.active is True
+
+
 def test_deleting_a_user_deletes_their_credentials(db_session, default_store):
     from mailfallback.models import AppCredential, User, UserRole
 
