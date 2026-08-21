@@ -342,8 +342,10 @@ A typical agent session looks like:
 1. `POST /search` (or `/search-attachments`) with a query.
 2. Take a hit's `account_id` + `message_id_hash`, and, for a specific file,
    the attachment's `part_index`.
-3. `GET /messages/{account_id}/{message_id_hash}` for the full body, or go
-   straight to `GET /messages/{account_id}/{message_id_hash}/attachments/{part_index}`
+3. `GET /messages/{account_id}/{message_id_hash}` for the headers and a body
+   snippet (capped at 2048 characters — see the endpoint reference above),
+   or go straight to
+   `GET /messages/{account_id}/{message_id_hash}/attachments/{part_index}`
    for the file.
 
 That pairing — `message_id_hash` plus `part_index` — is what lets an agent go
@@ -364,6 +366,8 @@ UIDs that client can `SELECT`/`FETCH` directly.
 | Deep search (`deep: true`) hits its timeout | `200` with `"partial": true` | Results so far, not everything checked. Not an error. |
 | `POST /imap-coords` can't reach Dovecot | `200` with `"imap_unavailable": true` | The IDs in `missing` were never checked — retry, don't conclude the mail is gone. |
 | `POST /sync/{account_id}` on a mailbox already syncing | `200` with `"already_queued": true` | The existing job is returned; nothing further needed. |
+| `POST /sync/{account_id}` on a suspended or migrating account, or a self-recovering pause | `409` | Refused, naming the reason. Unlike the web UI, this route never overrides a pause on the caller's behalf — an agent cannot weigh burning the provider's daily quota the way a human triggering it manually can. |
+| The attachment behind a download exceeds the internal extraction cap | `502` with `"attachment too large to extract"` | The message bytes were found but are too large to safely parse for that one part; not an authentication or authorization outcome. |
 
 ## What this API does not do
 
