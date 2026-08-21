@@ -370,6 +370,31 @@ class TestImapCoords:
         assert body["missing"] == [row.message_id]
         assert body["imap_unavailable"] is True
 
+    def test_ids_beyond_the_cap_are_ignored_entirely(
+        self, client, db_session, default_store, tmp_path, agent_user, read_token
+    ):
+        """Mirrors the UI-side resolve-uids cap test (RESOLVE_UIDS_MAX_IDS):
+        ids past RESOLVE_COORDS_MAX_IDS must land in NEITHER `resolved` nor
+        `missing` — a naive truncation-less implementation instead reports
+        them as missing, which is the bug this test exists to catch."""
+        from mailfallback.routers.agent import RESOLVE_COORDS_MAX_IDS
+
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, agent_user)
+        ids = [f"<bogus-{i}@x>" for i in range(RESOLVE_COORDS_MAX_IDS + 100)]
+
+        resp = client.post(
+            f"{BASE}/imap-coords",
+            json={"account_id": acc.id, "message_ids": ids},
+            headers=_bearer(read_token),
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["resolved"] == {}
+        assert len(body["missing"]) == RESOLVE_COORDS_MAX_IDS
+        for beyond_cap in ids[RESOLVE_COORDS_MAX_IDS:]:
+            assert beyond_cap not in body["missing"]
+
     def test_another_users_account_is_404(
         self, client, db_session, default_store, tmp_path, agent_user, read_token
     ):
@@ -464,3 +489,23 @@ class TestSync:
         resp = client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(sync_token))
 
         assert resp.status_code == 404
+
+    def test_job_not_found_and_job_not_yours_return_byte_identical_bodies(
+        self, client, db_session, default_store, tmp_path, agent_user, sync_token
+    ):
+        """A garbage job id and a real job the caller cannot see must be
+        indistinguishable from outside — both are 404, and the detail text
+        must not become a second oracle telling the two cases apart."""
+        from mailfallback.services import sync_service
+
+        other = create_user(
+            db_session, "other8", "otherpass12345", UserRole.user, store_id=default_store.id
+        )
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, other, name="theirs6")
+        job = sync_service.create_sync_job(db_session, acc.id, source="api")
+
+        missing = client.get(f"{BASE}/sync/jobs/does-not-exist", headers=_bearer(sync_token))
+        not_mine = client.get(f"{BASE}/sync/jobs/{job.id}", headers=_bearer(sync_token))
+
+        assert missing.status_code == not_mine.status_code == 404
+        assert missing.content == not_mine.content

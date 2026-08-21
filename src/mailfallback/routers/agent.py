@@ -442,8 +442,15 @@ def sync_job_status(
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     # 404 rather than 403: a job id must not confirm a mailbox the caller
-    # cannot see.
-    _agent_account(db, principal, job.account_id)
+    # cannot see. The detail text below is deliberately the SAME string as
+    # the missing-job branch above — a distinct message would recreate the
+    # oracle the status code is hiding, letting a caller tell "this id is
+    # garbage" apart from "this id is a real job you cannot see" by wording
+    # alone. Do not make these more specific again.
+    try:
+        _agent_account(db, principal, job.account_id)
+    except HTTPException:
+        raise HTTPException(status_code=404, detail="Job not found") from None
     return SyncJobOut(
         job_id=job.id,
         account_id=job.account_id,
