@@ -64,10 +64,11 @@ def test_generate_dovecot_creates_all_files(tmp_path):
         "mfb-fts.conf",
         "mfb-auth.conf",
         "mfb-lua-userdb.lua",
+        "mfb-lua-passdb.lua",
     }
     actual_names = {p.name for p in written}
     assert actual_names == expected_names
-    assert len(written) == 8
+    assert len(written) == 9
 
     # All files should exist on disk
     for p in written:
@@ -278,3 +279,51 @@ def test_ssl_conf_tls_mode_enables_imaps(tmp_path):
     assert "ssl_server_key_file = /etc/dovecot/ssl/tls.key" in content
     assert "auth_allow_cleartext = yes" in content  # in-cluster Roundcube uses plain 31143
     assert "ssl = no" not in content
+
+
+def test_dovecot_auth_emits_lua_passdb_before_sql(tmp_path):
+    """Order is the contract: the token passdb must be tried first, and the SQL
+    passdb must remain reachable for ordinary passwords via PASSDB_RESULT_NEXT."""
+    settings = _make_settings(tmp_path)
+    generate_dovecot_config(settings)
+
+    auth = (tmp_path / "dovecot" / "mfb-auth.conf").read_text()
+    assert "passdb lua {" in auth
+    assert "lua_file = /etc/dovecot/conf.d/mfb-lua-passdb.lua" in auth
+    assert auth.index("passdb lua {") < auth.index("passdb sql {")
+
+
+def test_dovecot_lua_passdb_targets_the_passdb_endpoint(tmp_path):
+    settings = _make_settings(tmp_path, dovecot_api_key="passdb-key")
+    generate_dovecot_config(settings)
+
+    lua = (tmp_path / "dovecot" / "mfb-lua-passdb.lua").read_text()
+    assert 'API_KEY = "passdb-key"' in lua
+    assert "/api/internal/dovecot/passdb" in lua
+    assert "function auth_password_verify(req, password)" in lua
+    # No HTTP round trip for ordinary passwords.
+    assert 'TOKEN_MARKER = "mfb_"' in lua
+    assert "PASSDB_RESULT_NEXT" in lua
+    assert "PASSDB_RESULT_PASSWORD_MISMATCH" in lua
+    assert "PASSDB_RESULT_INTERNAL_FAILURE" in lua
+
+
+def test_dovecot_lua_passdb_returns_a_table_on_success(tmp_path):
+    """Dovecot 2.4 rejects a string second return value from
+    auth_password_verify: "invalid return value (expected nil or table, got
+    string)". The success path must hand back a table."""
+    settings = _make_settings(tmp_path)
+    generate_dovecot_config(settings)
+
+    lua = (tmp_path / "dovecot" / "mfb-lua-passdb.lua").read_text()
+    assert "return dovecot.auth.PASSDB_RESULT_OK, {}" in lua
+
+
+def test_dovecot_acl_defaults_from_inbox(tmp_path):
+    """Without this, a private namespace's owner may CREATE top-level mailboxes
+    that nothing can then delete. With it, defaults come from INBOX (lrs)."""
+    settings = _make_settings(tmp_path)
+    generate_dovecot_config(settings)
+
+    acl_conf = (tmp_path / "dovecot" / "mfb-acl.conf").read_text()
+    assert "acl_defaults_from_inbox = yes" in acl_conf
