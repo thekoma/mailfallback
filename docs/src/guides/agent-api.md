@@ -425,14 +425,24 @@ otherwise.
 
 ### Connecting
 
-Point an MCP client at `https://<host>/mcp` (streamable HTTP transport) with
-the token as a bearer header, same as the REST API:
+Point an MCP client at `https://<host>/mcp/` (streamable HTTP transport,
+**with the trailing slash**) with the token as a bearer header, same as the
+REST API:
 
 ```
 Authorization: Bearer mfb_abc123..._def456...
 ```
 
-The scheme name is matched case-insensitively, same as the REST surface.
+The app is mounted at the path, so the endpoint is the trailing-slash form; a
+POST to `https://<host>/mcp` (no slash) gets a `307` redirect to the
+slash form. Configure the slash form directly — not every HTTP client
+follows a redirect on `POST`, and some that do drop the request body, so a
+client pointed at the bare path can fail with nothing in the response to
+suggest the URL, rather than the token, is the problem.
+
+The scheme name is matched case-insensitively (`bearer`, `Bearer`, `BEARER`
+all work), same as the REST surface — and same as the REST surface, a
+different scheme is rejected outright rather than silently ignored.
 
 **MFB is not an OAuth 2.1 resource server, and that's a real limitation.**
 The MCP specification's authorization model expects a remote server to
