@@ -418,10 +418,16 @@ settings on two axes:
   like an authentication failure but isn't one; the token is never even
   reached.
 
-If a reverse proxy in front of MFB already validates `Host` (and MFB is only
-ever reached through it), the allowlist is redundant and can be turned off
-with `MAILFALLBACK_MCP_DNS_REBINDING_PROTECTION=false`. Leave it enabled
-otherwise.
+Disabling this (`MAILFALLBACK_MCP_DNS_REBINDING_PROTECTION=false`) skips more
+than the `Host` check: it also skips the SDK's `Origin` check, and a reverse
+proxy that validates `Host` does not validate `Origin` for you — the two are
+independent headers a client controls independently. So a `Host`-validating
+proxy in front of MFB does not make disabling this setting fully safe by
+itself. It remains practically low-risk here specifically because MCP
+authenticates with a static bearer header rather than a cookie: a
+browser-based attacker exploiting a DNS-rebinding or cross-origin request has
+no way to attach the token, so it cannot authenticate even with both checks
+off. Leave the protection enabled unless you have a specific reason not to.
 
 ### Connecting
 

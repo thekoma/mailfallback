@@ -388,6 +388,7 @@ One row per leaf key in `values.yaml`.
 | `tika.image.tag` | `3.3.1.0-full` | Tika image tag |
 | `mcp.enabled` | `false` | Expose the MCP server at `/mcp` (`MAILFALLBACK_MCP_ENABLED`) |
 | `mcp.publicUrl` | `""` | Externally-reachable base URL MFB is served at (`MAILFALLBACK_MCP_PUBLIC_URL`); required when `mcp.enabled` |
+| `mcp.dnsRebindingProtection` | `true` | Reject `/mcp` requests with a mismatched Host/Origin (`MAILFALLBACK_MCP_DNS_REBINDING_PROTECTION`); disable only behind a reverse proxy that already validates Host |
 | `initImage.repository` | `docker.io/library/busybox` | Image for the wait-config init containers |
 | `initImage.tag` | `"1.37"` | Init image tag |
 | `storage.maildirs.size` | `20Gi` | Maildir PVC size |

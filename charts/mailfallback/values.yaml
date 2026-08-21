@@ -64,6 +64,11 @@ mcp:
   # e.g. https://mfb.example.com. Required when mcp.enabled — without it MFB logs
   # an error at boot and does not mount /mcp.
   publicUrl: ""
+  # -- reject any /mcp request whose Host/Origin isn't publicUrl's host. Turn off
+  # only behind a reverse proxy that already validates Host AND terminates
+  # browser-originated requests before they reach MFB — disabling this also skips
+  # the Origin check, which a Host-validating proxy alone does not replace.
+  dnsRebindingProtection: true
 
 initImage:
   repository: docker.io/library/busybox

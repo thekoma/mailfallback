@@ -29,6 +29,10 @@ services:
     env_file: .env
     environment:
       MAILFALLBACK_DATABASE_URL: postgresql://${DB_USER:-mailfallback}:${DB_PASSWORD:-mailfallback}@db:5432/${DB_NAME:-mailfallback}
+      # localhost is right for this dev loop only. Behind a real hostname,
+      # MAILFALLBACK_MCP_PUBLIC_URL must be that hostname's externally-reachable
+      # URL or every /mcp request gets rejected with 421/403 by the SDK's host
+      # allowlist -- see docs/src/guides/agent-api.md#model-context-protocol.
       MAILFALLBACK_MCP_ENABLED: "true"
       MAILFALLBACK_MCP_PUBLIC_URL: "http://localhost:8000"
     depends_on:
