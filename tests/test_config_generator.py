@@ -1,6 +1,10 @@
 """Tests for the centralized config generator."""
 
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from mailfallback.services.config_generator import (
     generate_all_configs,
@@ -327,3 +331,40 @@ def test_dovecot_acl_defaults_from_inbox(tmp_path):
 
     acl_conf = (tmp_path / "dovecot" / "mfb-acl.conf").read_text()
     assert "acl_defaults_from_inbox = yes" in acl_conf
+
+
+@pytest.mark.skipif(
+    shutil.which("luac") is None,
+    reason=(
+        "luac not installed -- CI may skip this, but the local pre-push hook "
+        "runs it, so a broken Lua file still gets caught before it ships"
+    ),
+)
+def test_generated_lua_files_are_syntactically_valid(tmp_path):
+    """Every generated .lua file must parse with luac.
+
+    Both Lua templates are Python f-strings where every literal Lua brace has
+    to be doubled ({{ / }}). A single un-doubled brace renders broken Lua that
+    every existing test -- all substring assertions -- would still call
+    green; the failure would only show up as dovecot refusing to start. This
+    test would catch that class of bug directly, and it discovers files by
+    glob so a future third Lua template is covered without anyone remembering
+    to update this test.
+    """
+    settings = _make_settings(tmp_path)
+    generate_dovecot_config(settings)
+
+    lua_files = sorted((tmp_path / "dovecot").glob("*.lua"))
+    assert len(lua_files) >= 2, (
+        "expected at least the userdb and passdb lua files -- a glob "
+        "matching nothing would make this test vacuous"
+    )
+
+    luac = shutil.which("luac")
+    for lua_file in lua_files:
+        result = subprocess.run(
+            [luac, "-p", str(lua_file)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"{lua_file.name} failed to parse: {result.stderr}"
