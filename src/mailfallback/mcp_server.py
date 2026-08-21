@@ -311,7 +311,7 @@ def _register_tools(mcp: MCPServer) -> None:
         with _caller(app_credential_service.SCOPE_MAIL_READ) as (db, user):
             visible = search_service._accessible_account_ids(db, user)
             if not visible:
-                return {"mailboxes": []}
+                return MailboxListOut(mailboxes=[])
             accounts = db.query(Account).filter(Account.id.in_(visible)).all()
             counts = dict(
                 db.query(MailIndexMessage.account_id, func.count())
@@ -330,20 +330,22 @@ def _register_tools(mcp: MCPServer) -> None:
             ):
                 folders.setdefault(account_id, []).append(folder)
 
-            return {
-                "mailboxes": [
-                    {
-                        "account_id": a.id,
-                        "name": a.name,
-                        "email_address": a.email_address,
-                        "provider": a.provider,
-                        "last_sync_at": a.last_sync_at.isoformat() if a.last_sync_at else None,
-                        "indexed_messages": counts.get(a.id, 0),
-                        "folders": sorted(folders.get(a.id, [])),
-                    }
-                    for a in accounts
-                ]
-            }
+            return MailboxListOut.model_validate(
+                {
+                    "mailboxes": [
+                        {
+                            "account_id": a.id,
+                            "name": a.name,
+                            "email_address": a.email_address,
+                            "provider": a.provider,
+                            "last_sync_at": a.last_sync_at.isoformat() if a.last_sync_at else None,
+                            "indexed_messages": counts.get(a.id, 0),
+                            "folders": sorted(folders.get(a.id, [])),
+                        }
+                        for a in accounts
+                    ]
+                }
+            )
 
     @mcp.tool(annotations=_READ_ONLY)
     def search_mail(
@@ -367,19 +369,21 @@ def _register_tools(mcp: MCPServer) -> None:
         incomplete, not that nothing matched.
         """
         with _caller(app_credential_service.SCOPE_MAIL_READ) as (db, user):
-            return search_service.search_messages(
-                db,
-                user=user,
-                query=query,
-                account_ids=account_ids,
-                range_start=range_start,
-                range_end=range_end,
-                include_deleted=include_deleted,
-                snapshot_id=snapshot_id,
-                deep=deep,
-                include_all=False,
-                page=page,
-                page_size=page_size,
+            return SearchResponseOut.model_validate(
+                search_service.search_messages(
+                    db,
+                    user=user,
+                    query=query,
+                    account_ids=account_ids,
+                    range_start=range_start,
+                    range_end=range_end,
+                    include_deleted=include_deleted,
+                    snapshot_id=snapshot_id,
+                    deep=deep,
+                    include_all=False,
+                    page=page,
+                    page_size=page_size,
+                )
             )
 
     @mcp.tool(annotations=_READ_ONLY)
@@ -421,7 +425,7 @@ def _register_tools(mcp: MCPServer) -> None:
                 page_size=page_size,
             )
             result["content_search_available"] = _settings.tika_enabled
-            return result
+            return AttachmentSearchResponseOut.model_validate(result)
 
     @mcp.tool(annotations=_READ_ONLY)
     def get_message(account_id: str, message_id_hash: str) -> MessageOut:
@@ -437,7 +441,7 @@ def _register_tools(mcp: MCPServer) -> None:
             out = preview_service.get_preview(db, account, _mcp_hash(message_id_hash))
             if out is None:
                 raise LookupError("Message not found")
-            return out
+            return MessageOut.model_validate(out)
 
     @mcp.tool(annotations=_READ_ONLY)
     def download_attachment(
@@ -500,12 +504,12 @@ def _register_tools(mcp: MCPServer) -> None:
                 },
                 ip_address=None,
             )
-            return {
-                "filename": filename,
-                "size_bytes": len(payload),
-                "source": source,
-                "content_base64": base64.b64encode(payload).decode("ascii"),
-            }
+            return AttachmentDownloadOut(
+                filename=filename,
+                size_bytes=len(payload),
+                source=source,
+                content_base64=base64.b64encode(payload).decode("ascii"),
+            )
 
     @mcp.tool(annotations=_READ_ONLY)
     def imap_coords(account_id: str, message_ids: list[str]) -> ImapCoordsResponseOut:
@@ -522,8 +526,8 @@ def _register_tools(mcp: MCPServer) -> None:
 
         with _caller(app_credential_service.SCOPE_MAIL_READ) as (db, user):
             account = _mcp_account(db, user, account_id)
-            return restore.resolve_uids_for_account(
-                db, account, message_ids[:RESOLVE_COORDS_MAX_IDS]
+            return ImapCoordsResponseOut.model_validate(
+                restore.resolve_uids_for_account(db, account, message_ids[:RESOLVE_COORDS_MAX_IDS])
             )
 
     @mcp.tool(annotations=ToolAnnotations(read_only_hint=False))
@@ -584,17 +588,17 @@ def _register_tools(mcp: MCPServer) -> None:
                     details={"via": "mcp", "job_id": job.id},
                     ip_address=None,
                 )
-            return {
-                "job_id": job.id,
-                "account_id": job.account_id,
-                "status": job.status.value,
-                "source": job.source,
-                "already_queued": already,
-                "requested_at": job.requested_at.isoformat() if job.requested_at else None,
-                "started_at": job.started_at.isoformat() if job.started_at else None,
-                "completed_at": job.completed_at.isoformat() if job.completed_at else None,
-                "failure_kind": job.failure_kind,
-            }
+            return SyncJobOut(
+                job_id=job.id,
+                account_id=job.account_id,
+                status=job.status.value,
+                source=job.source,
+                already_queued=already,
+                requested_at=job.requested_at,
+                started_at=job.started_at,
+                completed_at=job.completed_at,
+                failure_kind=job.failure_kind,
+            )
 
     @mcp.tool(annotations=_READ_ONLY)
     def sync_status(job_id: str) -> SyncJobOut:
@@ -615,13 +619,13 @@ def _register_tools(mcp: MCPServer) -> None:
                 account = _mcp_account(db, user, job.account_id)
             except LookupError:
                 raise LookupError("No such job") from None
-            return {
-                "job_id": job.id,
-                "account_id": account.id,
-                "status": job.status.value,
-                "source": job.source,
-                "requested_at": job.requested_at.isoformat() if job.requested_at else None,
-                "started_at": job.started_at.isoformat() if job.started_at else None,
-                "completed_at": job.completed_at.isoformat() if job.completed_at else None,
-                "failure_kind": job.failure_kind,
-            }
+            return SyncJobOut(
+                job_id=job.id,
+                account_id=account.id,
+                status=job.status.value,
+                source=job.source,
+                requested_at=job.requested_at,
+                started_at=job.started_at,
+                completed_at=job.completed_at,
+                failure_kind=job.failure_kind,
+            )

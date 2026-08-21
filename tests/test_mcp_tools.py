@@ -64,6 +64,18 @@ def _call(server, name, **kwargs):
     return result.structured_content
 
 
+def _call_raw(server, name, **kwargs):
+    """Call a tool and return the full ``CallToolResult``.
+
+    Unlike ``_call``, this keeps ``content`` around too — the unstructured
+    text block the SDK builds for clients that don't consume
+    ``outputSchema``. That block is built from the tool's RAW return value,
+    before ``structured_content`` is derived from it, so a field the output
+    model drops from `structured_content` can still leak through here.
+    """
+    return anyio.run(lambda: server.call_tool(name, kwargs))
+
+
 def _indexed_account(db_session, store, tmp_path, owner, name="acc", subject="quarterly invoice"):
     acc = Account(
         name=name,
@@ -769,10 +781,19 @@ class TestOutputContracts:
         index_service.upsert_message_set(db_session, acc.id)
         _as(monkeypatch, ["mail:read"], tool_user)
 
-        out = _call(server, "search_attachments", query="f.pdf")
+        result = _call_raw(server, "search_attachments", query="f.pdf")
+        out = result.structured_content
 
         assert out["total"] == 1
         assert "has_live_or_snapshot" not in out["results"][0]
+        # The unstructured `content` block is built from the tool's raw
+        # return value, separately from `structured_content` — a client that
+        # never reads `outputSchema` only ever sees this half. It must be
+        # just as clean, or the internal field still reaches such a client.
+        content_text = "".join(
+            block.text for block in result.content if getattr(block, "type", None) == "text"
+        )
+        assert "has_live_or_snapshot" not in content_text, content_text
 
     def test_download_attachment_output_schema_matches_the_returned_shape(
         self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
