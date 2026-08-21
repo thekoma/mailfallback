@@ -116,12 +116,23 @@ def _split(token: str) -> tuple[str, str] | None:
 def verify_credential(
     db: Session,
     *,
-    username: str,
+    username: str | None,
     token: str,
     required_scope: str,
     kind: str,
 ) -> tuple[VerifyResult, AppCredential | None]:
-    """Verify a token for ``username`` and record the usage on success.
+    """Verify a token and record the usage on success.
+
+    ``username`` is the identity the caller already has in hand, and the token
+    must belong to it — that is the Dovecot passdb's situation, where IMAP
+    supplies the username separately. Pass ``None`` when the token IS the
+    identity, as with an HTTP bearer request: the owner is then resolved from
+    the credential and no comparison happens.
+
+    Every other check — user enabled, not migrating, credential active, scope
+    present, secret matches — runs identically either way. There is deliberately
+    no second entry point for the username-less case: a duplicated check ladder
+    is a security ladder that drifts.
 
     Deliberately does NOT write an audit row: an agent opens many IMAP
     connections and one row each would bury the audit log. ``last_used_at`` is
@@ -139,7 +150,10 @@ def verify_credential(
         return VerifyResult.unknown, None
 
     user = db.query(User).filter(User.id == cred.user_id).first()
-    if user is None or user.username != username:
+    if user is None:
+        logger.warning("Access token %s has no owning user", prefix)
+        return VerifyResult.unknown, None
+    if username is not None and user.username != username:
         # Not this user's token: fall through rather than reveal that the
         # prefix exists at all.
         logger.info("Access token %s does not belong to user %s", prefix, username)
