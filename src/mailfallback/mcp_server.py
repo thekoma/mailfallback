@@ -36,7 +36,14 @@ from starlette.applications import Starlette
 from mailfallback.config import settings as _settings
 from mailfallback.db import SessionLocal
 from mailfallback.mcp_auth import MfbTokenVerifier
-from mailfallback.models import Account, JobStatus, MailIndexMessage, SyncJob, User
+from mailfallback.models import (
+    Account,
+    JobStatus,
+    MailIndexAttachment,
+    MailIndexMessage,
+    SyncJob,
+    User,
+)
 from mailfallback.services import (
     app_credential_service,
     preview_service,
@@ -175,6 +182,34 @@ def _mcp_hash(value: str) -> bytes:
         return bytes.fromhex(value)
     except ValueError:
         raise MCPError(code=INVALID_REQUEST, message="Invalid message_id_hash") from None
+
+
+def _attachment_cap_error(
+    db: Session, account: Account, msg_hash: bytes, size_bytes: int
+) -> MCPError:
+    """The over-cap error for one attachment: names its folder, points at imap_coords.
+
+    Shared by both cap checks in ``download_attachment`` so the wording (and
+    the folder lookup) does not drift between the cheap early exit and the
+    authoritative post-extraction one.
+    """
+    msg_row = (
+        db.query(MailIndexMessage)
+        .filter(
+            MailIndexMessage.account_id == account.id,
+            MailIndexMessage.message_id_hash == msg_hash,
+        )
+        .first()
+    )
+    folder = msg_row.folder_path if msg_row else "unknown"
+    return MCPError(
+        code=INVALID_REQUEST,
+        message=(
+            f"Attachment too large to return over MCP ({size_bytes} bytes, "
+            f"cap is {MCP_ATTACHMENT_MAX_BYTES}). It lives in {folder!r} — "
+            "resolve IMAP coordinates with imap_coords and fetch it over IMAP."
+        ),
+    )
 
 
 def _register_tools(mcp: MCPServer) -> None:
@@ -343,27 +378,36 @@ def _register_tools(mcp: MCPServer) -> None:
         with _caller(app_credential_service.SCOPE_MAIL_READ) as (db, user):
             account = _mcp_account(db, user, account_id)
             msg_hash = _mcp_hash(message_id_hash)
+
+            # The index's size_bytes is a HINT, not authority: it can be
+            # stale or NULL (e.g. re-synced since indexing). It is cheap
+            # enough to check first because it saves a multi-MB disk (or
+            # restic snapshot) read for anything already known to be over
+            # cap. The post-extraction length check below is the real
+            # gate and must stay — deleting it as "redundant" would let a
+            # stale/missing index row smuggle an oversized part past the
+            # cap.
+            att = (
+                db.query(MailIndexAttachment)
+                .filter(
+                    MailIndexAttachment.account_id == account.id,
+                    MailIndexAttachment.message_id_hash == msg_hash,
+                    MailIndexAttachment.part_index == part_index,
+                )
+                .first()
+            )
+            if (
+                att is not None
+                and att.size_bytes is not None
+                and att.size_bytes > MCP_ATTACHMENT_MAX_BYTES
+            ):
+                raise _attachment_cap_error(db, account, msg_hash, att.size_bytes)
+
             payload, filename, source = restore.extract_attachment_bytes(
                 db, account, msg_hash, part_index
             )
             if len(payload) > MCP_ATTACHMENT_MAX_BYTES:
-                msg_row = (
-                    db.query(MailIndexMessage)
-                    .filter(
-                        MailIndexMessage.account_id == account.id,
-                        MailIndexMessage.message_id_hash == msg_hash,
-                    )
-                    .first()
-                )
-                folder = msg_row.folder_path if msg_row else "unknown"
-                raise MCPError(
-                    code=INVALID_REQUEST,
-                    message=(
-                        f"Attachment too large to return over MCP ({len(payload)} bytes, "
-                        f"cap is {MCP_ATTACHMENT_MAX_BYTES}). It lives in {folder!r} — "
-                        "resolve IMAP coordinates with imap_coords and fetch it over IMAP."
-                    ),
-                )
+                raise _attachment_cap_error(db, account, msg_hash, len(payload))
             log_action(
                 db,
                 user=user,
@@ -488,15 +532,21 @@ def _register_tools(mcp: MCPServer) -> None:
     def sync_status(job_id: str) -> dict[str, Any]:
         """Status of one sync job, scoped to the caller's own mailboxes.
 
-        An unknown job id and another user's job are refused with the same
-        message — this must not become an oracle a caller can use to tell
-        "no such job" apart from "a real job you cannot see".
+        An unknown job id and another user's job are refused with the SAME
+        "No such job" text — deliberately, mirroring
+        routers/agent.py:sync_job_status's two identical 404s. Do not give
+        these two branches different wording again: a caller who owns
+        neither id must not be able to tell "this job never existed" apart
+        from "this job exists but isn't yours" by the message alone.
         """
         with _caller(app_credential_service.SCOPE_SYNC_TRIGGER) as (db, user):
             job = sync_service.get_job(db, job_id)
             if job is None:
-                raise MCPError(code=INVALID_REQUEST, message="No such mailbox")
-            account = _mcp_account(db, user, job.account_id)
+                raise MCPError(code=INVALID_REQUEST, message="No such job")
+            try:
+                account = _mcp_account(db, user, job.account_id)
+            except MCPError:
+                raise MCPError(code=INVALID_REQUEST, message="No such job") from None
             return {
                 "job_id": job.id,
                 "account_id": account.id,

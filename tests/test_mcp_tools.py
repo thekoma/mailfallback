@@ -305,6 +305,41 @@ class TestDownloadAttachment:
         assert "imap_coords" in message
         assert "INBOX" in message
 
+    def test_an_oversized_indexed_size_is_refused_without_reading_the_bytes(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        """The indexed size_bytes is a hint that should short-circuit the
+        disk (or snapshot) read entirely — proven here by patching
+        extract_attachment_bytes and asserting it was never called."""
+        import mailfallback.mcp_server as ms
+        from mailfallback.routers import restore
+
+        acc, row = self._account_with_attachment(db_session, default_store, tmp_path, tool_user)
+        monkeypatch.setattr(ms, "MCP_ATTACHMENT_MAX_BYTES", 1)
+        _as(monkeypatch, ["mail:read"], tool_user)
+        hit = _call(server, "search_mail", query="attachment")["results"][0]
+
+        called = []
+        monkeypatch.setattr(
+            restore,
+            "extract_attachment_bytes",
+            lambda *a, **k: called.append(1) or (b"unused", "unused", "live"),
+        )
+
+        with pytest.raises(Exception) as exc:
+            _call(
+                server,
+                "download_attachment",
+                account_id=acc.id,
+                message_id_hash=row.message_id_hash.hex(),
+                part_index=hit["attachments"][0]["part_index"],
+            )
+
+        assert called == [], "extraction must not run when the index already says over-cap"
+        message = str(exc.value)
+        assert "imap_coords" in message
+        assert "INBOX" in message
+
 
 class TestSyncTools:
     def test_a_read_only_token_cannot_trigger_a_sync(
@@ -414,6 +449,27 @@ class TestSyncTools:
         with pytest.raises(Exception) as exc:
             _call(server, "sync_status", job_id=job.id)
         assert "No such" in str(exc.value)
+
+    def test_an_unknown_job_and_someone_elses_job_are_refused_identically(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        """No oracle: the wording must not let a caller tell "never existed"
+        apart from "exists, but isn't yours"."""
+        from mailfallback.services import sync_service
+
+        other = create_user(
+            db_session, "other5", "otherpass12345", UserRole.user, store_id=default_store.id
+        )
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, other, name="s8")
+        job = sync_service.create_sync_job(db_session, acc.id, source="api")
+        _as(monkeypatch, ["sync:trigger"], tool_user)
+
+        with pytest.raises(Exception) as unknown_exc:
+            _call(server, "sync_status", job_id="not-a-real-job-id")
+        with pytest.raises(Exception) as other_users_exc:
+            _call(server, "sync_status", job_id=job.id)
+
+        assert str(unknown_exc.value) == str(other_users_exc.value)
 
 
 class TestSyncAnnotation:
