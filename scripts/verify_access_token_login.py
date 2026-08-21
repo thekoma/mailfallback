@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Prove an access token authenticates against Dovecot IMAP, and nothing else broke.
+"""Prove an access token authenticates against Dovecot IMAP and the agent
+HTTP API, and nothing else broke.
 
-Run INSIDE the mailfallback container, which can reach dovecot by name.
-``scripts/`` is deliberately not baked into the image, so the host copy has
-to be piped in on stdin:
+Run INSIDE the mailfallback container, which can reach dovecot by name and
+serves its own HTTP API on localhost. ``scripts/`` is deliberately not baked
+into the image, so the host copy has to be piped in on stdin:
 
     docker compose exec -T -w /app mailfallback \
         uv run --no-sync python - < scripts/verify_access_token_login.py
 
-Exits non-zero on the first failed expectation.
+One script, both surfaces, so a future change to either is caught by the
+same command. Exits non-zero on the first failed expectation.
 """
 # ruff: noqa: T201
 
@@ -17,10 +19,14 @@ import os
 import shutil
 import sys
 
+import httpx
+
 from mailfallback.db import SessionLocal
-from mailfallback.models import MailStore, User, UserRole
+from mailfallback.models import Account, MailStore, User, UserRole
+from mailfallback.services import account_service, staging_service, user_service
 from mailfallback.services import app_credential_service as svc
-from mailfallback.services import staging_service, user_service
+
+HTTP_BASE = "http://localhost:8000"
 
 USERNAME = "tokenprobe"
 PASSWORD = "probepass123"  # pragma: allowlist secret
@@ -58,13 +64,26 @@ def main():
     home_dir = os.path.join(
         store.path, ".dovecot-home", user_service._sanitize_path_component(USERNAME)
     )
+    probe_account = None
     try:
         _, token = svc.create_credential(db, user, name="probe", scopes=[svc.SCOPE_IMAP])
-        _, read_only = svc.create_credential(db, user, name="no-imap", scopes=[svc.SCOPE_MAIL_READ])
+        read_cred, read_only = svc.create_credential(
+            db, user, name="no-imap", scopes=[svc.SCOPE_MAIL_READ]
+        )
+        _, sync_only = svc.create_credential(
+            db, user, name="sync-only", scopes=[svc.SCOPE_SYNC_TRIGGER]
+        )
         revoked_cred, revoked = svc.create_credential(
             db, user, name="revoked", scopes=[svc.SCOPE_IMAP]
         )
         svc.revoke_credential(db, user, revoked_cred.id)
+
+        # An existing account, borrowed just long enough for a meaningful
+        # mailboxes/sync assertion. Ownership only — zero file operations —
+        # and detached again in the finally below, never deleted.
+        probe_account = db.query(Account).first()
+        if probe_account is not None:
+            account_service.assign_owner(db, probe_account.id, user.id)
 
         print("Access-token IMAP login")
         check("valid token", login(token), "ok")
@@ -109,7 +128,70 @@ def main():
             "OK",
         )
         conn.logout()
+
+        print("\nHTTP bearer surface")
+        with httpx.Client(base_url=HTTP_BASE, timeout=10) as client:
+            # Lowercase header name: HTTP header names are case-insensitive
+            # and the scheme match is deliberately case-insensitive too, so
+            # this must behave identically to "Authorization".
+            resp = client.get(
+                "/api/v1/agent/mailboxes", headers={"authorization": f"Bearer {read_only}"}
+            )
+            check("GET mailboxes (read token)", resp.status_code, 200)
+            mailboxes = resp.json()
+            check("mailboxes body is a list", isinstance(mailboxes, list), True)
+            if probe_account is not None:
+                check("mailboxes not empty", len(mailboxes) > 0, True)
+            else:
+                print("  (no existing account to attach; mailboxes is legitimately empty)")
+
+            resp = client.get(
+                "/api/v1/agent/mailboxes", headers={"Authorization": f"Bearer {token}"}
+            )
+            check("GET mailboxes (imap-only token)", resp.status_code, 403)
+
+            resp = client.get(
+                "/api/v1/agent/mailboxes", headers={"Authorization": f"Bearer {sync_only}"}
+            )
+            check("GET mailboxes (sync-only token)", resp.status_code, 403)
+
+            resp = client.get("/api/v1/agent/mailboxes")
+            check("GET mailboxes (no header)", resp.status_code, 401)
+
+            resp = client.post(
+                "/api/v1/agent/search",
+                json={"query": ""},
+                headers={"Authorization": f"Bearer {read_only}"},
+            )
+            check("POST search status", resp.status_code, 200)
+            check(
+                "search response keys",
+                set(resp.json().keys()),
+                {"results", "total", "page", "page_size", "partial"},
+            )
+
+            sync_account_id = (
+                probe_account.id if probe_account else "00000000-0000-0000-0000-000000000000"
+            )
+            resp = client.post(
+                f"/api/v1/agent/sync/{sync_account_id}",
+                headers={"Authorization": f"Bearer {read_only}"},
+            )
+            check("POST sync (read-only token)", resp.status_code, 403)
+
+            resp = client.get(
+                "/api/v1/agent/mailboxes", headers={"Authorization": f"Bearer {revoked}"}
+            )
+            check("GET mailboxes (revoked token)", resp.status_code, 401)
+
+        db.refresh(read_cred)
+        check("HTTP token last_used_kind == api", read_cred.last_used_kind, "api")
     finally:
+        if probe_account is not None:
+            # Detach before deleting the user: account_owners.user_id has no
+            # ON DELETE CASCADE, so a lingering ownership row would make the
+            # user delete below fail and leave residue behind.
+            account_service.remove_owner(db, probe_account.id, user.id)
         db.delete(db.query(User).filter(User.username == USERNAME).first())
         db.commit()
         shutil.rmtree(home_dir, ignore_errors=True)
