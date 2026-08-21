@@ -23,8 +23,9 @@ src/mailfallback/
 ├── db.py                     # SQLAlchemy engine + session
 ├── models.py                 # All models (User, Account, SyncJob, MailStore, StoreMigration, Group)
 ├── security.py               # bcrypt + Fernet encryption
-├── dependencies.py           # FastAPI deps (get_db, get_current_user, require_admin)
+├── dependencies.py           # FastAPI deps (get_db, get_current_user, require_admin, get_current_principal, require_scope)
 ├── routers/                  # API + UI routes
+│   ├── agent.py               # /api/v1/agent — versioned, externally contracted agent-facing API
 │   ├── auth.py               # Login/logout + OIDC + Google/Microsoft OAuth2
 │   ├── accounts.py           # Account CRUD API
 │   ├── sync.py               # Sync trigger + test connection + discovery
@@ -128,6 +129,8 @@ docker compose exec mailfallback uv run alembic upgrade head
 - **Sidebar active state**: `request.url.path` checked in `base.html` to add `class="active"` on current nav link
 - **Login page isolation**: `body.login-page` class hides sidebar and centers content when `user` is not set
 - **Jinja2 filters**: `filesizeformat` for byte sizes, `cron_human` for human-readable cron schedules
+- **Agent API**: `/api/v1/agent` (`routers/agent.py`) is the only versioned, externally contracted surface in the codebase and the only place that declares `response_model=` — every other router forwards internal shapes because only the UI reads them. Every route there gates on `require_scope(...)`, never `get_current_user`. `include_all` deliberately does not exist on this surface: an agent, even an admin's, only ever sees that user's own mailboxes.
+- **`Principal`** (`dependencies.py`): resolves either a session cookie or an `Authorization: Bearer` access token via `get_current_principal`. A session principal carries every valid scope — an interactive user can already do all of this through the UI, so a scope check must never be what stops them. A bearer token principal carries only the scopes its credential was created with, and a bearer token that fails to verify is a 401 that never falls back to the session cookie.
 
 ## Maildir Layout
 
@@ -158,7 +161,7 @@ Uses **UUID-based paths** with **LAYOUT=fs** and **SubFolders Verbatim**. Folder
 - **StoreMigration**: Per-account or per-user-home migration. `account_id` set = maildir migration, `user_id` set = dovecot-home migration. Status phases (pending/copying/verifying/cleaning/completed/failed), crash recovery on startup
 - **Store deletion**: Blocked when accounts or user homes still on the store — must drain first via `get_store_contents()`
 - **Orphan detection**: `store_service.detect_orphans()` finds UUID directories on disk not matching any account in the database
-- **AppCredential (migration 028)**: Per-user access tokens, wire format `mfb_<prefix>_<secret>` — `token_prefix` is the indexed lookup key, `secret_hash` is a keyed-HMAC of the secret (keyed to `MAILFALLBACK_SECRET_KEY`, so rotating that key invalidates every existing token). Comma-separated `scopes` ∈ `imap` | `mail:read` | `sync:trigger` (`mail:read` and `sync:trigger` have no consumer until phase 2). Carries expiry, revocation, and `last_used_at`/`last_used_kind`. Excluded from the encrypted config export (`config_backup_service._EXPORT_TABLES`), consistent with notification channels
+- **AppCredential (migration 028)**: Per-user access tokens, wire format `mfb_<prefix>_<secret>` — `token_prefix` is the indexed lookup key, `secret_hash` is a keyed-HMAC of the secret (keyed to `MAILFALLBACK_SECRET_KEY`, so rotating that key invalidates every existing token). Comma-separated `scopes` ∈ `imap` | `mail:read` | `sync:trigger` (`imap` gates Dovecot/Roundcube login; `mail:read` and `sync:trigger` gate `/api/v1/agent`). Carries expiry, revocation, and `last_used_at`/`last_used_kind` — written during authentication (`verify_credential`), before the scope gate, so a token refused with 403 for lacking a scope still records a use: the field records that the credential authenticated, not that the request was authorized. Excluded from the encrypted config export (`config_backup_service._EXPORT_TABLES`), consistent with notification channels
 
 ## UI Architecture
 

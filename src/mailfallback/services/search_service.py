@@ -157,6 +157,7 @@ def search_messages(
                 MailIndexAttachment.filename,
                 MailIndexAttachment.ext,
                 MailIndexAttachment.size_bytes,
+                MailIndexAttachment.part_index,
             )
             .filter(
                 MailIndexAttachment.account_id.in_(scope),
@@ -167,9 +168,17 @@ def search_messages(
         )
         # part_index order = MIME order, so UI chips match the message layout
         atts_by_msg: dict[tuple[str, bytes], list[dict[str, Any]]] = {}
-        for acc_id, msg_hash, filename, ext, size_bytes in att_rows:
+        for acc_id, msg_hash, filename, ext, size_bytes, part_index in att_rows:
             atts_by_msg.setdefault((acc_id, msg_hash), []).append(
-                {"filename": filename, "ext": ext, "size_bytes": size_bytes}
+                {
+                    "filename": filename,
+                    "ext": ext,
+                    "size_bytes": size_bytes,
+                    # The download endpoint addresses parts by this index, and
+                    # preview already returns it — without it, an agent that
+                    # finds a message cannot fetch its attachment.
+                    "part_index": part_index,
+                }
             )
     else:
         snap_by_msg = {}

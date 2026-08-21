@@ -326,36 +326,18 @@ def _attachment_disposition(filename: str) -> str:
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(clean, safe='')}"
 
 
-@router.get("/attachments/{account_id}/{message_id_hash_hex}/{part_index}/download")
-def api_attachment_download(
-    account_id: str,
-    message_id_hash_hex: str,
-    part_index: int,
-    request: Request,
-    include_all: bool = False,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Stream one attachment part as a download, live or from snapshot.
+def extract_attachment_bytes(
+    db: Session, account: Account, message_id_hash: bytes, part_index: int
+) -> tuple[bytes, str, str]:
+    """Resolve one attachment part to (payload, filename, source).
 
-    The triple (account, message hash, part_index) addresses an attachment
-    index row; the raw message comes via the preview locator stack and is
-    re-walked counting ALL non-multipart leaves in walk order — the
-    part_index contract with index_service._parse_attachments.
-
-    ALWAYS application/octet-stream + nosniff: a hostile HTML/SVG attachment
-    must download, never execute on our origin. Every download is audited
-    (attachment.download); the admin include_all escalation needs no second
-    row — the always-on row carries an ``escalated`` flag when the bypass
-    actually fired.
+    Shared by the restore UI route and the agent API so the two cannot drift —
+    and this is the code path that meets hostile MIME, where drift would land.
+    Live file first, newest snapshot second; a cap-sized read is presumed
+    truncated and refused rather than served short. Raises the same
+    HTTPExceptions both callers already surface: 404 for a missing attachment
+    row, message, part or undecodable payload, and 502 for over-cap bytes.
     """
-    account, escalated = _workspace_account_for_user(db, user, account_id, include_all)
-    if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
-    try:
-        message_id_hash = bytes.fromhex(message_id_hash_hex)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid hash") from None
     att = (
         db.query(MailIndexAttachment)
         .filter(
@@ -431,6 +413,42 @@ def api_attachment_download(
     if payload is None:
         raise HTTPException(status_code=404, detail="Attachment part not decodable")
 
+    return payload, att.filename, source
+
+
+@router.get("/attachments/{account_id}/{message_id_hash_hex}/{part_index}/download")
+def api_attachment_download(
+    account_id: str,
+    message_id_hash_hex: str,
+    part_index: int,
+    request: Request,
+    include_all: bool = False,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Stream one attachment part as a download, live or from snapshot.
+
+    The triple (account, message hash, part_index) addresses an attachment
+    index row; the raw message comes via the preview locator stack and is
+    re-walked counting ALL non-multipart leaves in walk order — the
+    part_index contract with index_service._parse_attachments.
+
+    ALWAYS application/octet-stream + nosniff: a hostile HTML/SVG attachment
+    must download, never execute on our origin. Every download is audited
+    (attachment.download); the admin include_all escalation needs no second
+    row — the always-on row carries an ``escalated`` flag when the bypass
+    actually fired.
+    """
+    account, escalated = _workspace_account_for_user(db, user, account_id, include_all)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    try:
+        message_id_hash = bytes.fromhex(message_id_hash_hex)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid hash") from None
+
+    payload, filename, source = extract_attachment_bytes(db, account, message_id_hash, part_index)
+
     details = {
         "message_id_hash": message_id_hash.hex(),
         "part_index": part_index,
@@ -444,7 +462,7 @@ def api_attachment_download(
         action="attachment.download",
         resource_type="attachment",
         resource_id=account.id,
-        resource_name=att.filename,
+        resource_name=filename,
         details=details,
         ip_address=request.client.host if request.client else None,
     )
@@ -452,7 +470,7 @@ def api_attachment_download(
         content=payload,
         media_type="application/octet-stream",
         headers={
-            "Content-Disposition": _attachment_disposition(att.filename),
+            "Content-Disposition": _attachment_disposition(filename),
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -1345,44 +1363,32 @@ class ResolveUidsRequest(BaseModel):
     include_all: bool = False
 
 
-@router.post("/resolve-uids")
-def api_resolve_uids(
-    req: ResolveUidsRequest,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
+def resolve_uids_for_account(
+    db: Session, account: Account, message_ids: list[str]
+) -> dict[str, dict[str, list[str]] | list[str] | bool]:
     """Resolve Message-Ids to live IMAP UIDs, grouped by ready-to-SELECT folder key.
 
-    Restore-to-origin support for the workspace UI: the ``resolved`` mapping is
-    passed VERBATIM as ``selected_uids`` to POST /api/restore (selection mode).
-    Contract with services/restore_worker.py (which trusts the keys verbatim,
-    see _resolve_folders):
-
-    - Keys are namespace-prefixed IMAP paths as the temp Dovecot user sees
-      them — ``account_namespace_prefix(account) + folder_path``, e.g.
-      ``"Name (email) [abcd]/INBOX"``. The worker SELECTs each key as-is on
-      the temp-user connection (bare folder names fail there — B5 note in
-      _legacy_mount_workspace_search) and strips the prefix again for the
-      destination folder (_map_folder).
-    - Values are real IMAP UIDs; the worker filters via UID SEARCH/UID FETCH
-      in selection mode.
+    Shared by the restore-to-origin UI route and the agent API's IMAP-coords
+    bridge. The ``resolved`` mapping's keys are namespace-prefixed IMAP paths
+    as the temp Dovecot user sees them — ``account_namespace_prefix(account) +
+    folder_path``, e.g. ``"Name (email) [abcd]/INBOX"``. A caller SELECTs each
+    key as-is on a temp-user connection (bare folder names fail there — B5
+    note in _legacy_mount_workspace_search). Values are real IMAP UIDs.
 
     ``missing`` lists requested Message-Ids that resolve to no live message
-    (not indexed, deleted upstream, or not found via IMAP). Entries beyond the
-    first RESOLVE_UIDS_MAX_IDS are ignored entirely (neither resolved nor
-    reported missing). Mirrors the DEPRECATED workspace_search wrapper's
-    per-message resolution, but folder-grouped and server-side.
+    (not indexed, deleted upstream, or not found via IMAP). The caller is
+    responsible for truncating ``message_ids`` to whatever cap applies to it —
+    this helper resolves exactly what it is given.
 
-    Account lookup is privacy-default (no implicit admin access): an admin
-    resolving UIDs in a foreign mailbox must send ``include_all=true``. No
-    audit row here — the restore that consumes the mapping logs
-    ``restore.start`` (restore-to-origin writes INTO the owner's mailbox).
+    ``imap_unavailable`` distinguishes "checked, not there" from "could not
+    check at all": it is True only when the connection to Dovecot itself
+    failed, in which case every id that would otherwise have been resolved
+    still lands in ``missing`` but for a different reason — same pattern as
+    ``partial`` on deep search, a soft failure reported rather than erased. A
+    single folder's SELECT failing does NOT set it: that is "these messages
+    aren't resolvable", not "the server is unreachable", so it stays a plain
+    fold into ``missing`` with just a warning log.
     """
-    account, _escalated = _workspace_account_for_user(db, user, req.account_id, req.include_all)
-    if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
-
-    message_ids = req.message_ids[:RESOLVE_UIDS_MAX_IDS]
     rows = (
         db.query(MailIndexMessage)
         .filter(
@@ -1398,40 +1404,103 @@ def api_resolve_uids(
 
     resolved: dict[str, list[str]] = {}
     found_msgids: set[str] = set()
+    imap_unavailable = False
     if by_folder:
-        conn, temp_user = _connect_dovecot_for_account(db, account)
         try:
-            ns = account_namespace_prefix(account)
-            for folder, msgids in by_folder.items():
-                key = f"{ns}{_sanitize_imap_string(folder)}"
-                typ, _ = conn.select(f'"{key}"', readonly=True)
-                if typ != "OK":
-                    # B5 drift class: a silent fold into `missing` would be
-                    # undiagnosable in production — log which SELECT failed.
-                    logger.warning(
-                        "UID resolution: SELECT %r failed for account %s; "
-                        "%d message-id(s) fold into missing",
-                        key,
-                        account.id,
-                        len(msgids),
-                    )
-                    continue
-                for msgid in msgids:
-                    quoted = _sanitize_imap_string(msgid)
-                    typ, data = conn.uid("SEARCH", "HEADER", "Message-Id", f'"{quoted}"')
-                    if typ == "OK" and data and data[0]:
-                        uids = data[0].decode().split()
-                        if uids:
-                            resolved.setdefault(key, []).append(uids[0])
-                            found_msgids.add(msgid)
-        finally:
-            with contextlib.suppress(Exception):
-                conn.logout()
-            with contextlib.suppress(Exception):
-                delete_temp_imap_user(db, temp_user)
+            conn, temp_user = _connect_dovecot_for_account(db, account)
+        except Exception:
+            # An unreachable Dovecot must not 500 the caller — but unlike a
+            # single SELECT failing, this means NOTHING here was actually
+            # checked, so the flag says so rather than silently reporting
+            # these ids as though they were looked up and not found.
+            imap_unavailable = True
+            logger.warning(
+                "UID resolution: could not connect to Dovecot for account %s; "
+                "%d message-id(s) fold into missing",
+                account.id,
+                sum(len(v) for v in by_folder.values()),
+                exc_info=True,
+            )
+        else:
+            try:
+                ns = account_namespace_prefix(account)
+                for folder, msgids in by_folder.items():
+                    key = f"{ns}{_sanitize_imap_string(folder)}"
+                    typ, _ = conn.select(f'"{key}"', readonly=True)
+                    if typ != "OK":
+                        # B5 drift class: a silent fold into `missing` would be
+                        # undiagnosable in production — log which SELECT failed.
+                        logger.warning(
+                            "UID resolution: SELECT %r failed for account %s; "
+                            "%d message-id(s) fold into missing",
+                            key,
+                            account.id,
+                            len(msgids),
+                        )
+                        continue
+                    for msgid in msgids:
+                        quoted = _sanitize_imap_string(msgid)
+                        typ, data = conn.uid("SEARCH", "HEADER", "Message-Id", f'"{quoted}"')
+                        if typ == "OK" and data and data[0]:
+                            uids = data[0].decode().split()
+                            if uids:
+                                resolved.setdefault(key, []).append(uids[0])
+                                found_msgids.add(msgid)
+            finally:
+                with contextlib.suppress(Exception):
+                    conn.logout()
+                with contextlib.suppress(Exception):
+                    delete_temp_imap_user(db, temp_user)
 
     missing = [m for m in message_ids if m not in found_msgids]
-    return {"resolved": resolved, "missing": missing}
+    return {"resolved": resolved, "missing": missing, "imap_unavailable": imap_unavailable}
+
+
+@router.post("/resolve-uids")
+def api_resolve_uids(
+    req: ResolveUidsRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Resolve Message-Ids to live IMAP UIDs, grouped by ready-to-SELECT folder key.
+
+    Restore-to-origin support for the workspace UI: the ``resolved`` mapping is
+    passed VERBATIM as ``selected_uids`` to POST /api/restore (selection mode).
+    Contract with services/restore_worker.py (which trusts the keys verbatim,
+    see _resolve_folders) — see resolve_uids_for_account for the shape.
+
+    Entries beyond the first RESOLVE_UIDS_MAX_IDS are ignored entirely
+    (neither resolved nor reported missing). Mirrors the DEPRECATED
+    workspace_search wrapper's per-message resolution, but folder-grouped and
+    server-side.
+
+    Account lookup is privacy-default (no implicit admin access): an admin
+    resolving UIDs in a foreign mailbox must send ``include_all=true``. No
+    audit row here — the restore that consumes the mapping logs
+    ``restore.start`` (restore-to-origin writes INTO the owner's mailbox).
+
+    ``resolve_uids_for_account`` folds an unreachable Dovecot into
+    ``imap_unavailable: true`` rather than raising, so a caller that can
+    retry (the agent API) can tell "could not check" apart from "checked and
+    gone". This caller is a PERSON reading a rendered sentence, not a program
+    that inspects the flag — a 200 here would let restore_workspace.js report
+    "N messages not in live mail — skipped", which is false when the truth is
+    "the mail server was unreachable". So this route turns the flag into a
+    502 instead of forwarding it silently. Do not remove this check to
+    "simplify" the two callers back into one shape — see the agent route's
+    imap_coords for why it deliberately does the opposite.
+    """
+    account, _escalated = _workspace_account_for_user(db, user, req.account_id, req.include_all)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    result = resolve_uids_for_account(db, account, req.message_ids[:RESOLVE_UIDS_MAX_IDS])
+    if result["imap_unavailable"]:
+        raise HTTPException(
+            status_code=502,
+            detail="Could not reach the mail server; these messages could not be checked",
+        )
+    return result
 
 
 class WorkspaceSnapshotCountRequest(BaseModel):

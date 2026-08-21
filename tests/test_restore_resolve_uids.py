@@ -96,7 +96,11 @@ def test_owner_resolves_uid_grouped_by_namespaced_folder_key(
 
     assert resp.status_code == 200, resp.text
     ns = account_namespace_prefix(acc)
-    assert resp.json() == {"resolved": {f"{ns}INBOX": ["7"]}, "missing": []}
+    assert resp.json() == {
+        "resolved": {f"{ns}INBOX": ["7"]},
+        "missing": [],
+        "imap_unavailable": False,
+    }
     # SELECT must target the namespaced path on the temp-user connection,
     # read-only — exactly the string the restore worker will SELECT later.
     conn.select.assert_called_once_with(f'"{ns}INBOX"', readonly=True)
@@ -151,7 +155,11 @@ def test_admin_include_all_resolves_foreign_account(
 
     assert resp.status_code == 200, resp.text
     ns = account_namespace_prefix(acc)
-    assert resp.json() == {"resolved": {f"{ns}INBOX": ["7"]}, "missing": []}
+    assert resp.json() == {
+        "resolved": {f"{ns}INBOX": ["7"]},
+        "missing": [],
+        "imap_unavailable": False,
+    }
     # Deliberately NOT audited: resolve-uids is a lookup step — the restore
     # that consumes the mapping logs restore.start. Pin that decision.
     assert db_session.query(AuditLog).filter(AuditLog.action.like("restore.%")).count() == 0
@@ -221,7 +229,11 @@ def test_deleted_message_lands_in_missing_without_imap(
     )
 
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"resolved": {}, "missing": ["<p1@x>"]}
+    assert resp.json() == {
+        "resolved": {},
+        "missing": ["<p1@x>"],
+        "imap_unavailable": False,
+    }
     mock_connect.assert_not_called()
 
 
@@ -290,6 +302,33 @@ def test_multi_folder_grouping_and_partial_missing(
     assert body["missing"] == ["<ghost@x>"]
 
 
+@patch(CONNECT_PATCH)
+def test_connect_failure_is_502_not_a_false_not_in_live_mail_report(
+    mock_connect, client, db_session, default_store, tmp_path
+):
+    """The bug this closes: resolve_uids_for_account folds an unreachable
+    Dovecot into `imap_unavailable: true` and returns 200 so the agent API
+    can retry. Forwarding that 200 to the UI unchanged would make
+    restore_workspace.js report "N messages not in live mail — skipped" —
+    false, since the truth is the mail server was never reached. The UI
+    route must turn the flag into a 502 instead of passing it through."""
+    owner = _mk_user(db_session, default_store, "mario")
+    acc = _mk_account(db_session, default_store, tmp_path, owner=owner)
+    _write_maildir_message(acc.maildir_path, "1.m1.host:2,S", _msg("<p1@x>"))
+    index_service.upsert_message_set(db_session, acc.id)
+    _login(client, "mario")
+
+    mock_connect.side_effect = ConnectionError("could not reach dovecot")
+
+    resp = client.post(
+        "/api/restore/resolve-uids",
+        json={"account_id": acc.id, "message_ids": ["<p1@x>"]},
+    )
+
+    assert resp.status_code == 502
+    assert "not be checked" in resp.json()["detail"] or "reach" in resp.json()["detail"]
+
+
 @patch(DELETE_PATCH)
 @patch(CONNECT_PATCH)
 def test_select_failure_puts_messages_in_missing_and_cleans_up(
@@ -312,7 +351,11 @@ def test_select_failure_puts_messages_in_missing_and_cleans_up(
         )
 
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"resolved": {}, "missing": ["<p1@x>"]}
+    assert resp.json() == {
+        "resolved": {},
+        "missing": ["<p1@x>"],
+        "imap_unavailable": False,
+    }
     conn.uid.assert_not_called()
     conn.logout.assert_called_once()
     mock_delete.assert_called_once()

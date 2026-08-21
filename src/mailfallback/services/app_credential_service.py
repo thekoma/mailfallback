@@ -116,12 +116,28 @@ def _split(token: str) -> tuple[str, str] | None:
 def verify_credential(
     db: Session,
     *,
-    username: str,
+    username: str | None,
     token: str,
-    required_scope: str,
+    required_scope: str | None,
     kind: str,
 ) -> tuple[VerifyResult, AppCredential | None]:
-    """Verify a token for ``username`` and record the usage on success.
+    """Verify a token and record the usage on success.
+
+    ``username`` is the identity the caller already has in hand, and the token
+    must belong to it — that is the Dovecot passdb's situation, where IMAP
+    supplies the username separately. Pass ``None`` when the token IS the
+    identity, as with an HTTP bearer request: the owner is then resolved from
+    the credential and no comparison happens.
+
+    ``required_scope`` may also be ``None``, which skips the scope check
+    entirely: that is the right call for something answering "who is this",
+    not "may they do that" — as `dependencies.get_current_principal` does,
+    leaving the scope gate to `dependencies.require_scope`.
+
+    Every other check — user enabled, not migrating, credential active, scope
+    present, secret matches — runs identically either way. There is deliberately
+    no second entry point for the username-less case: a duplicated check ladder
+    is a security ladder that drifts.
 
     Deliberately does NOT write an audit row: an agent opens many IMAP
     connections and one row each would bury the audit log. ``last_used_at`` is
@@ -139,19 +155,24 @@ def verify_credential(
         return VerifyResult.unknown, None
 
     user = db.query(User).filter(User.id == cred.user_id).first()
-    if user is None or user.username != username:
+    if user is None:
+        logger.warning("Access token %s has no owning user", prefix)
+        return VerifyResult.unknown, None
+    if username is not None and user.username != username:
         # Not this user's token: fall through rather than reveal that the
         # prefix exists at all.
         logger.info("Access token %s does not belong to user %s", prefix, username)
         return VerifyResult.unknown, None
 
     if not user.enabled or user.migrating:
-        logger.warning("Access token %s rejected: user %s disabled or migrating", prefix, username)
+        logger.warning(
+            "Access token %s rejected: user %s disabled or migrating", prefix, user.username
+        )
         return VerifyResult.rejected, None
     if not cred.active:
         logger.warning("Access token %s rejected: revoked or expired", prefix)
         return VerifyResult.rejected, None
-    if required_scope not in cred.scope_set:
+    if required_scope is not None and required_scope not in cred.scope_set:
         logger.warning(
             "Access token %s rejected: missing scope %s (has %s)",
             prefix,
@@ -166,5 +187,5 @@ def verify_credential(
     cred.last_used_at = datetime.now(UTC)
     cred.last_used_kind = kind
     db.commit()
-    logger.info("Access token %s authenticated %s for %s", prefix, kind, username)
+    logger.info("Access token %s authenticated %s for %s", prefix, kind, user.username)
     return VerifyResult.ok, cred

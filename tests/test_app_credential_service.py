@@ -1,5 +1,6 @@
 """Access-token lifecycle and verification."""
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -218,6 +219,137 @@ class TestVerify:
                 kind="imap",
             )
             assert result is svc.VerifyResult.not_a_token, bad
+
+    def test_a_valid_token_verifies_without_a_username(self, db_session, token_user):
+        """HTTP bearer auth has no username in hand — the token identifies the user."""
+        cred, token = self._cred(db_session, token_user)
+
+        result, found = svc.verify_credential(
+            db_session,
+            username=None,
+            token=token,
+            required_scope=svc.SCOPE_IMAP,
+            kind="api",
+        )
+
+        assert result is svc.VerifyResult.ok
+        assert found.id == cred.id
+        assert found.user.id == token_user.id
+        assert cred.last_used_kind == "api"
+
+    def test_username_less_verification_still_enforces_every_check(self, db_session, token_user):
+        """Dropping the username must not drop the rest of the ladder."""
+        # revoked
+        cred, token = self._cred(db_session, token_user)
+        cred.revoked_at = datetime.now(UTC)
+        db_session.commit()
+        result, _ = svc.verify_credential(
+            db_session, username=None, token=token, required_scope=svc.SCOPE_IMAP, kind="api"
+        )
+        assert result is svc.VerifyResult.rejected
+
+        # expired
+        cred2, token2 = self._cred(db_session, token_user)
+        cred2.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        db_session.commit()
+        result, _ = svc.verify_credential(
+            db_session, username=None, token=token2, required_scope=svc.SCOPE_IMAP, kind="api"
+        )
+        assert result is svc.VerifyResult.rejected
+
+        # missing scope
+        _, token3 = self._cred(db_session, token_user, scopes=(svc.SCOPE_MAIL_READ,))
+        result, _ = svc.verify_credential(
+            db_session, username=None, token=token3, required_scope=svc.SCOPE_IMAP, kind="api"
+        )
+        assert result is svc.VerifyResult.rejected
+
+        # wrong secret
+        cred4, _ = self._cred(db_session, token_user)
+        result, _ = svc.verify_credential(
+            db_session,
+            username=None,
+            token=f"mfb_{cred4.token_prefix}_wrong",
+            required_scope=svc.SCOPE_IMAP,
+            kind="api",
+        )
+        assert result is svc.VerifyResult.rejected
+
+        # disabled user
+        _, token5 = self._cred(db_session, token_user)
+        token_user.enabled = False
+        db_session.commit()
+        result, _ = svc.verify_credential(
+            db_session, username=None, token=token5, required_scope=svc.SCOPE_IMAP, kind="api"
+        )
+        assert result is svc.VerifyResult.rejected
+
+    def test_username_less_verification_rejects_a_non_token(self, db_session, token_user):
+        result, found = svc.verify_credential(
+            db_session,
+            username=None,
+            token="not-a-token",
+            required_scope=svc.SCOPE_MAIL_READ,
+            kind="api",
+        )
+        assert result is svc.VerifyResult.not_a_token
+        assert found is None
+
+    def test_passing_a_username_still_matches_it(self, db_session, default_store, token_user):
+        """The passdb path must be unchanged: a username that does not own the
+        token still resolves to `unknown`."""
+        _, token = self._cred(db_session, token_user)
+        other = User(
+            username="notmine",
+            password_hash="x",
+            role=UserRole.user,
+            enabled=True,
+            store_id=default_store.id,
+        )
+        db_session.add(other)
+        db_session.commit()
+
+        result, _ = svc.verify_credential(
+            db_session,
+            username="notmine",
+            token=token,
+            required_scope=svc.SCOPE_IMAP,
+            kind="imap",
+        )
+        assert result is svc.VerifyResult.unknown
+
+    def test_username_less_verification_logs_the_resolved_username(
+        self, db_session, token_user, caplog
+    ):
+        """Operator diagnostics on the bearer path must name the user: a log
+        line that cannot name the user is worse than no log line at all,
+        because it looks like it told you something."""
+        _, token = self._cred(db_session, token_user)
+
+        with caplog.at_level(logging.INFO, logger="mailfallback.services.app_credential_service"):
+            result, _ = svc.verify_credential(
+                db_session,
+                username=None,
+                token=token,
+                required_scope=svc.SCOPE_IMAP,
+                kind="api",
+            )
+
+        assert result is svc.VerifyResult.ok
+        assert "agentuser" in caplog.text
+        assert "None" not in caplog.text
+
+    def test_required_scope_none_skips_the_scope_check(self, db_session, token_user):
+        """get_current_principal answers identity, not authorisation — the
+        scope gate is require_scope()'s job."""
+        _, token = self._cred(db_session, token_user, scopes=(svc.SCOPE_IMAP,))
+
+        result, cred = svc.verify_credential(
+            db_session, username=None, token=token, required_scope=None, kind="api"
+        )
+
+        assert result is svc.VerifyResult.ok
+        assert cred.scope_set == frozenset({svc.SCOPE_IMAP})
 
 
 class TestListAndRevoke:
