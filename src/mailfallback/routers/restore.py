@@ -1478,12 +1478,29 @@ def api_resolve_uids(
     resolving UIDs in a foreign mailbox must send ``include_all=true``. No
     audit row here — the restore that consumes the mapping logs
     ``restore.start`` (restore-to-origin writes INTO the owner's mailbox).
+
+    ``resolve_uids_for_account`` folds an unreachable Dovecot into
+    ``imap_unavailable: true`` rather than raising, so a caller that can
+    retry (the agent API) can tell "could not check" apart from "checked and
+    gone". This caller is a PERSON reading a rendered sentence, not a program
+    that inspects the flag — a 200 here would let restore_workspace.js report
+    "N messages not in live mail — skipped", which is false when the truth is
+    "the mail server was unreachable". So this route turns the flag into a
+    502 instead of forwarding it silently. Do not remove this check to
+    "simplify" the two callers back into one shape — see the agent route's
+    imap_coords for why it deliberately does the opposite.
     """
     account, _escalated = _workspace_account_for_user(db, user, req.account_id, req.include_all)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 
-    return resolve_uids_for_account(db, account, req.message_ids[:RESOLVE_UIDS_MAX_IDS])
+    result = resolve_uids_for_account(db, account, req.message_ids[:RESOLVE_UIDS_MAX_IDS])
+    if result["imap_unavailable"]:
+        raise HTTPException(
+            status_code=502,
+            detail="Could not reach the mail server; these messages could not be checked",
+        )
+    return result
 
 
 class WorkspaceSnapshotCountRequest(BaseModel):
