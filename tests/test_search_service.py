@@ -273,7 +273,9 @@ def test_results_include_attachments(db_session, search_setup):
     assert out["total"] == 1
     hit = out["results"][0]
     assert hit["has_attachments"] is True
-    assert hit["attachments"] == [{"filename": "a.pdf", "ext": "pdf", "size_bytes": 10}]
+    assert hit["attachments"] == [
+        {"filename": "a.pdf", "ext": "pdf", "size_bytes": 10, "part_index": 2}
+    ]
     # bytes -> hex string contract, consumed by the preview endpoint URL
     assert hit["message_id_hash"] == row.message_id_hash.hex()
 
@@ -316,7 +318,7 @@ def test_attachment_enrichment_never_selects_content_text(db_session, search_set
     # the chips still come through
     by_subject = {r["subject"]: r for r in out["results"]}
     assert by_subject["fattura marzo"]["attachments"] == [
-        {"filename": "a.pdf", "ext": "pdf", "size_bytes": 10}
+        {"filename": "a.pdf", "ext": "pdf", "size_bytes": 10, "part_index": 2}
     ]
 
 
@@ -1042,3 +1044,62 @@ def test_parse_message_id_from_fetch_non_tuple_returns_none():
 
 def test_parse_message_id_from_fetch_missing_header_returns_none():
     assert _parse_message_id_from_fetch((b"meta", b"Subject: hi\r\n")) is None
+
+
+def test_search_results_attachments_carry_part_index(db_session, default_store, tmp_path):
+    """An agent that finds a message must be able to address its attachments.
+
+    The download endpoint keys on (account, message hash, part_index), and
+    preview already returns part_index — search omitting it made
+    "find the message, fetch its attachment" impossible in one pass.
+    """
+    import os
+    from email.message import EmailMessage
+
+    from mailfallback.models import Account, UserRole, account_owners
+    from mailfallback.services import index_service
+    from mailfallback.services.user_service import create_user
+
+    user = create_user(
+        db_session, "partidx", "partidxpass123", UserRole.user, store_id=default_store.id
+    )
+    acc = Account(
+        name="withatt",
+        imap_host="h",
+        email_address="withatt@example.com",
+        maildir_path=str(tmp_path / "mail-partidx"),
+        store_id=default_store.id,
+    )
+    db_session.add(acc)
+    db_session.flush()
+    db_session.execute(account_owners.insert().values(account_id=acc.id, user_id=user.id))
+    db_session.commit()
+
+    msg = EmailMessage()
+    msg["Message-Id"] = "<partidx@x>"
+    msg["From"] = "a@b.c"
+    msg["To"] = "d@e.f"
+    msg["Subject"] = "with attachment"
+    msg["Date"] = "Thu, 11 Jun 2026 10:00:00 +0200"
+    msg.set_content("see attached")
+    msg.add_attachment(
+        b"%PDF-1.4 fake", maintype="application", subtype="pdf", filename="invoice.pdf"
+    )
+    cur = os.path.join(acc.maildir_path, "cur")
+    os.makedirs(cur, exist_ok=True)
+    with open(os.path.join(cur, "300.partidx.host:2,S"), "wb") as f:
+        f.write(msg.as_bytes())
+    index_service.upsert_message_set(db_session, acc.id)
+
+    out = search_service.search_messages(db_session, user=user, query="attachment")
+
+    atts = out["results"][0]["attachments"]
+    assert atts, "the fixture message carries one attachment"
+    assert "part_index" in atts[0]
+    assert isinstance(atts[0]["part_index"], int)
+    # preview returns the same shape — that symmetry is the point of this change
+    from mailfallback.services import preview_service
+
+    row_hash = bytes.fromhex(out["results"][0]["message_id_hash"])
+    preview = preview_service.get_preview(db_session, acc, row_hash)
+    assert preview["attachments"][0]["part_index"] == atts[0]["part_index"]
