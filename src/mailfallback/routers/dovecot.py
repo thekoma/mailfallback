@@ -5,6 +5,7 @@ import hmac
 import re
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
@@ -18,6 +19,7 @@ from mailfallback.models import (
     account_owners,
     group_members,
 )
+from mailfallback.services import app_credential_service
 from mailfallback.services.recovery_service import namespace_prefix as recovery_namespace_prefix
 
 router = APIRouter(prefix="/api/internal/dovecot", tags=["dovecot-internal"])
@@ -139,3 +141,39 @@ def account_namespace_prefix(account) -> str:
     """
     short_id = account.id[-4:]
     return f"{account.name} ({account.email_address}) [{short_id}]/"
+
+
+class PassdbRequest(BaseModel):
+    username: str
+    password: str
+    protocol: str | None = None
+
+
+@router.post("/passdb", dependencies=[Depends(_verify_api_key)])
+def passdb_verify(req: PassdbRequest, db: Session = Depends(get_db)):
+    """Verify an access token as an IMAP password, for the Dovecot Lua passdb.
+
+    The status code IS the protocol contract — mfb-lua-passdb.lua maps it:
+      200 -> PASSDB_RESULT_OK              (table return value, never a string)
+      404 -> PASSDB_RESULT_NEXT            (not a token, or not this user's)
+      401 -> PASSDB_RESULT_PASSWORD_MISMATCH
+      other/unreachable -> PASSDB_RESULT_INTERNAL_FAILURE
+
+    404 rather than 401 for an unknown token keeps the SQL passdb reachable and
+    does not reveal whether a prefix exists.
+    """
+    result, _cred = app_credential_service.verify_credential(
+        db,
+        username=req.username,
+        token=req.password,
+        required_scope=app_credential_service.SCOPE_IMAP,
+        kind=req.protocol or "imap",
+    )
+    if result is app_credential_service.VerifyResult.ok:
+        return {"ok": True}
+    if result in (
+        app_credential_service.VerifyResult.not_a_token,
+        app_credential_service.VerifyResult.unknown,
+    ):
+        raise HTTPException(status_code=404, detail="No such access token")
+    raise HTTPException(status_code=401, detail="Access token rejected")
