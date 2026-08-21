@@ -168,7 +168,7 @@ def mcp_asgi_app(server: MCPServer, settings) -> Starlette:
     )
 
 
-def protected_resource_metadata_routes(settings) -> list[Route]:
+def protected_resource_metadata_routes(server: MCPServer) -> list[Route]:
     """The RFC 9728 protected-resource-metadata route, registered at the
     FastAPI ROOT app rather than only inside the mounted ``/mcp`` app.
 
@@ -183,12 +183,24 @@ def protected_resource_metadata_routes(settings) -> list[Route]:
     generator here (rather than hand-writing the JSON) keeps the content
     whatever the SDK would have served, and answers at the URL that is
     actually advertised.
+
+    Takes the already-built ``server`` rather than ``settings`` so this
+    reads the SAME ``AuthSettings`` the mounted app's own copy of this route
+    was built from (``build_mcp_server``'s ``AuthSettings``). Re-deriving
+    ``resource_url``/``authorization_servers``/``scopes_supported`` from
+    ``settings`` a second time would agree today only by coincidence — change
+    ``required_scopes`` or ``issuer_url`` there and the root route would
+    silently diverge from the nested one.
     """
-    base = settings.mcp_public_url.rstrip("/")
+    auth = server.settings.auth
+    if auth is None or auth.resource_server_url is None:
+        raise ValueError(
+            "protected_resource_metadata_routes requires a server built with auth configured"
+        )
     return create_protected_resource_routes(
-        resource_url=AnyHttpUrl(f"{base}{MCP_PATH}"),
-        authorization_servers=[AnyHttpUrl(base)],
-        scopes_supported=[],
+        resource_url=auth.resource_server_url,
+        authorization_servers=[auth.issuer_url],
+        scopes_supported=auth.required_scopes or [],
     )
 
 
@@ -244,6 +256,19 @@ def _caller(scope: str):
         db.close()
 
 
+class _NoAccess(LookupError):
+    """Raised by ``_mcp_account`` when the caller cannot see this account.
+
+    A dedicated subclass rather than a plain ``LookupError``: ``sync_status``
+    below needs to catch exactly this "no access" condition and re-word it,
+    but ``KeyError``/``IndexError`` are ALSO ``LookupError`` subclasses — a
+    bare ``except LookupError`` there would relabel a genuine bug raised
+    inside ``_mcp_account`` (or ``_accessible_account_ids``) as "No such
+    job" instead of surfacing it. Catching this subclass instead means only
+    the condition this class documents gets swallowed.
+    """
+
+
 def _mcp_account(db: Session, user: User, account_id: str) -> Account:
     """The account, or an error that does not reveal whether it exists.
 
@@ -251,10 +276,10 @@ def _mcp_account(db: Session, user: User, account_id: str) -> Account:
     SDK must deliver as an ``is_error`` result, not a protocol-level error.
     """
     if account_id not in search_service._accessible_account_ids(db, user):
-        raise LookupError("No such mailbox")
+        raise _NoAccess("No such mailbox")
     account = db.query(Account).filter(Account.id == account_id).first()
     if account is None:
-        raise LookupError("No such mailbox")
+        raise _NoAccess("No such mailbox")
     return account
 
 
@@ -617,7 +642,7 @@ def _register_tools(mcp: MCPServer) -> None:
                 raise LookupError("No such job")
             try:
                 account = _mcp_account(db, user, job.account_id)
-            except LookupError:
+            except _NoAccess:
                 raise LookupError("No such job") from None
             return SyncJobOut(
                 job_id=job.id,

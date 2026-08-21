@@ -104,6 +104,45 @@ def _indexed_account(db_session, store, tmp_path, owner, name="acc", subject="qu
     return acc, row
 
 
+def _account_with_attachment(db_session, store, tmp_path, owner):
+    """An account owning one message with one PDF attachment.
+
+    Module-level (not a method on ``TestDownloadAttachment``) so every test
+    that needs an attachment fixture — across ``TestDownloadAttachment``,
+    ``TestRefusalsAreNotProtocolErrors`` and ``TestOutputContracts`` — calls
+    the same function instead of instantiating ``TestDownloadAttachment()``
+    just to borrow its helper, or re-duplicating its body.
+    """
+    acc = Account(
+        name="withatt",
+        imap_host="h",
+        email_address="withatt@example.com",
+        maildir_path=str(tmp_path / "mail-mcpatt"),
+        store_id=store.id,
+    )
+    db_session.add(acc)
+    db_session.flush()
+    db_session.execute(account_owners.insert().values(account_id=acc.id, user_id=owner.id))
+    db_session.commit()
+    msg = EmailMessage()
+    msg["Message-Id"] = "<mcpatt@x>"
+    msg["From"] = "a@b.c"
+    msg["To"] = "d@e.f"
+    msg["Subject"] = "with attachment"
+    msg["Date"] = "Thu, 11 Jun 2026 10:00:00 +0200"
+    msg.set_content("see attached")
+    msg.add_attachment(
+        b"%PDF-1.4 fake", maintype="application", subtype="pdf", filename="invoice.pdf"
+    )
+    cur = os.path.join(acc.maildir_path, "cur")
+    os.makedirs(cur, exist_ok=True)
+    with open(os.path.join(cur, "200.mcpatt.host:2,S"), "wb") as f:
+        f.write(msg.as_bytes())
+    index_service.upsert_message_set(db_session, acc.id)
+    row = db_session.query(MailIndexMessage).filter_by(account_id=acc.id).one()
+    return acc, row
+
+
 class TestScopeGating:
     def test_an_imap_only_token_is_refused_by_every_read_tool(
         self, server, db_session, tool_user, monkeypatch
@@ -241,42 +280,12 @@ class TestToolAnnotations:
 
 
 class TestDownloadAttachment:
-    def _account_with_attachment(self, db_session, store, tmp_path, owner):
-        acc = Account(
-            name="withatt",
-            imap_host="h",
-            email_address="withatt@example.com",
-            maildir_path=str(tmp_path / "mail-mcpatt"),
-            store_id=store.id,
-        )
-        db_session.add(acc)
-        db_session.flush()
-        db_session.execute(account_owners.insert().values(account_id=acc.id, user_id=owner.id))
-        db_session.commit()
-        msg = EmailMessage()
-        msg["Message-Id"] = "<mcpatt@x>"
-        msg["From"] = "a@b.c"
-        msg["To"] = "d@e.f"
-        msg["Subject"] = "with attachment"
-        msg["Date"] = "Thu, 11 Jun 2026 10:00:00 +0200"
-        msg.set_content("see attached")
-        msg.add_attachment(
-            b"%PDF-1.4 fake", maintype="application", subtype="pdf", filename="invoice.pdf"
-        )
-        cur = os.path.join(acc.maildir_path, "cur")
-        os.makedirs(cur, exist_ok=True)
-        with open(os.path.join(cur, "200.mcpatt.host:2,S"), "wb") as f:
-            f.write(msg.as_bytes())
-        index_service.upsert_message_set(db_session, acc.id)
-        row = db_session.query(MailIndexMessage).filter_by(account_id=acc.id).one()
-        return acc, row
-
     def test_returns_the_bytes_base64_encoded(
         self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
     ):
         import base64
 
-        acc, row = self._account_with_attachment(db_session, default_store, tmp_path, tool_user)
+        acc, row = _account_with_attachment(db_session, default_store, tmp_path, tool_user)
         _as(monkeypatch, ["mail:read"], tool_user)
         hit = _call(server, "search_mail", query="attachment")["results"][0]
         part = hit["attachments"][0]["part_index"]
@@ -299,7 +308,7 @@ class TestDownloadAttachment:
         """The cap must redirect the agent, not dead-end it."""
         import mailfallback.mcp_server as ms
 
-        acc, row = self._account_with_attachment(db_session, default_store, tmp_path, tool_user)
+        acc, row = _account_with_attachment(db_session, default_store, tmp_path, tool_user)
         monkeypatch.setattr(ms, "MCP_ATTACHMENT_MAX_BYTES", 1)
         _as(monkeypatch, ["mail:read"], tool_user)
         hit = _call(server, "search_mail", query="attachment")["results"][0]
@@ -326,7 +335,7 @@ class TestDownloadAttachment:
         import mailfallback.mcp_server as ms
         from mailfallback.routers import restore
 
-        acc, row = self._account_with_attachment(db_session, default_store, tmp_path, tool_user)
+        acc, row = _account_with_attachment(db_session, default_store, tmp_path, tool_user)
         monkeypatch.setattr(ms, "MCP_ATTACHMENT_MAX_BYTES", 1)
         _as(monkeypatch, ["mail:read"], tool_user)
         hit = _call(server, "search_mail", query="attachment")["results"][0]
@@ -552,7 +561,10 @@ class TestPagination:
         _as(monkeypatch, ["mail:read"], tool_user)
         with pytest.raises(Exception) as exc:
             _call(server, tool_name, query="", page=0)
-        assert "page" in str(exc.value)
+        # Pydantic puts the failing field name alone on its own line — plain
+        # substring "page" would also match "page_size"'s error, so this
+        # can't tell the two apart without the surrounding newlines.
+        assert "\npage\n" in str(exc.value)
 
     @pytest.mark.parametrize("tool_name", ["search_mail", "search_attachments"])
     def test_an_oversized_page_size_is_refused(self, server, tool_user, monkeypatch, tool_name):
@@ -596,6 +608,10 @@ class TestRefusalsAreNotProtocolErrors:
         with pytest.raises(Exception) as exc:
             _call(server, "list_mailboxes")
         assert not isinstance(exc.value.__cause__ or exc.value, MCPError)
+        # Narrows the catch to the refusal this test means to exercise — a
+        # bare `pytest.raises(Exception)` would also pass for an unrelated
+        # bug that happens not to be an MCPError.
+        assert "mail:read" in str(exc.value)
 
     def test_an_inaccessible_mailbox_is_not_an_mcperror(
         self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
@@ -618,6 +634,7 @@ class TestRefusalsAreNotProtocolErrors:
                 message_id_hash=row.message_id_hash.hex(),
             )
         assert not isinstance(exc.value.__cause__ or exc.value, MCPError)
+        assert "No such mailbox" in str(exc.value)
 
     def test_the_over_cap_attachment_redirect_is_not_an_mcperror(
         self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
@@ -630,9 +647,7 @@ class TestRefusalsAreNotProtocolErrors:
 
         import mailfallback.mcp_server as ms
 
-        acc, row = TestDownloadAttachment()._account_with_attachment(
-            db_session, default_store, tmp_path, tool_user
-        )
+        acc, row = _account_with_attachment(db_session, default_store, tmp_path, tool_user)
         monkeypatch.setattr(ms, "MCP_ATTACHMENT_MAX_BYTES", 1)
         _as(monkeypatch, ["mail:read"], tool_user)
         hit = _call(server, "search_mail", query="attachment")["results"][0]
@@ -646,6 +661,7 @@ class TestRefusalsAreNotProtocolErrors:
                 part_index=hit["attachments"][0]["part_index"],
             )
         assert not isinstance(exc.value.__cause__ or exc.value, MCPError)
+        assert "imap_coords" in str(exc.value)
 
     def test_sync_now_refusal_is_not_an_mcperror(
         self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
@@ -662,6 +678,7 @@ class TestRefusalsAreNotProtocolErrors:
         with pytest.raises(Exception) as exc:
             _call(server, "sync_now", account_id=acc.id)
         assert not isinstance(exc.value.__cause__ or exc.value, MCPError)
+        assert "suspended" in str(exc.value)
 
     def test_sync_status_no_such_job_is_not_an_mcperror(self, server, tool_user, monkeypatch):
         from mcp.shared.exceptions import MCPError
@@ -670,6 +687,7 @@ class TestRefusalsAreNotProtocolErrors:
         with pytest.raises(Exception) as exc:
             _call(server, "sync_status", job_id="not-a-real-job-id")
         assert not isinstance(exc.value.__cause__ or exc.value, MCPError)
+        assert "No such job" in str(exc.value)
 
 
 class TestImapCoordsTool:
@@ -753,35 +771,10 @@ class TestOutputContracts:
         AttachmentSearchResponseOut/SearchAttachmentOut — reusing that model
         as the return annotation must silently drop it, exactly like
         FastAPI's response_model already does for the REST route."""
-        from email.message import EmailMessage
-
-        acc = Account(
-            name="attcontract",
-            imap_host="h",
-            email_address="attcontract@example.com",
-            maildir_path=str(tmp_path / "mail-attcontract"),
-            store_id=default_store.id,
-        )
-        db_session.add(acc)
-        db_session.flush()
-        db_session.execute(account_owners.insert().values(account_id=acc.id, user_id=tool_user.id))
-        db_session.commit()
-        msg = EmailMessage()
-        msg["Message-Id"] = "<attcontract@x>"
-        msg["From"] = "a@b.c"
-        msg["To"] = "d@e.f"
-        msg["Subject"] = "contract check"
-        msg["Date"] = "Thu, 11 Jun 2026 10:00:00 +0200"
-        msg.set_content("body")
-        msg.add_attachment(b"hi", maintype="application", subtype="pdf", filename="f.pdf")
-        cur = os.path.join(acc.maildir_path, "cur")
-        os.makedirs(cur, exist_ok=True)
-        with open(os.path.join(cur, "1.attcontract.host:2,S"), "wb") as f:
-            f.write(msg.as_bytes())
-        index_service.upsert_message_set(db_session, acc.id)
+        _account_with_attachment(db_session, default_store, tmp_path, tool_user)
         _as(monkeypatch, ["mail:read"], tool_user)
 
-        result = _call_raw(server, "search_attachments", query="f.pdf")
+        result = _call_raw(server, "search_attachments", query="invoice.pdf")
         out = result.structured_content
 
         assert out["total"] == 1
@@ -798,9 +791,7 @@ class TestOutputContracts:
     def test_download_attachment_output_schema_matches_the_returned_shape(
         self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
     ):
-        acc, row = TestDownloadAttachment()._account_with_attachment(
-            db_session, default_store, tmp_path, tool_user
-        )
+        acc, row = _account_with_attachment(db_session, default_store, tmp_path, tool_user)
         _as(monkeypatch, ["mail:read"], tool_user)
         hit = _call(server, "search_mail", query="attachment")["results"][0]
 

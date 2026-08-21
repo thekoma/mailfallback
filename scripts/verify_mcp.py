@@ -431,9 +431,18 @@ def main():
         db.refresh(read_cred)
         check("last_used_kind on the used token", read_cred.last_used_kind, "mcp")
     finally:
-        db.delete(db.query(User).filter(User.username == USERNAME).first())
+        # Guard each delete on the row still being there: db.delete(None)
+        # raises UnmappedInstanceError, and this runs in a `finally` — an
+        # already-gone row (e.g. a prior run's teardown half-completed)
+        # would then replace whatever real failure this block exists to
+        # let through with a teardown crash instead.
+        user_row = db.query(User).filter(User.username == USERNAME).first()
+        if user_row is not None:
+            db.delete(user_row)
         if acc is not None:
-            db.delete(db.query(Account).filter(Account.id == acc.id).first())
+            acc_row = db.query(Account).filter(Account.id == acc.id).first()
+            if acc_row is not None:
+                db.delete(acc_row)
         db.commit()
         shutil.rmtree(home_dir, ignore_errors=True)
         if acc is not None:
