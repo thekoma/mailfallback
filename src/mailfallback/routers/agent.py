@@ -28,6 +28,7 @@ from mailfallback.config import settings
 from mailfallback.dependencies import Principal, get_db, require_scope
 from mailfallback.models import Account, MailIndexMessage
 from mailfallback.services import app_credential_service, preview_service, search_service
+from mailfallback.services.sync_worker import submit_sync_job
 
 logger = logging.getLogger(__name__)
 
@@ -381,6 +382,15 @@ def imap_coords(
     publishes them, so they can be SELECTed as-is. Ids beyond
     RESOLVE_COORDS_MAX_IDS are ignored entirely — neither resolved nor
     reported missing.
+
+    Returns 200 with ``imap_unavailable: true`` on a Dovecot connect failure,
+    unlike the UI's equivalent route (routers/restore.py:api_resolve_uids),
+    which turns the same condition into a 502. That is deliberate, not
+    inconsistent: this caller is a PROGRAM that can inspect the flag and
+    retry, so a soft signal is more useful than an exception it would just
+    have to catch and re-decode. The UI's caller is a person about to be
+    handed a rendered sentence, who cannot tell "checked and gone" apart from
+    "could not check" if both come back as success.
     """
     from mailfallback.routers import restore
 
@@ -391,16 +401,44 @@ def imap_coords(
 @router.post("/sync/{account_id}", response_model=SyncJobOut)
 def trigger_sync(
     account_id: str,
+    request: Request,
     principal: Principal = Depends(_SYNC),
     db: Session = Depends(get_db),
 ):
     """Queue a sync. Idempotent in practice: if one is already pending or
     running, that job is returned with ``already_queued: true`` rather than an
-    error, so a polling agent needs no special case for the ordinary state."""
+    error, so a polling agent needs no special case for the ordinary state.
+
+    Guards mirror routers/sync.py's single-account trigger exactly — same
+    status code, same messages — with ONE deliberate divergence: there, a
+    self-recovering pause (budget/throttle/transient) is a warn-and-override,
+    because a human triggering it can weigh burning the provider's daily
+    quota against getting fresh mail now. An agent cannot weigh that trade-off
+    on the account owner's behalf, so here a pause is a plain refusal instead.
+    Do not "fix" this to match the UI — it is intentional.
+    """
     from mailfallback.models import JobStatus, SyncJob
     from mailfallback.services import sync_service
+    from mailfallback.services.audit_service import log_action
 
     account = _agent_account(db, principal, account_id)
+
+    if account.suspended:
+        raise HTTPException(status_code=409, detail="Sync blocked: account is suspended")
+    if account.migrating:
+        raise HTTPException(status_code=409, detail="Sync blocked: account migration in progress")
+    for owner in account.owners:
+        if owner.migrating:
+            raise HTTPException(status_code=409, detail="Sync blocked: user migration in progress")
+    if account.sync_paused_until is not None or account.pause_reason is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Sync blocked: paused ({account.pause_reason or 'unknown'}); "
+                "an agent cannot override a self-recovering pause"
+            ),
+        )
+
     job = sync_service.create_sync_job(db, account.id, source="agent")
     already = False
     if job is None:
@@ -416,6 +454,20 @@ def trigger_sync(
         )
         if job is None:  # raced to completion between the two queries
             raise HTTPException(status_code=409, detail="Could not queue a sync; retry")
+    else:
+        # Only the newly-created-job branch submits — an already-running job
+        # must never be resubmitted to the executor.
+        submit_sync_job(job.id)
+        log_action(
+            db,
+            user=principal.user,
+            action="account.sync",
+            resource_type="account",
+            resource_id=account.id,
+            resource_name=account.email_address,
+            details={"via": "agent_api", "job_id": job.id},
+            ip_address=request.client.host if request.client else None,
+        )
     return SyncJobOut(
         job_id=job.id,
         account_id=job.account_id,

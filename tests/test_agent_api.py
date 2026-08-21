@@ -1,6 +1,8 @@
 """The /api/v1/agent surface: scope gating, scoping to the caller's mailboxes,
 and response shapes that do not leak internal dict drift."""
 
+from unittest.mock import patch
+
 import pytest
 
 from mailfallback.models import Account, MailIndexMessage, UserRole, account_owners
@@ -412,6 +414,9 @@ class TestImapCoords:
         assert resp.status_code == 404
 
 
+SUBMIT_PATCH = "mailfallback.routers.agent.submit_sync_job"
+
+
 class TestSync:
     def test_a_read_token_cannot_trigger_a_sync(
         self, client, db_session, default_store, tmp_path, agent_user, read_token
@@ -437,6 +442,24 @@ class TestSync:
         assert body["source"] == "agent"
         assert body["already_queued"] is False
 
+    def test_a_new_job_is_actually_submitted_to_the_executor(
+        self, client, db_session, default_store, tmp_path, agent_user, sync_token
+    ):
+        """The bug this closes: a row in the DB is not a sync. Without a call
+        to submit_sync_job, the job sits in `pending` forever — nothing
+        re-drives pending rows, and the orphaned row then makes
+        create_sync_job's existing-job guard return None for this account on
+        every later call (see sync_worker.recover_zombie_sync_jobs docstring).
+        A test that only checks the DB row would have let that through."""
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, agent_user)
+
+        with patch(SUBMIT_PATCH) as mock_submit:
+            resp = client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(sync_token))
+
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+        mock_submit.assert_called_once_with(job_id)
+
     def test_a_second_trigger_reports_already_queued_rather_than_failing(
         self, client, db_session, default_store, tmp_path, agent_user, sync_token
     ):
@@ -451,6 +474,112 @@ class TestSync:
         body = resp.json()
         assert body["already_queued"] is True
         assert body["job_id"] == first["job_id"]
+
+    def test_the_already_queued_branch_never_resubmits(
+        self, client, db_session, default_store, tmp_path, agent_user, sync_token
+    ):
+        """A run is already in flight for that job; resubmitting it would run
+        the same mbsync job twice concurrently."""
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, agent_user)
+        client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(sync_token))
+
+        with patch(SUBMIT_PATCH) as mock_submit:
+            resp = client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(sync_token))
+
+        assert resp.status_code == 200
+        assert resp.json()["already_queued"] is True
+        mock_submit.assert_not_called()
+
+    def test_a_trigger_is_audited(
+        self, client, db_session, default_store, tmp_path, agent_user, sync_token
+    ):
+        from mailfallback.models import AuditLog
+
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, agent_user)
+
+        with patch(SUBMIT_PATCH):
+            resp = client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(sync_token))
+
+        assert resp.status_code == 200
+        entry = db_session.query(AuditLog).filter(AuditLog.action == "account.sync").one()
+        assert entry.resource_id == acc.id
+        assert entry.details["via"] == "agent_api"
+
+    def test_a_suspended_account_refuses_with_409_and_no_job(
+        self, client, db_session, default_store, tmp_path, agent_user, sync_token
+    ):
+        from mailfallback.models import SyncJob
+
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, agent_user)
+        acc.suspended = True
+        db_session.commit()
+
+        resp = client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(sync_token))
+
+        assert resp.status_code == 409
+        assert "suspended" in resp.json()["detail"]
+        assert db_session.query(SyncJob).filter(SyncJob.account_id == acc.id).count() == 0
+
+    def test_a_migrating_account_refuses_with_409_and_no_job(
+        self, client, db_session, default_store, tmp_path, agent_user, sync_token
+    ):
+        from mailfallback.models import SyncJob
+
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, agent_user)
+        acc.migrating = True
+        db_session.commit()
+
+        resp = client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(sync_token))
+
+        assert resp.status_code == 409
+        assert "migration" in resp.json()["detail"]
+        assert db_session.query(SyncJob).filter(SyncJob.account_id == acc.id).count() == 0
+
+    def test_a_migrating_owner_refuses_with_409_and_no_job(
+        self, client, db_session, default_store, tmp_path, agent_user, sync_token
+    ):
+        """A CO-owner migrating, not the token's own user — the token owner's
+        own migrating flag is already caught earlier, at credential
+        verification (see app_credential_service.verify_credential), which
+        would 401 rather than exercise this 409 guard. A shared account with
+        another owner mid-migration is the case this guard actually protects."""
+        from mailfallback.models import SyncJob
+
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, agent_user)
+        co_owner = create_user(
+            db_session, "co-owner", "co-ownerpass12345", UserRole.user, store_id=default_store.id
+        )
+        co_owner.migrating = True
+        db_session.execute(account_owners.insert().values(account_id=acc.id, user_id=co_owner.id))
+        db_session.commit()
+
+        resp = client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(sync_token))
+
+        assert resp.status_code == 409
+        assert "user migration" in resp.json()["detail"]
+        assert db_session.query(SyncJob).filter(SyncJob.account_id == acc.id).count() == 0
+
+    def test_a_paused_account_refuses_with_409_naming_the_reason_and_no_job(
+        self, client, db_session, default_store, tmp_path, agent_user, sync_token
+    ):
+        """Deliberate divergence from the UI: the UI overrides a
+        self-recovering pause with a warning, because a human can weigh
+        burning the provider's daily quota. An agent cannot weigh that, so
+        the pause here is a plain refusal that names the reason."""
+        from datetime import UTC, datetime, timedelta
+
+        from mailfallback.models import SyncJob
+
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, agent_user)
+        acc.sync_paused_until = datetime.now(UTC) + timedelta(hours=1)
+        acc.pause_reason = "budget"
+        db_session.commit()
+
+        resp = client.post(f"{BASE}/sync/{acc.id}", headers=_bearer(sync_token))
+
+        assert resp.status_code == 409
+        assert "budget" in resp.json()["detail"]
+        assert db_session.query(SyncJob).filter(SyncJob.account_id == acc.id).count() == 0
 
     def test_job_status_is_readable(
         self, client, db_session, default_store, tmp_path, agent_user, sync_token
