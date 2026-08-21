@@ -2,7 +2,7 @@
 import logging
 import threading
 import warnings
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -69,7 +69,22 @@ async def lifespan(app: FastAPI):
             clear_fts_reindex_flag(settings)
     finally:
         db.close()
-    yield
+
+    # A mounted ASGI app's own lifespan never runs — Starlette only enters the
+    # lifespan of the app it was handed directly. The MCP session manager's
+    # `run()` context has to be entered here instead, or every request against
+    # it fails with an anyio task-group error rather than a readable response.
+    # AsyncExitStack keeps this function to a single `yield`: entering the
+    # session manager conditionally around a second `yield` would give the
+    # generator two suspension points, which `@asynccontextmanager` rejects.
+    from mailfallback.mcp_server import get_server
+
+    async with AsyncExitStack() as stack:
+        mcp_server = get_server(settings)
+        if mcp_server is not None:
+            await stack.enter_async_context(mcp_server.session_manager.run())
+        yield
+
     stop_scheduler()
     shutdown_sync_executor()
     from mailfallback.services.backup_worker import shutdown_backup_executor
@@ -241,6 +256,13 @@ def create_app() -> FastAPI:
     app.include_router(ui_restore.router)
     app.include_router(restore_router)
     app.include_router(restore_browse_router)
+
+    from mailfallback.mcp_server import MCP_PATH, get_server, mcp_asgi_app
+
+    mcp_server = get_server(settings)
+    if mcp_server is not None:
+        app.mount(MCP_PATH, mcp_asgi_app(mcp_server, settings))
+        logger.info("MCP server mounted at %s", MCP_PATH)
 
     @app.get("/healthz")
     async def healthz():
