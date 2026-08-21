@@ -247,7 +247,9 @@
 
 <p class="text-muted text-small">
     A token works as an IMAP password for this account, so an app or an agent can
-    read your mail without your login password. Revoke it any time.
+    read your mail without your login password. Revoke it any time. See the
+    <a href="https://thekoma.github.io/mailfallback/guides/agent-api/" target="_blank" rel="noopener">agent API guide</a>
+    for what a token can do.
 </p>
 
 {% if new_token %}
@@ -315,7 +317,13 @@
             <label for="scope_{{ loop.index }}">
                 <input type="checkbox" id="scope_{{ loop.index }}" name="scopes" value="{{ scope }}"
                        {% if scope == 'imap' %}checked{% endif %}>
-                <code>{{ scope }}</code>{% if scope in ('mail:read', 'sync:trigger') %} <span class="text-muted text-small">(not usable yet)</span>{% endif %}
+                <code>{{ scope }}</code>
+                <span class="text-muted text-small">
+                    {% if scope == 'imap' %}— IMAP access: log in as this mailbox from a mail client or app
+                    {% elif scope == 'mail:read' %}— read API: search, and fetch messages and attachments
+                    {% elif scope == 'sync:trigger' %}— start a sync and read its status
+                    {% endif %}
+                </span>
             </label>
             {% endfor %}
         </fieldset>
