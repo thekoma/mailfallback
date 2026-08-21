@@ -762,3 +762,52 @@ class MailIndexRebuildStatus(Base):
     backfill_progress = Column(Integer)
     backfill_total = Column(Integer)
     last_error = Column(Text)
+
+
+class AppCredential(Base):
+    """A revocable, scoped access token for one user.
+
+    One credential serves three consumers with one secret: the IMAP password
+    Dovecot verifies through the Lua passdb, and (phase 2+) the bearer token for
+    the agent API and MCP. The token is ``mfb_<token_prefix>_<secret>``: the
+    prefix is the indexed lookup key, the secret is verified against
+    ``secret_hash`` (keyed HMAC-SHA256, see security.hash_token) and is never
+    recoverable after creation.
+    """
+
+    __tablename__ = "app_credentials"
+
+    id = Column(String, primary_key=True, default=_new_uuid)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    token_prefix = Column(String, nullable=False, unique=True, index=True)
+    secret_hash = Column(String, nullable=False)
+    # Plain comma-separated string by design, like SyncJob.failure_kind: an
+    # ARRAY column would not behave identically on the SQLite the tests use,
+    # and a new scope must not need a migration.
+    scopes = Column(String, nullable=False, default="", server_default="")
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    last_used_kind = Column(String, nullable=True)  # imap | api | mcp
+
+    user = relationship(
+        "User",
+        backref=backref("app_credentials", passive_deletes=True, cascade="all, delete-orphan"),
+    )
+
+    @property
+    def scope_set(self) -> frozenset[str]:
+        return frozenset(s for s in (self.scopes or "").split(",") if s)
+
+    @property
+    def active(self) -> bool:
+        if self.revoked_at is not None:
+            return False
+        if self.expires_at is None:
+            return True
+        expires = self.expires_at
+        if expires.tzinfo is None:  # SQLite round-trips naive datetimes; values are UTC
+            expires = expires.replace(tzinfo=UTC)
+        return expires > datetime.now(UTC)

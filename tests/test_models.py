@@ -746,3 +746,87 @@ def test_delete_user_cascades_staging(db_session, default_store):
     db_session.commit()
     assert db_session.query(StagingArea).count() == 0
     assert db_session.query(StagingMessage).count() == 0
+
+
+def test_app_credential_scope_set_splits_the_comma_string(db_session, default_store):
+    from mailfallback.models import AppCredential, User, UserRole
+
+    user = User(
+        username="tokenuser",
+        password_hash="x",
+        role=UserRole.user,
+        enabled=True,
+        store_id=default_store.id,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    cred = AppCredential(
+        user_id=user.id,
+        name="Hermes Agent",
+        token_prefix="abc123def456",
+        secret_hash="deadbeef",
+        scopes="imap,mail:read",
+    )
+    db_session.add(cred)
+    db_session.commit()
+
+    assert cred.scope_set == frozenset({"imap", "mail:read"})
+    # An empty string must not yield a phantom empty scope.
+    cred.scopes = ""
+    assert cred.scope_set == frozenset()
+
+
+def test_app_credential_active_reflects_revocation_and_expiry(db_session, default_store):
+    from datetime import UTC, datetime, timedelta
+
+    from mailfallback.models import AppCredential, User, UserRole
+
+    user = User(
+        username="tokenuser2",
+        password_hash="x",
+        role=UserRole.user,
+        enabled=True,
+        store_id=default_store.id,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    cred = AppCredential(
+        user_id=user.id, name="t", token_prefix="p1", secret_hash="h", scopes="imap"
+    )
+    db_session.add(cred)
+    db_session.commit()
+    assert cred.active is True
+
+    cred.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+    assert cred.active is False
+
+    cred.expires_at = datetime.now(UTC) + timedelta(days=1)
+    assert cred.active is True
+
+    cred.revoked_at = datetime.now(UTC)
+    assert cred.active is False
+
+
+def test_deleting_a_user_deletes_their_credentials(db_session, default_store):
+    from mailfallback.models import AppCredential, User, UserRole
+
+    user = User(
+        username="tokenuser3",
+        password_hash="x",
+        role=UserRole.user,
+        enabled=True,
+        store_id=default_store.id,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.add(
+        AppCredential(user_id=user.id, name="t", token_prefix="p2", secret_hash="h", scopes="imap")
+    )
+    db_session.commit()
+
+    db_session.delete(user)
+    db_session.commit()
+
+    assert db_session.query(AppCredential).count() == 0
