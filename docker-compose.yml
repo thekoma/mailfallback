@@ -29,6 +29,8 @@ services:
     env_file: .env
     environment:
       MAILFALLBACK_DATABASE_URL: postgresql://${DB_USER:-mailfallback}:${DB_PASSWORD:-mailfallback}@db:5432/${DB_NAME:-mailfallback}
+      MAILFALLBACK_MCP_ENABLED: "true"
+      MAILFALLBACK_MCP_PUBLIC_URL: "http://localhost:8000"
     depends_on:
       db:
         condition: service_healthy
