@@ -30,14 +30,11 @@ across tokens. Responses are Server-Sent Events, not bare JSON (the server is
 mounted with the SDK's default ``json_response=False``), so every response
 here is read as SSE and the JSON payload is pulled off its ``data:`` line.
 
-Tool count: the phase's task-5 brief describes "eight tools" with "seven
-read-only, sync_now the only one not". The server actually registers NINE —
-task 2's brief explicitly keeps a bare ``ping`` alongside the eight
-"real" tools ("the cheapest possible check an operator can run against a
-live deployment"), and nothing since has removed it. This script asserts
-what the live server actually exposes (nine tools, eight read-only) rather
-than silently adopting the brief's stale count — see the report for this
-discrepancy flagged explicitly.
+Tool count: eight tools, seven read-only, ``sync_now`` the only one not.
+Task 2's ``ping`` — scaffolding to prove the mount before any real tool
+existed — has been removed now that this script proves the transport
+properly and ``list_mailboxes`` already answers "is the server up and is my
+token good" with something useful.
 """
 # ruff: noqa: T201
 
@@ -60,11 +57,10 @@ USERNAME = "mcpprobe"
 PASSWORD = "probepass123456"  # pragma: allowlist secret
 ACCEPT = "application/json, text/event-stream"
 
-# The nine tools the live server actually registers, and which of them are
+# The eight tools the live server registers, and which of them are
 # read-only. Kept as an explicit set (rather than "whatever tools/list says")
 # so a tool silently added or removed is caught as a failed expectation.
 EXPECTED_TOOLS = {
-    "ping",
     "list_mailboxes",
     "search_mail",
     "search_attachments",

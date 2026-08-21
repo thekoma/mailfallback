@@ -218,12 +218,6 @@ def _register_tools(mcp: MCPServer) -> None:
     _READ_ONLY = ToolAnnotations(read_only_hint=True)
 
     @mcp.tool(annotations=_READ_ONLY)
-    def ping() -> str:
-        """Confirm the server is reachable and the token is accepted."""
-        _require_scope(app_credential_service.SCOPE_MAIL_READ)
-        return "ok"
-
-    @mcp.tool(annotations=_READ_ONLY)
     def list_mailboxes() -> dict[str, Any]:
         """The mailboxes this token's owner can search, with what is indexed in each.
 
