@@ -11,6 +11,7 @@ from mailfallback.dependencies import get_current_user, get_db
 from mailfallback.models import User
 from mailfallback.routers.ui import _get_session_user, templates
 from mailfallback.security import verify_password
+from mailfallback.services import app_credential_service
 from mailfallback.services import notification_service as _ns
 from mailfallback.services.group_service import get_user_groups
 from mailfallback.services.store_service import get_selectable_stores, get_user_store
@@ -50,29 +51,46 @@ def _build_channels_context(db: Session, user) -> list[dict]:
     ]
 
 
+def _profile_context(request: Request, db: Session, user: User, **overrides) -> dict:
+    """Context for profile.html.
+
+    Shared by the page and by every handler that re-renders it instead of
+    redirecting — a redirect would lose a one-time token or a flash message.
+    Building it in one place is not cosmetic: the previous hand-built dict in
+    profile_change_password omitted `channels`, so a wrong current password
+    silently emptied the notification-channels section.
+    """
+    context = {
+        "user": user,
+        "store": get_user_store(db, user),
+        "selectable_stores": get_selectable_stores(db, user),
+        "user_groups": get_user_groups(db, user),
+        "channels": _build_channels_context(db, user),
+        "tokens": app_credential_service.list_credentials(db, user),
+        "valid_scopes": sorted(app_credential_service.VALID_SCOPES),
+        "error": None,
+        "success": None,
+        "new_token": None,
+        "force_password_change": False,
+    }
+    context.update(overrides)
+    return context
+
+
 @router.get("/profile", response_class=HTMLResponse)
 def profile_page(request: Request, db: Session = Depends(get_db)):
     user = _get_session_user(request, db)
     if not user:
         return RedirectResponse("/login")
-    store = get_user_store(db, user)
-    selectable_stores = get_selectable_stores(db, user)
-    user_groups = get_user_groups(db, user)
-    force_password_change = request.query_params.get("force_password_change") == "1"
-    channels = _build_channels_context(db, user)
     return templates.TemplateResponse(
         request=request,
         name="profile.html",
-        context={
-            "user": user,
-            "store": store,
-            "selectable_stores": selectable_stores,
-            "user_groups": user_groups,
-            "channels": channels,
-            "error": None,
-            "success": None,
-            "force_password_change": force_password_change,
-        },
+        context=_profile_context(
+            request,
+            db,
+            user,
+            force_password_change=request.query_params.get("force_password_change") == "1",
+        ),
     )
 
 
@@ -133,37 +151,28 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
     new = form["new_password"]
     confirm = form["confirm_password"]
 
-    store = get_user_store(db, user)
-    selectable_stores = get_selectable_stores(db, user)
-    user_groups = get_user_groups(db, user)
-    base_context = {
-        "user": user,
-        "store": store,
-        "selectable_stores": selectable_stores,
-        "user_groups": user_groups,
-    }
-
     if user.password_hash and not verify_password(current, user.password_hash):
         return templates.TemplateResponse(
             request=request,
             name="profile.html",
-            context={**base_context, "error": "Current password is incorrect", "success": None},
+            context=_profile_context(request, db, user, error="Current password is incorrect"),
         )
     if new != confirm:
         return templates.TemplateResponse(
             request=request,
             name="profile.html",
-            context={**base_context, "error": "New passwords do not match", "success": None},
+            context=_profile_context(request, db, user, error="New passwords do not match"),
         )
     if len(new) < MIN_PASSWORD_LENGTH:
         return templates.TemplateResponse(
             request=request,
             name="profile.html",
-            context={
-                **base_context,
-                "error": f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
-                "success": None,
-            },
+            context=_profile_context(
+                request,
+                db,
+                user,
+                error=f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
+            ),
         )
 
     try:
@@ -172,7 +181,7 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
         return templates.TemplateResponse(
             request=request,
             name="profile.html",
-            context={**base_context, "error": str(e), "success": None},
+            context=_profile_context(request, db, user, error=str(e)),
         )
     from mailfallback.services.audit_service import log_action
 
@@ -188,7 +197,7 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
     return templates.TemplateResponse(
         request=request,
         name="profile.html",
-        context={**base_context, "error": None, "success": "Password updated successfully"},
+        context=_profile_context(request, db, user, success="Password updated successfully"),
     )
 
 
@@ -327,6 +336,71 @@ async def test_notification_channel(
         {"notifyToast": {"message": message, "type": "success" if ok else "error"}}
     )
     return HTMLResponse("", status_code=200, headers={"HX-Trigger": trigger})
+
+
+@router.post("/profile/tokens")
+async def create_access_token(request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    from mailfallback.services.audit_service import log_action
+
+    form = await request.form()
+    # Scope names arrive from the request: keep only known ones, so a crafted
+    # form cannot write an unrecognised scope into the row.
+    scopes = [s for s in form.getlist("scopes") if s in app_credential_service.VALID_SCOPES]
+    raw_ttl = (form.get("ttl_days") or "").strip()
+    ttl_days = int(raw_ttl) if raw_ttl.isdigit() and int(raw_ttl) > 0 else None
+
+    try:
+        cred, token = app_credential_service.create_credential(
+            db,
+            user,
+            name=(form.get("name") or "").strip() or "Unnamed token",
+            scopes=scopes,
+            ttl_days=ttl_days,
+        )
+    except ValueError as e:
+        return templates.TemplateResponse(
+            request=request,
+            name="profile.html",
+            context=_profile_context(request, db, user, error=str(e)),
+        )
+
+    log_action(
+        db,
+        user=user,
+        action="token.create",
+        resource_type="app_credential",
+        resource_id=cred.id,
+        resource_name=cred.name,
+        ip_address=request.client.host if request.client else None,
+    )
+    # Rendered, not redirected: the secret exists only in this response.
+    return templates.TemplateResponse(
+        request=request,
+        name="profile.html",
+        context=_profile_context(request, db, user, new_token=token),
+    )
+
+
+@router.post("/profile/tokens/{credential_id}/revoke")
+async def revoke_access_token(credential_id: str, request: Request, db: Session = Depends(get_db)):
+    user = _get_session_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    from mailfallback.services.audit_service import log_action
+
+    if app_credential_service.revoke_credential(db, user, credential_id):
+        log_action(
+            db,
+            user=user,
+            action="token.revoke",
+            resource_type="app_credential",
+            resource_id=credential_id,
+            ip_address=request.client.host if request.client else None,
+        )
+    return RedirectResponse("/profile", status_code=303)
 
 
 class PreferencesUpdate(BaseModel):

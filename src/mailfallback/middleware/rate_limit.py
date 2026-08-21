@@ -9,6 +9,7 @@ _RATE_LIMITED_PATHS = {
     "/api/auth/login": (10, 60),
     "/login": (10, 60),
     "/profile/password": (5, 60),
+    "/profile/tokens": (5, 60),
     "/api/sync/all": (3, 60),
     "/api/accounts": (5, 60),
     "/api/restore": (3, 60),

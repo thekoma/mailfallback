@@ -243,6 +243,99 @@
 
 <hr>
 
+<h3><i data-lucide="key" class="icon-lg icon-inline"></i>Access tokens</h3>
+
+<p class="text-muted text-small">
+    A token works as an IMAP password for this account, so an app or an agent can
+    read your mail without your login password. Revoke it any time.
+</p>
+
+{% if new_token %}
+<article class="token-reveal">
+    <h4><i data-lucide="check" class="icon-md icon-inline"></i>Token created</h4>
+    <p class="text-small">Copy it now — it is shown once and cannot be recovered.</p>
+    <code class="token-value copyable" data-copy="{{ new_token }}" title="Click to copy">{{ new_token }}</code>
+</article>
+{% endif %}
+
+{% if tokens %}
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Scopes</th>
+            <th>Created</th>
+            <th>Last used</th>
+            <th>Expires</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for t in tokens %}
+        <tr{% if t.revoked_at %} class="channel-off"{% endif %}>
+            <td>{{ t.name }}</td>
+            <td class="text-small">{{ t.scopes }}</td>
+            <td class="text-small">{{ t.created_at.strftime('%Y-%m-%d') if t.created_at else '—' }}</td>
+            <td class="text-small">
+                {{ (t.last_used_at | time_ago) if t.last_used_at else 'never' }}
+            </td>
+            <td class="text-small">
+                {% if t.revoked_at %}revoked
+                {% elif t.expires_at %}{{ t.expires_at.strftime('%Y-%m-%d') }}
+                {% else %}never{% endif %}
+            </td>
+            <td>
+                {% if not t.revoked_at %}
+                <form method="post" action="/profile/tokens/{{ t.id }}/revoke" class="inline-form"
+                      data-confirm="Revoke token {{ t.name }}? Anything using it stops working."
+                      onsubmit="return confirm(this.dataset.confirm)">
+                    <button type="submit" class="icon-btn danger" title="Revoke this token">
+                        <i data-lucide="ban" class="icon-sm"></i> Revoke
+                    </button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="text-muted">No access tokens yet. Create one to let an app or agent read your mail.</p>
+{% endif %}
+
+<article class="notif-add">
+    <h4><i data-lucide="plus" class="icon-md icon-inline"></i>Create a token</h4>
+    <form method="post" action="/profile/tokens">
+        <label for="token_name">Name</label>
+        <input type="text" id="token_name" name="name" required placeholder="e.g. Hermes Agent">
+
+        <fieldset>
+            <legend>Scopes</legend>
+            {% for scope in valid_scopes %}
+            <label for="scope_{{ loop.index }}">
+                <input type="checkbox" id="scope_{{ loop.index }}" name="scopes" value="{{ scope }}"
+                       {% if scope == 'imap' %}checked{% endif %}>
+                <code>{{ scope }}</code>
+            </label>
+            {% endfor %}
+        </fieldset>
+
+        <label for="token_ttl">Expires after</label>
+        <select id="token_ttl" name="ttl_days">
+            <option value="">Never</option>
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+            <option value="365">1 year</option>
+        </select>
+
+        <button type="submit">
+            <i data-lucide="key" class="icon-md icon-inline"></i>Create token
+        </button>
+    </form>
+</article>
+
+<hr>
+
 <h3><i data-lucide="key-round" class="icon-lg icon-inline"></i>Change password</h3>
 
 {% if error %}
