@@ -22,6 +22,17 @@ burn the provider's daily IMAP quota for no reason a live check needs. Only
 the refusal path is probed — a read-only (``mail:read``) token reaching
 ``sync_now`` and being turned away by its own scope check.
 
+Every refusal probed here is asserted through ``result.isError``/``content``,
+never through a top-level JSON-RPC ``error`` object: the SDK re-raises only a
+genuine protocol-level condition (no/garbage/revoked token, before a session
+even opens) as the latter, and wraps every tool-execution refusal — a missing
+scope, an over-cap attachment redirecting to ``imap_coords`` — into the
+former, which is the only path a client's normal "read the tool result" flow
+is guaranteed to see. A one-off account with one real oversized attachment is
+created (and torn down in ``finally``, alongside the probe user) purely to
+drive that over-cap redirect through the real extraction path rather than
+asserting it from a unit test's monkeypatched cap.
+
 The streamable-HTTP transport is session-based: ``initialize`` returns an
 ``Mcp-Session-Id`` header, every later call on that session must repeat it,
 and a session is bound to the identity that opened it — so each token used
@@ -42,13 +53,15 @@ import json
 import os
 import shutil
 import sys
+from email.message import EmailMessage
 
 import httpx
 
 from mailfallback.db import SessionLocal
-from mailfallback.models import MailStore, User, UserRole
+from mailfallback.mcp_server import MCP_ATTACHMENT_MAX_BYTES
+from mailfallback.models import Account, MailStore, User, UserRole, account_owners
 from mailfallback.services import app_credential_service as svc
-from mailfallback.services import user_service
+from mailfallback.services import index_service, user_service
 
 HTTP_BASE = "http://localhost:8000"
 MCP_PATH = "/mcp/"  # trailing slash: the app is mounted here, "/mcp" 307s to it
@@ -158,12 +171,29 @@ def _call_tool(client, token, session_id, name, arguments=None):
     return _read_rpc(resp)
 
 
+def _result_text(payload):
+    """The text of a ``result``'s content blocks, or "" if there is no result.
+
+    A refusal that reaches the model at all does so as ``result.isError``
+    with its message in ``content`` — never as a top-level JSON-RPC ``error``
+    object, which the SDK reserves for a genuinely protocol-level condition.
+    """
+    content = payload.get("result", {}).get("content", [])
+    return " ".join(block.get("text", "") for block in content)
+
+
 def main():
     db = SessionLocal()
     old = db.query(User).filter(User.username == USERNAME).first()
     if old:
         db.delete(old)
         db.commit()
+    old_acc = db.query(Account).filter(Account.name == "mcpprobeacc").first()
+    if old_acc:
+        shutil.rmtree(old_acc.maildir_path, ignore_errors=True)
+        db.delete(old_acc)
+        db.commit()
+    acc = None
 
     store = db.query(MailStore).first()
     user = user_service.create_user(db, USERNAME, PASSWORD, UserRole.user, store_id=store.id)
@@ -182,6 +212,42 @@ def main():
             db, user, name="mcp-revoked", scopes=[svc.SCOPE_MAIL_READ]
         )
         svc.revoke_credential(db, user, revoked_cred.id)
+
+        # One account with one real over-cap attachment, written straight to
+        # its Maildir the way mbsync would — the point is to drive
+        # download_attachment's redirect through the actual extraction path,
+        # not a monkeypatched cap.
+        acc = Account(
+            name="mcpprobeacc",
+            imap_host="h",
+            email_address=f"{USERNAME}-acc@example.com",
+            maildir_path=os.path.join(store.path, "mcpprobeacc-placeholder"),
+            store_id=store.id,
+        )
+        db.add(acc)
+        db.flush()
+        acc.maildir_path = os.path.join(store.path, acc.id)
+        db.execute(account_owners.insert().values(account_id=acc.id, user_id=user.id))
+        db.commit()
+
+        msg = EmailMessage()
+        msg["Message-Id"] = "<mcpprobe-attachment@x>"
+        msg["From"] = "a@b.c"
+        msg["To"] = "d@e.f"
+        msg["Subject"] = "mcp probe over-cap attachment"
+        msg["Date"] = "Thu, 11 Jun 2026 10:00:00 +0200"
+        msg.set_content("see attached")
+        msg.add_attachment(
+            b"x" * (MCP_ATTACHMENT_MAX_BYTES + 1024),
+            maintype="application",
+            subtype="octet-stream",
+            filename="big.bin",
+        )
+        cur_dir = os.path.join(acc.maildir_path, "cur")
+        os.makedirs(cur_dir, exist_ok=True)
+        with open(os.path.join(cur_dir, "1.mcpprobe.host:2,S"), "wb") as f:
+            f.write(msg.as_bytes())
+        index_service.upsert_message_set(db, acc.id)
 
         with httpx.Client(base_url=HTTP_BASE, timeout=10) as client:
             print("Bearer auth surface")
@@ -259,7 +325,27 @@ def main():
                 f"(keys={list(structured.keys())})",
             )
 
-            print("\ntools/call: refusals")
+            print("\ntools/call: imap_coords round trip")
+            payload = _call_tool(
+                client,
+                read_token,
+                session_id,
+                "imap_coords",
+                {"account_id": acc.id, "message_ids": ["<mcpprobe-attachment@x>"]},
+            )
+            structured = payload.get("result", {}).get("structuredContent", {})
+            check_true(
+                "imap_coords: no error",
+                "result" in payload and not payload["result"].get("isError"),
+                f"(payload={payload})",
+            )
+            check_true(
+                "imap_coords: has resolved/missing/imap_unavailable",
+                {"resolved", "missing", "imap_unavailable"} <= structured.keys(),
+                f"(keys={list(structured.keys())})",
+            )
+
+            print("\ntools/call: refusals arrive as tool results, not JSON-RPC errors")
             payload = _call_tool(
                 client,
                 read_token,
@@ -267,21 +353,69 @@ def main():
                 "sync_now",
                 {"account_id": "00000000-0000-0000-0000-000000000000"},
             )
-            error_message = payload.get("error", {}).get("message", "")
             check_true(
-                "sync_now (read-only token): error names sync:trigger",
-                "sync:trigger" in error_message,
-                f"(message={error_message!r})",
+                "sync_now (read-only token): no top-level error object",
+                "error" not in payload,
+                f"(payload={payload})",
+            )
+            check_true(
+                "sync_now (read-only token): result.isError",
+                payload.get("result", {}).get("isError") is True,
+                f"(payload={payload})",
+            )
+            check_true(
+                "sync_now (read-only token): message names sync:trigger",
+                "sync:trigger" in _result_text(payload),
+                f"(text={_result_text(payload)!r})",
             )
 
             status, session_id2, _ = _initialize(client, imap_token)
             check("initialize (imap-only token): status", status, 200)
             payload = _call_tool(client, imap_token, session_id2, "list_mailboxes")
-            error_message = payload.get("error", {}).get("message", "")
             check_true(
-                "list_mailboxes (imap-only token): error names mail:read",
-                "mail:read" in error_message,
-                f"(message={error_message!r})",
+                "list_mailboxes (imap-only token): result.isError",
+                payload.get("result", {}).get("isError") is True,
+                f"(payload={payload})",
+            )
+            check_true(
+                "list_mailboxes (imap-only token): message names mail:read",
+                "mail:read" in _result_text(payload),
+                f"(text={_result_text(payload)!r})",
+            )
+
+            print("\ntools/call: over-cap attachment redirects, as a tool result")
+            hit_payload = _call_tool(
+                client, read_token, session_id, "search_mail", {"query": "over-cap attachment"}
+            )
+            hits = hit_payload.get("result", {}).get("structuredContent", {}).get("results", [])
+            check_true("over-cap fixture: search finds it", len(hits) == 1, f"(hits={hits})")
+            part_index = hits[0]["attachments"][0]["part_index"] if hits else None
+
+            payload = _call_tool(
+                client,
+                read_token,
+                session_id,
+                "download_attachment",
+                {
+                    "account_id": acc.id,
+                    "message_id_hash": hits[0]["message_id_hash"] if hits else "",
+                    "part_index": part_index,
+                },
+            )
+            check_true(
+                "download_attachment (over-cap): no top-level error object",
+                "error" not in payload,
+                f"(payload={payload})",
+            )
+            check_true(
+                "download_attachment (over-cap): result.isError",
+                payload.get("result", {}).get("isError") is True,
+                f"(payload={payload})",
+            )
+            check_true(
+                "download_attachment (over-cap): message redirects to imap_coords",
+                "imap_coords" in _result_text(payload),
+                f"(text={_result_text(payload)!r})",
             )
 
             print("\nCase-insensitive header")
@@ -298,8 +432,12 @@ def main():
         check("last_used_kind on the used token", read_cred.last_used_kind, "mcp")
     finally:
         db.delete(db.query(User).filter(User.username == USERNAME).first())
+        if acc is not None:
+            db.delete(db.query(Account).filter(Account.id == acc.id).first())
         db.commit()
         shutil.rmtree(home_dir, ignore_errors=True)
+        if acc is not None:
+            shutil.rmtree(acc.maildir_path, ignore_errors=True)
         print(f"\nRemoved {home_dir}")
 
     print()

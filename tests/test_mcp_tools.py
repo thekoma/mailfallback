@@ -658,3 +658,63 @@ class TestRefusalsAreNotProtocolErrors:
         with pytest.raises(Exception) as exc:
             _call(server, "sync_status", job_id="not-a-real-job-id")
         assert not isinstance(exc.value.__cause__ or exc.value, MCPError)
+
+
+class TestImapCoordsTool:
+    """``imap_coords`` had no test anywhere before this fix, even though it
+    is not a thin pass-through: ``_mcp_account`` scoping and the
+    ``[:RESOLVE_COORDS_MAX_IDS]`` truncation are MCP-side code. Mirrors
+    ``tests/test_agent_api.py::TestImapCoords``.
+    """
+
+    def test_resolves_for_the_callers_own_mailbox(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        """No Dovecot to connect to in this test environment, so this is the
+        unreachable case by construction: the id must fold into ``missing``
+        AND ``imap_unavailable`` must be True, surfaced as-is from
+        ``restore.resolve_uids_for_account`` rather than swallowed."""
+        acc, row = _indexed_account(db_session, default_store, tmp_path, tool_user)
+        _as(monkeypatch, ["mail:read"], tool_user)
+
+        out = _call(server, "imap_coords", account_id=acc.id, message_ids=[row.message_id])
+
+        assert set(out) == {"resolved", "missing", "imap_unavailable"}
+        assert out["resolved"] == {}
+        assert out["missing"] == [row.message_id]
+        assert out["imap_unavailable"] is True
+
+    def test_refuses_another_users_account_without_revealing_it_exists(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        other = create_user(
+            db_session, "coords-other", "otherpass12345", UserRole.user, store_id=default_store.id
+        )
+        acc, row = _indexed_account(db_session, default_store, tmp_path, other, name="coordstheirs")
+        _as(monkeypatch, ["mail:read"], tool_user)
+
+        with pytest.raises(Exception) as exc:
+            _call(server, "imap_coords", account_id=acc.id, message_ids=[row.message_id])
+
+        # Same non-oracle wording every other tool uses for an inaccessible
+        # account (get_message, download_attachment, sync_now, ...).
+        assert "No such mailbox" in str(exc.value)
+
+    def test_ids_beyond_the_cap_are_ignored_entirely(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        """Ids past the cap must land in NEITHER `resolved` nor `missing` — a
+        naive truncation-less implementation instead reports them as
+        missing, which is the bug this test exists to catch."""
+        from mailfallback.routers.agent import RESOLVE_COORDS_MAX_IDS
+
+        acc, _ = _indexed_account(db_session, default_store, tmp_path, tool_user, name="coordscap")
+        ids = [f"<bogus-{i}@x>" for i in range(RESOLVE_COORDS_MAX_IDS + 100)]
+        _as(monkeypatch, ["mail:read"], tool_user)
+
+        out = _call(server, "imap_coords", account_id=acc.id, message_ids=ids)
+
+        assert out["resolved"] == {}
+        assert len(out["missing"]) == RESOLVE_COORDS_MAX_IDS
+        for beyond_cap in ids[RESOLVE_COORDS_MAX_IDS:]:
+            assert beyond_cap not in out["missing"]

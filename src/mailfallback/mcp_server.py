@@ -44,6 +44,7 @@ from mailfallback.models import (
     SyncJob,
     User,
 )
+from mailfallback.routers.agent import RESOLVE_COORDS_MAX_IDS
 from mailfallback.services import (
     app_credential_service,
     preview_service,
@@ -438,7 +439,7 @@ def _register_tools(mcp: MCPServer) -> None:
         """Message-Ids to live IMAP folder keys and UIDs.
 
         The bridge to the IMAP path: search here, then FETCH over IMAP with
-        an existing client. Ids beyond ``RESOLVE_UIDS_MAX_IDS`` are ignored
+        an existing client. Ids beyond ``RESOLVE_COORDS_MAX_IDS`` are ignored
         entirely — neither resolved nor reported missing. ``imap_unavailable``
         means Dovecot itself could not be reached: every id in ``missing`` was
         never actually checked, so the right response is a retry, not
@@ -449,7 +450,7 @@ def _register_tools(mcp: MCPServer) -> None:
         with _caller(app_credential_service.SCOPE_MAIL_READ) as (db, user):
             account = _mcp_account(db, user, account_id)
             return restore.resolve_uids_for_account(
-                db, account, message_ids[: restore.RESOLVE_UIDS_MAX_IDS]
+                db, account, message_ids[:RESOLVE_COORDS_MAX_IDS]
             )
 
     @mcp.tool(annotations=ToolAnnotations(read_only_hint=False))
