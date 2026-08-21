@@ -339,6 +339,18 @@ class TestVerify:
         assert "agentuser" in caplog.text
         assert "None" not in caplog.text
 
+    def test_required_scope_none_skips_the_scope_check(self, db_session, token_user):
+        """get_current_principal answers identity, not authorisation — the
+        scope gate is require_scope()'s job."""
+        _, token = self._cred(db_session, token_user, scopes=(svc.SCOPE_IMAP,))
+
+        result, cred = svc.verify_credential(
+            db_session, username=None, token=token, required_scope=None, kind="api"
+        )
+
+        assert result is svc.VerifyResult.ok
+        assert cred.scope_set == frozenset({svc.SCOPE_IMAP})
+
 
 class TestListAndRevoke:
     def test_list_returns_only_the_users_own_credentials(

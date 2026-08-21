@@ -118,7 +118,7 @@ def verify_credential(
     *,
     username: str | None,
     token: str,
-    required_scope: str,
+    required_scope: str | None,
     kind: str,
 ) -> tuple[VerifyResult, AppCredential | None]:
     """Verify a token and record the usage on success.
@@ -128,6 +128,11 @@ def verify_credential(
     supplies the username separately. Pass ``None`` when the token IS the
     identity, as with an HTTP bearer request: the owner is then resolved from
     the credential and no comparison happens.
+
+    ``required_scope`` may also be ``None``, which skips the scope check
+    entirely: that is the right call for something answering "who is this",
+    not "may they do that" — as `dependencies.get_current_principal` does,
+    leaving the scope gate to `dependencies.require_scope`.
 
     Every other check — user enabled, not migrating, credential active, scope
     present, secret matches — runs identically either way. There is deliberately
@@ -167,7 +172,7 @@ def verify_credential(
     if not cred.active:
         logger.warning("Access token %s rejected: revoked or expired", prefix)
         return VerifyResult.rejected, None
-    if required_scope not in cred.scope_set:
+    if required_scope is not None and required_scope not in cred.scope_set:
         logger.warning(
             "Access token %s rejected: missing scope %s (has %s)",
             prefix,
