@@ -52,20 +52,15 @@ def _as(monkeypatch, scopes, user):
 def _call(server, name, **kwargs):
     """Call a tool and return its JSON payload.
 
-    ``call_tool`` returns a ``CallToolResult``, not the bare value the brief
-    assumed. The installed SDK (mcp 2.0.0 / mcp_types 2.0.0) auto-derives
-    structured output from the return annotation, and it does not wrap
-    consistently: a `dict[str, Any]` return (search_mail, search_attachments,
-    get_message) comes back as `structured_content` verbatim via a RootModel,
-    while a `list[...]` return (list_mailboxes) is a "generic type" in the
-    SDK's own terms and gets wrapped as `structured_content["result"]`. Both
-    are auto-detected from the annotation, not something a tool body chooses
-    per call, so this if/else keys off the one tool whose return type is a
-    list rather than trying to special-case by content.
+    ``call_tool`` returns a ``CallToolResult``, not the bare value. Every
+    tool here returns `dict[str, Any]`, which the installed SDK (mcp 2.0.0 /
+    mcp_types 2.0.0) turns into a RootModel and hands back through
+    `structured_content` verbatim — no `{"result": ...}` wrapping. That
+    wrapping only happens for a return annotation the SDK treats as a
+    "generic type" (e.g. a bare `list[...]`), which is why every tool here
+    is declared to return an object rather than an array.
     """
     result = anyio.run(lambda: server.call_tool(name, kwargs))
-    if name == "list_mailboxes":
-        return result.structured_content["result"]
     return result.structured_content
 
 
@@ -132,10 +127,11 @@ class TestListMailboxes:
 
         out = _call(server, "list_mailboxes")
 
-        names = [m["name"] for m in out]
+        mailboxes = out["mailboxes"]
+        names = [m["name"] for m in mailboxes]
         assert names == ["mine"]
-        assert out[0]["indexed_messages"] == 1
-        assert out[0]["folders"] == ["INBOX"]
+        assert mailboxes[0]["indexed_messages"] == 1
+        assert mailboxes[0]["folders"] == ["INBOX"]
 
 
 class TestSearchMail:
@@ -179,7 +175,7 @@ class TestSearchMail:
         _as(monkeypatch, ["mail:read"], admin)
 
         assert _call(server, "search_mail", query="")["total"] == 0
-        assert _call(server, "list_mailboxes") == []
+        assert _call(server, "list_mailboxes")["mailboxes"] == []
 
 
 class TestGetMessage:

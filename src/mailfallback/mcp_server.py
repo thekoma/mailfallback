@@ -175,7 +175,7 @@ def _register_tools(mcp: MCPServer) -> None:
         return "ok"
 
     @mcp.tool(annotations=_READ_ONLY)
-    def list_mailboxes() -> list[dict[str, Any]]:
+    def list_mailboxes() -> dict[str, Any]:
         """The mailboxes this token's owner can search, with what is indexed in each.
 
         ``indexed_messages`` and ``folders`` describe what is in the search
@@ -185,7 +185,7 @@ def _register_tools(mcp: MCPServer) -> None:
         with _caller(app_credential_service.SCOPE_MAIL_READ) as (db, user):
             visible = search_service._accessible_account_ids(db, user)
             if not visible:
-                return []
+                return {"mailboxes": []}
             accounts = db.query(Account).filter(Account.id.in_(visible)).all()
             counts = dict(
                 db.query(MailIndexMessage.account_id, func.count())
@@ -204,18 +204,20 @@ def _register_tools(mcp: MCPServer) -> None:
             ):
                 folders.setdefault(account_id, []).append(folder)
 
-            return [
-                {
-                    "account_id": a.id,
-                    "name": a.name,
-                    "email_address": a.email_address,
-                    "provider": a.provider,
-                    "last_sync_at": a.last_sync_at.isoformat() if a.last_sync_at else None,
-                    "indexed_messages": counts.get(a.id, 0),
-                    "folders": sorted(folders.get(a.id, [])),
-                }
-                for a in accounts
-            ]
+            return {
+                "mailboxes": [
+                    {
+                        "account_id": a.id,
+                        "name": a.name,
+                        "email_address": a.email_address,
+                        "provider": a.provider,
+                        "last_sync_at": a.last_sync_at.isoformat() if a.last_sync_at else None,
+                        "indexed_messages": counts.get(a.id, 0),
+                        "folders": sorted(folders.get(a.id, [])),
+                    }
+                    for a in accounts
+                ]
+            }
 
     @mcp.tool(annotations=_READ_ONLY)
     def search_mail(
