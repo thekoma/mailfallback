@@ -20,19 +20,31 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from fastapi.security import HTTPBearer
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.dependencies import Principal, get_db, require_scope
 from mailfallback.models import Account, MailIndexMessage
+from mailfallback.routers.restore import RESOLVE_UIDS_MAX_IDS
 from mailfallback.services import app_credential_service, preview_service, search_service
 from mailfallback.services.sync_worker import submit_sync_job
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/agent", tags=["agent"])
+# Documented-only: this scheme never runs any auth logic of its own
+# (auto_error=False means it neither raises nor is required to return
+# anything usable) — it exists solely so FastAPI records a bearer security
+# scheme against every route in this router for /openapi.json, which is what
+# makes /docs show this surface as authenticated and gives it an "Authorize"
+# button. get_current_principal (via require_scope) remains the only thing
+# that actually verifies a token; do not wire this scheme's return value into
+# any route logic.
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+router = APIRouter(prefix="/api/v1/agent", tags=["agent"], dependencies=[Depends(_bearer_scheme)])
 
 _READ = require_scope(app_credential_service.SCOPE_MAIL_READ)
 
@@ -123,6 +135,8 @@ class MessageOut(BaseModel):
 class SearchRequest(BaseModel):
     """Note the absence of include_all — see the module docstring."""
 
+    model_config = ConfigDict(extra="forbid")
+
     query: str = ""
     account_ids: list[str] | None = None
     range_start: datetime | None = None
@@ -135,6 +149,8 @@ class SearchRequest(BaseModel):
 
 
 class AttachmentSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     query: str = ""
     account_ids: list[str] | None = None
     exts: list[str] | None = None
@@ -293,10 +309,17 @@ def get_message(
 
 _SYNC = require_scope(app_credential_service.SCOPE_SYNC_TRIGGER)
 
-RESOLVE_COORDS_MAX_IDS = 500
+# Reuses the UI's cap rather than defining a second number — the underlying
+# helper issues one serial UID SEARCH per id against one temp Dovecot user
+# inside the request, with no deadline, so the limit is about how many
+# sequential round trips a single request may hold a worker thread for, not
+# about which caller is asking.
+RESOLVE_COORDS_MAX_IDS = RESOLVE_UIDS_MAX_IDS
 
 
 class ImapCoordsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     account_id: str
     message_ids: list[str]
 

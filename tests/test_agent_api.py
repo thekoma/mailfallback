@@ -1,6 +1,7 @@
 """The /api/v1/agent surface: scope gating, scoping to the caller's mailboxes,
 and response shapes that do not leak internal dict drift."""
 
+from typing import ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -74,9 +75,38 @@ def _indexed_account(db_session, store, tmp_path, owner, name="acc", msgid="<m1@
 
 
 class TestAuthAndScope:
+    # Bodies for the routes whose request model has required fields — GET
+    # routes and body-less POSTs need none. Keyed by the route's raw path
+    # template (before placeholder substitution) so it stays correct if a
+    # path parameter's name changes.
+    _BODY_FOR_PATH: ClassVar[dict] = {
+        "/api/v1/agent/search": {"query": ""},
+        "/api/v1/agent/search-attachments": {"query": ""},
+        "/api/v1/agent/imap-coords": {"account_id": "x", "message_ids": []},
+    }
+    _PLACEHOLDERS: ClassVar[dict] = {
+        "account_id": "x",
+        "message_id_hash": "ab" * 20,
+        "part_index": 1,
+        "job_id": "x",
+    }
+
     def test_every_endpoint_refuses_an_unauthenticated_call(self, client, db_session):
-        assert client.get(f"{BASE}/mailboxes").status_code == 401
-        assert client.post(f"{BASE}/search", json={"query": "x"}).status_code == 401
+        """Genuinely every route in the router, not just two of them — this
+        test used to promise that in its name while checking only
+        /mailboxes and /search. Iterating router.routes means a ninth
+        endpoint added later is covered automatically."""
+        from mailfallback.routers import agent as agent_module
+
+        checked = 0
+        for route in agent_module.router.routes:
+            path = route.path.format(**self._PLACEHOLDERS)
+            body = self._BODY_FOR_PATH.get(route.path)
+            for method in route.methods - {"HEAD", "OPTIONS"}:
+                resp = client.request(method, path, json=body)
+                assert resp.status_code == 401, f"{method} {path} -> {resp.status_code}"
+                checked += 1
+        assert checked == len(agent_module.router.routes)
 
     def test_an_imap_only_token_is_refused_with_403(self, client, db_session, imap_only_token):
         """The IMAP skills' token must not reach the API."""
@@ -125,8 +155,10 @@ class TestAuthAndScope:
     def test_include_all_cannot_be_smuggled_in(
         self, client, db_session, default_store, tmp_path, agent_user, read_token
     ):
-        """The spec forbids admin escalation through token auth. The field does
-        not exist, so sending it must change nothing — not error, not widen."""
+        """The spec forbids admin escalation through token auth. The field
+        does not exist on the model, and extra="forbid" makes an unknown
+        field a clear 422 rather than a silent no-op — a caller asking for
+        escalation deserves to be told no, not quietly ignored."""
         other = create_user(
             db_session, "victim", "victimpass12345", UserRole.admin, store_id=default_store.id
         )
@@ -138,9 +170,7 @@ class TestAuthAndScope:
             headers=_bearer(read_token),
         )
 
-        assert resp.status_code in (200, 422)
-        if resp.status_code == 200:
-            assert resp.json()["total"] == 0
+        assert resp.status_code == 422
 
 
 class TestMailboxes:
@@ -375,11 +405,17 @@ class TestImapCoords:
     def test_ids_beyond_the_cap_are_ignored_entirely(
         self, client, db_session, default_store, tmp_path, agent_user, read_token
     ):
-        """Mirrors the UI-side resolve-uids cap test (RESOLVE_UIDS_MAX_IDS):
-        ids past RESOLVE_COORDS_MAX_IDS must land in NEITHER `resolved` nor
-        `missing` — a naive truncation-less implementation instead reports
-        them as missing, which is the bug this test exists to catch."""
+        """RESOLVE_COORDS_MAX_IDS IS the UI's RESOLVE_UIDS_MAX_IDS (same
+        number, reused rather than redefined — the helper issues one serial
+        UID SEARCH per id with no deadline, so the cap protects the request
+        thread regardless of which caller is asking). Ids past the cap must
+        land in NEITHER `resolved` nor `missing` — a naive truncation-less
+        implementation instead reports them as missing, which is the bug
+        this test exists to catch."""
         from mailfallback.routers.agent import RESOLVE_COORDS_MAX_IDS
+        from mailfallback.routers.restore import RESOLVE_UIDS_MAX_IDS
+
+        assert RESOLVE_COORDS_MAX_IDS == RESOLVE_UIDS_MAX_IDS
 
         acc, _ = _indexed_account(db_session, default_store, tmp_path, agent_user)
         ids = [f"<bogus-{i}@x>" for i in range(RESOLVE_COORDS_MAX_IDS + 100)]
@@ -638,3 +674,26 @@ class TestSync:
 
         assert missing.status_code == not_mine.status_code == 404
         assert missing.content == not_mine.content
+
+
+class TestRouterInvariants:
+    def test_every_route_carries_a_scope_dependency(self):
+        """A ninth endpoint added later without a require_scope(...) Depends
+        must fail this test, not ship ungated. Detects the dependency by
+        walking the route's resolved sub-dependencies for the closure
+        require_scope() returns, rather than re-listing routes by hand."""
+        from mailfallback.routers import agent as agent_module
+
+        assert len(agent_module.router.routes) >= 8  # sanity: this must see real routes
+        for route in agent_module.router.routes:
+            scopes = [
+                dep.call.__closure__[0].cell_contents
+                for dep in route.dependant.dependencies
+                # dependant.dependencies also holds unrelated deps (e.g. the
+                # documented-only bearer scheme, get_db) that are not plain
+                # functions with a closure — skip anything that isn't the
+                # require_scope() closure by name.
+                if getattr(dep.call, "__qualname__", "") == "require_scope.<locals>._dependency"
+            ]
+            assert scopes, f"{route.path} has no require_scope(...) dependency"
+            assert scopes[0] in svc.VALID_SCOPES, f"{route.path} gated by unknown scope {scopes[0]}"
