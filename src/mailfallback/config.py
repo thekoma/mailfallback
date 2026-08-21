@@ -65,6 +65,16 @@ class Settings(BaseSettings):
     webmail_oauth_token_uri: str = ""
     webmail_oauth_identity_uri: str = ""
 
+    # MCP server (env: MAILFALLBACK_MCP_*). Off by default: it needs a public
+    # URL to satisfy the SDK's issuer_url validation and its host allowlist,
+    # so there is no sensible default to guess.
+    mcp_enabled: bool = False
+    mcp_public_url: str = ""  # e.g. https://mfb.example.com — no path, no query
+    # Set False only behind a reverse proxy that already validates the Host
+    # header; the SDK's DNS-rebinding protection rejects anything not
+    # addressed to an allowed host with 421 or 403.
+    mcp_dns_rebinding_protection: bool = True
+
     tika_enabled: bool = False
     tika_url: str = "http://tika:9998"
 

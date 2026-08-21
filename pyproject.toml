@@ -30,6 +30,7 @@ dependencies = [
     "psycopg2-binary>=2.9",
     "boto3>=1.35",
     "apprise>=1.11.0",
+    "mcp>=2.0,<3",
 ]
 
 [project.scripts]
