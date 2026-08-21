@@ -718,3 +718,80 @@ class TestImapCoordsTool:
         assert len(out["missing"]) == RESOLVE_COORDS_MAX_IDS
         for beyond_cap in ids[RESOLVE_COORDS_MAX_IDS:]:
             assert beyond_cap not in out["missing"]
+
+
+class TestOutputContracts:
+    """Every tool's return annotation is a real pydantic model now, reusing
+    the REST response models where one exists — so the SDK publishes a real
+    outputSchema instead of none, and a service dict that has drifted from
+    the REST shape (search_attachments' has_live_or_snapshot) gets pinned
+    back to it, the same way FastAPI's response_model already does on the
+    REST route.
+    """
+
+    def test_every_tool_publishes_an_output_schema(self, server):
+        tools = anyio.run(server.list_tools)
+        missing = [t.name for t in tools if t.output_schema is None]
+        assert missing == []
+
+    def test_search_attachments_drops_the_internal_only_field(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        """has_live_or_snapshot is real in the service dict but not on
+        AttachmentSearchResponseOut/SearchAttachmentOut — reusing that model
+        as the return annotation must silently drop it, exactly like
+        FastAPI's response_model already does for the REST route."""
+        from email.message import EmailMessage
+
+        acc = Account(
+            name="attcontract",
+            imap_host="h",
+            email_address="attcontract@example.com",
+            maildir_path=str(tmp_path / "mail-attcontract"),
+            store_id=default_store.id,
+        )
+        db_session.add(acc)
+        db_session.flush()
+        db_session.execute(account_owners.insert().values(account_id=acc.id, user_id=tool_user.id))
+        db_session.commit()
+        msg = EmailMessage()
+        msg["Message-Id"] = "<attcontract@x>"
+        msg["From"] = "a@b.c"
+        msg["To"] = "d@e.f"
+        msg["Subject"] = "contract check"
+        msg["Date"] = "Thu, 11 Jun 2026 10:00:00 +0200"
+        msg.set_content("body")
+        msg.add_attachment(b"hi", maintype="application", subtype="pdf", filename="f.pdf")
+        cur = os.path.join(acc.maildir_path, "cur")
+        os.makedirs(cur, exist_ok=True)
+        with open(os.path.join(cur, "1.attcontract.host:2,S"), "wb") as f:
+            f.write(msg.as_bytes())
+        index_service.upsert_message_set(db_session, acc.id)
+        _as(monkeypatch, ["mail:read"], tool_user)
+
+        out = _call(server, "search_attachments", query="f.pdf")
+
+        assert out["total"] == 1
+        assert "has_live_or_snapshot" not in out["results"][0]
+
+    def test_download_attachment_output_schema_matches_the_returned_shape(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        acc, row = TestDownloadAttachment()._account_with_attachment(
+            db_session, default_store, tmp_path, tool_user
+        )
+        _as(monkeypatch, ["mail:read"], tool_user)
+        hit = _call(server, "search_mail", query="attachment")["results"][0]
+
+        out = _call(
+            server,
+            "download_attachment",
+            account_id=acc.id,
+            message_id_hash=row.message_id_hash.hex(),
+            part_index=hit["attachments"][0]["part_index"],
+        )
+
+        tools = anyio.run(server.list_tools)
+        by_name = {t.name: t for t in tools}
+        required = set(by_name["download_attachment"].output_schema.get("required", []))
+        assert required <= out.keys()

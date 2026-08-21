@@ -257,11 +257,17 @@ def create_app() -> FastAPI:
     app.include_router(restore_router)
     app.include_router(restore_browse_router)
 
-    from mailfallback.mcp_server import MCP_PATH, get_server, mcp_asgi_app
+    from mailfallback.mcp_server import MCP_PATH, get_asgi_app, protected_resource_metadata_routes
 
-    mcp_server = get_server(settings)
-    if mcp_server is not None:
-        app.mount(MCP_PATH, mcp_asgi_app(mcp_server, settings))
+    mcp_asgi_app = get_asgi_app(settings)
+    if mcp_asgi_app is not None:
+        app.mount(MCP_PATH, mcp_asgi_app)
+        # RFC 9728 metadata registered a second time, at the FASTAPI ROOT: the
+        # mounted app above only answers it relative to ITS OWN root
+        # (/mcp/.well-known/...), but resource_server_url makes the SDK
+        # advertise the root-relative path in WWW-Authenticate. See
+        # protected_resource_metadata_routes' own docstring.
+        app.router.routes.extend(protected_resource_metadata_routes(settings))
         logger.info("MCP server mounted at %s", MCP_PATH)
 
     @app.get("/healthz")

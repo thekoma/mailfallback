@@ -34,6 +34,7 @@ def mcp_app(db_session, monkeypatch):
     monkeypatch.setattr(mcp_auth, "SessionLocal", test_sessionmaker)
     monkeypatch.setattr(ms, "SessionLocal", test_sessionmaker)
     monkeypatch.setattr(ms, "_server", None)  # rebuild per test
+    monkeypatch.setattr(ms, "_asgi_app", None)  # rebuild per test — see get_asgi_app's docstring
     monkeypatch.setattr(cfg.settings, "mcp_enabled", True, raising=False)
     monkeypatch.setattr(cfg.settings, "mcp_public_url", "http://127.0.0.1:8000", raising=False)
     # create_app() (unlike the `app` fixture) is called directly here, so it
@@ -127,3 +128,48 @@ def test_a_garbage_token_is_rejected(mcp_app):
             },
         )
     assert resp.status_code == 401
+
+
+def test_the_advertised_oauth_metadata_url_actually_resolves(mcp_app):
+    """The URL a 401's WWW-Authenticate names for RFC 9728 discovery must
+    itself answer, not 404 — a spec-following client hits 401, fetches this
+    URL, and needs something there rather than a dead end."""
+    import re
+
+    with TestClient(mcp_app, base_url="http://127.0.0.1:8000") as c:
+        resp = c.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            headers={"Accept": "application/json, text/event-stream"},
+        )
+        assert resp.status_code == 401
+        www_authenticate = resp.headers["www-authenticate"]
+        match = re.search(r'resource_metadata="([^"]+)"', www_authenticate)
+        assert match, www_authenticate
+        metadata_url = match.group(1)
+        assert metadata_url == "http://127.0.0.1:8000/.well-known/oauth-protected-resource/mcp"
+
+        metadata_resp = c.get(metadata_url)
+
+    assert metadata_resp.status_code == 200, metadata_resp.text
+    assert metadata_resp.json()["resource"] == "http://127.0.0.1:8000/mcp"
+
+
+def test_get_asgi_app_is_built_once_regardless_of_call_count(monkeypatch):
+    """A second `get_asgi_app()` call in the same process must return the
+    SAME app, not a second `streamable_http_app()` build — the SDK allocates
+    a new, single-use `StreamableHTTPSessionManager` on every such call, so a
+    second build would leave whichever app is actually mounted pointing at a
+    manager whose `run()` never executes."""
+    import mailfallback.mcp_server as ms
+
+    monkeypatch.setattr(cfg.settings, "mcp_enabled", True, raising=False)
+    monkeypatch.setattr(cfg.settings, "mcp_public_url", "http://127.0.0.1:8000", raising=False)
+    monkeypatch.setattr(ms, "_server", None)
+    monkeypatch.setattr(ms, "_asgi_app", None)
+
+    first = ms.get_asgi_app(cfg.settings)
+    second = ms.get_asgi_app(cfg.settings)
+
+    assert first is not None
+    assert first is second

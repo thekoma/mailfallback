@@ -20,18 +20,20 @@ import base64
 import logging
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated
 
 from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.routes import create_protected_resource_routes
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
 from mcp.types import INVALID_REQUEST
-from pydantic import AnyHttpUrl, Field
+from pydantic import AnyHttpUrl, BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.applications import Starlette
+from starlette.routing import Route
 
 from mailfallback.config import settings as _settings
 from mailfallback.db import SessionLocal
@@ -44,7 +46,15 @@ from mailfallback.models import (
     SyncJob,
     User,
 )
-from mailfallback.routers.agent import RESOLVE_COORDS_MAX_IDS
+from mailfallback.routers.agent import (
+    RESOLVE_COORDS_MAX_IDS,
+    AttachmentSearchResponseOut,
+    ImapCoordsResponseOut,
+    MailboxOut,
+    MessageOut,
+    SearchResponseOut,
+    SyncJobOut,
+)
 from mailfallback.services import (
     app_credential_service,
     preview_service,
@@ -64,6 +74,24 @@ MCP_PATH = "/mcp"
 # limits. Hitting it does not dead-end the caller — the error names the
 # message's folder and points at imap_coords + a live IMAP fetch instead.
 MCP_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024
+
+
+class MailboxListOut(BaseModel):
+    """``list_mailboxes``' envelope — REST returns a bare list, but every MCP
+    tool here returns a mapping, so this wraps ``MailboxOut`` the same way the
+    tool body already does."""
+
+    mailboxes: list[MailboxOut]
+
+
+class AttachmentDownloadOut(BaseModel):
+    """``download_attachment``'s envelope. No REST counterpart to reuse: the
+    REST route streams raw bytes instead of returning JSON."""
+
+    filename: str | None = None
+    size_bytes: int
+    source: str
+    content_base64: str
 
 
 def _require_scope(scope: str) -> str:
@@ -140,7 +168,32 @@ def mcp_asgi_app(server: MCPServer, settings) -> Starlette:
     )
 
 
+def protected_resource_metadata_routes(settings) -> list[Route]:
+    """The RFC 9728 protected-resource-metadata route, registered at the
+    FastAPI ROOT app rather than only inside the mounted ``/mcp`` app.
+
+    ``resource_server_url`` is ``{base}/mcp``, so the SDK computes the
+    metadata URL it puts in ``WWW-Authenticate`` as root-relative:
+    ``{base}/.well-known/oauth-protected-resource/mcp`` (RFC 9728 §3.1 inserts
+    the well-known segment right after the host, not after the resource
+    path). But the mounted app registers this same route relative to ITS OWN
+    root, so left alone it only actually answers at
+    ``{base}/mcp/.well-known/oauth-protected-resource/mcp`` — a 404 at the
+    URL the server itself advertises. Re-registering the SDK's own route
+    generator here (rather than hand-writing the JSON) keeps the content
+    whatever the SDK would have served, and answers at the URL that is
+    actually advertised.
+    """
+    base = settings.mcp_public_url.rstrip("/")
+    return create_protected_resource_routes(
+        resource_url=AnyHttpUrl(f"{base}{MCP_PATH}"),
+        authorization_servers=[AnyHttpUrl(base)],
+        scopes_supported=[],
+    )
+
+
 _server: MCPServer | None = None
+_asgi_app: Starlette | None = None
 
 
 def get_server(settings) -> MCPServer | None:
@@ -151,6 +204,26 @@ def get_server(settings) -> MCPServer | None:
         if _server is not None:
             _register_tools(_server)
     return _server
+
+
+def get_asgi_app(settings) -> Starlette | None:
+    """The ASGI app to mount at MCP_PATH, built at most once per process.
+
+    ``MCPServer.streamable_http_app()`` allocates a NEW
+    ``StreamableHTTPSessionManager`` on every call and reassigns it onto the
+    lowlevel server, while the Starlette app it returns closes over that one
+    specific manager instance, whose ``run()`` is single-use. A second call
+    in the same process would leave an earlier app's mount pointing at a
+    manager whose ``run()`` never executes. Caching here means correctness
+    does not depend on how many times ``create_app()`` is called.
+    """
+    global _asgi_app
+    server = get_server(settings)
+    if server is None:
+        return None
+    if _asgi_app is None:
+        _asgi_app = mcp_asgi_app(server, settings)
+    return _asgi_app
 
 
 @contextmanager
@@ -228,7 +301,7 @@ def _register_tools(mcp: MCPServer) -> None:
     _READ_ONLY = ToolAnnotations(read_only_hint=True)
 
     @mcp.tool(annotations=_READ_ONLY)
-    def list_mailboxes() -> dict[str, Any]:
+    def list_mailboxes() -> MailboxListOut:
         """The mailboxes this token's owner can search, with what is indexed in each.
 
         ``indexed_messages`` and ``folders`` describe what is in the search
@@ -283,7 +356,7 @@ def _register_tools(mcp: MCPServer) -> None:
         deep: bool = False,
         page: Annotated[int, Field(ge=1)] = 1,
         page_size: Annotated[int, Field(ge=1, le=200)] = 50,
-    ) -> dict[str, Any]:
+    ) -> SearchResponseOut:
         """Indexed search across every mailbox this token's owner can see.
 
         A hit's ``message_id_hash`` plus an attachment's ``part_index`` are
@@ -321,7 +394,7 @@ def _register_tools(mcp: MCPServer) -> None:
         range_end: datetime | None = None,
         page: Annotated[int, Field(ge=1)] = 1,
         page_size: Annotated[int, Field(ge=1, le=200)] = 50,
-    ) -> dict[str, Any]:
+    ) -> AttachmentSearchResponseOut:
         """Search attachments by filename, and by extracted content when
         ``include_content`` is set and content search is enabled.
 
@@ -351,7 +424,7 @@ def _register_tools(mcp: MCPServer) -> None:
             return result
 
     @mcp.tool(annotations=_READ_ONLY)
-    def get_message(account_id: str, message_id_hash: str) -> dict[str, Any]:
+    def get_message(account_id: str, message_id_hash: str) -> MessageOut:
         """Headers, a body snippet and the attachment list for one message.
 
         ``account_id`` and ``message_id_hash`` are the pair a search hit
@@ -369,7 +442,7 @@ def _register_tools(mcp: MCPServer) -> None:
     @mcp.tool(annotations=_READ_ONLY)
     def download_attachment(
         account_id: str, message_id_hash: str, part_index: int
-    ) -> dict[str, Any]:
+    ) -> AttachmentDownloadOut:
         """One attachment's bytes, base64-encoded.
 
         ``account_id``, ``message_id_hash`` and ``part_index`` are the triple
@@ -435,7 +508,7 @@ def _register_tools(mcp: MCPServer) -> None:
             }
 
     @mcp.tool(annotations=_READ_ONLY)
-    def imap_coords(account_id: str, message_ids: list[str]) -> dict[str, Any]:
+    def imap_coords(account_id: str, message_ids: list[str]) -> ImapCoordsResponseOut:
         """Message-Ids to live IMAP folder keys and UIDs.
 
         The bridge to the IMAP path: search here, then FETCH over IMAP with
@@ -454,7 +527,7 @@ def _register_tools(mcp: MCPServer) -> None:
             )
 
     @mcp.tool(annotations=ToolAnnotations(read_only_hint=False))
-    def sync_now(account_id: str) -> dict[str, Any]:
+    def sync_now(account_id: str) -> SyncJobOut:
         """Queue and run a sync for one mailbox.
 
         Idempotent in practice: if a sync is already pending or running, that
@@ -524,7 +597,7 @@ def _register_tools(mcp: MCPServer) -> None:
             }
 
     @mcp.tool(annotations=_READ_ONLY)
-    def sync_status(job_id: str) -> dict[str, Any]:
+    def sync_status(job_id: str) -> SyncJobOut:
         """Status of one sync job, scoped to the caller's own mailboxes.
 
         An unknown job id and another user's job are refused with the SAME
