@@ -298,8 +298,16 @@ def test_userdb_dedupes_duplicate_recoveries(client, db_session, default_store):
     assert len(prefixes) == len(set(prefixes))
 
 
-def test_userdb_includes_active_staging_namespace(client, db_session, default_store):
-    """A user with an unexpired StagingArea gets the writable Staging/ namespace."""
+def test_userdb_publishes_no_staging_namespace(client, db_session, default_store):
+    """Staging is a mailbox in the root namespace, never a namespace of its own.
+
+    A dedicated "Staging/" namespace made the mailbox unreachable and read-only:
+    Dovecot's ACL `mailbox` filters match the namespace-INTERNAL name, so the
+    mailbox behind a "Staging/" prefix was seen as "INBOX" and inherited the
+    global read-only grant. The Maildir now lives at root-inbox/Staging, inside
+    the mfb_root namespace the Lua userdb always creates, where the internal
+    name is "Staging" and the `mailbox Staging` ACL filter applies.
+    """
     user = _create_user(db_session, default_store)
     acc = _create_account(db_session, default_store)
     acc.owners.append(user)
@@ -315,14 +323,8 @@ def test_userdb_includes_active_staging_namespace(client, db_session, default_st
     assert resp.status_code == 200
     namespaces = resp.json()["namespaces"]
 
-    stg_ns = [n for n in namespaces if n["name"].startswith("stg_")]
-    assert len(stg_ns) == 1
-    assert stg_ns[0]["name"] == f"stg_{user.id}"
-    assert stg_ns[0]["prefix"] == "Staging/"
-    assert stg_ns[0]["mail_driver"] == "maildir"
-    assert stg_ns[0]["mail_path"] == "/data/mailboxes/.dovecot-home/alice/staging"
-    assert stg_ns[0]["mail_path"].endswith("/staging")
-    assert stg_ns[0]["inbox"] is False
+    assert [n for n in namespaces if n["name"].startswith("stg_")] == []
+    assert all("Staging" not in (n["prefix"] or "") for n in namespaces)
 
 
 def test_userdb_no_staging_namespace_without_area(client, db_session, default_store):
@@ -338,32 +340,13 @@ def test_userdb_no_staging_namespace_without_area(client, db_session, default_st
     assert [n for n in namespaces if n["name"].startswith("stg_")] == []
 
 
-def test_userdb_excludes_expired_staging_area(client, db_session, default_store):
-    """An expired StagingArea must NOT publish a Staging/ namespace."""
-    user = _create_user(db_session, default_store)
-    acc = _create_account(db_session, default_store)
-    acc.owners.append(user)
-    db_session.add(
-        StagingArea(
-            user_id=user.id,
-            expires_at=datetime.now(UTC) - timedelta(minutes=1),
-        )
-    )
-    db_session.commit()
+def test_userdb_staging_only_user_gets_no_namespaces(client, db_session, default_store):
+    """A user with only a staging area gets an empty namespace list.
 
-    resp = client.get("/api/internal/dovecot/userdb/alice", headers=HEADERS)
-    assert resp.status_code == 200
-    namespaces = resp.json()["namespaces"]
-    assert [n for n in namespaces if n["name"].startswith("stg_")] == []
-
-
-def test_userdb_staging_namespace_with_zero_accounts(client, db_session, default_store):
-    """Staging is published even when the user owns no accounts.
-
-    Safe because the Lua userdb (mfb-lua-userdb.lua) UNCONDITIONALLY adds the
-    mfb_root inbox namespace before consuming the API's namespace list, and
-    forces inbox=no on every API-provided namespace -- so Dovecot always has
-    exactly one inbox namespace and a staging-only response cannot break login.
+    Login still works: the Lua userdb (mfb-lua-userdb.lua) UNCONDITIONALLY adds
+    the mfb_root inbox namespace before consuming the API's list, and the
+    staging Maildir now lives inside mfb_root's mail_path as the "Staging"
+    mailbox, so it needs no namespace of its own.
     """
     user = _create_user(db_session, default_store)
     db_session.add(
@@ -376,7 +359,4 @@ def test_userdb_staging_namespace_with_zero_accounts(client, db_session, default
 
     resp = client.get("/api/internal/dovecot/userdb/alice", headers=HEADERS)
     assert resp.status_code == 200
-    namespaces = resp.json()["namespaces"]
-    assert len(namespaces) == 1
-    assert namespaces[0]["name"] == f"stg_{user.id}"
-    assert namespaces[0]["inbox"] is False
+    assert resp.json()["namespaces"] == []

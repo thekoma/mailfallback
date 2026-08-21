@@ -717,10 +717,14 @@ class TestPush:
 
 
 class TestUserdbPathContract:
-    def test_userdb_staging_mail_path_matches_staging_dir(self, client, db_session, real_store):
-        """The namespace mail_path published to Dovecot must be byte-identical
-        to staging_service.staging_dir() — any drift and webmail silently shows
-        an empty Staging/ folder. Username needs sanitization on purpose."""
+    def test_staging_dir_sits_under_the_published_root_inbox(self, client, db_session, real_store):
+        """staging_dir() must resolve inside the mfb_root namespace's mail_path.
+
+        The Lua userdb sets that mail_path to `home .. "/root-inbox"`, where home
+        is the value this endpoint publishes. Any drift between the two and
+        webmail silently shows no Staging folder at all. Username needs
+        sanitization on purpose.
+        """
         user = _mk_user(db_session, real_store, username="mario rossi")
         db_session.add(
             StagingArea(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(hours=1))
@@ -732,7 +736,38 @@ class TestUserdbPathContract:
         )
 
         assert resp.status_code == 200
-        stg_ns = [n for n in resp.json()["namespaces"] if n["name"].startswith("stg_")]
-        assert len(stg_ns) == 1
-        assert stg_ns[0]["mail_path"] == staging_service.staging_dir(user)
-        assert "mario_rossi" in stg_ns[0]["mail_path"]
+        home = resp.json()["home"]
+        assert staging_service.staging_dir(user) == f"{home}/root-inbox/Staging"
+        assert "mario_rossi" in staging_service.staging_dir(user)
+
+
+class TestStagingLocation:
+    """Staging lives as a mailbox in the user's root namespace, not its own namespace.
+
+    Dovecot's ACL `mailbox` filters match the namespace-INTERNAL mailbox name --
+    the namespace prefix is stripped before matching. A mailbox reached as
+    "Staging/INBOX" under a "Staging/" prefix is therefore seen by the ACL as
+    "INBOX", inherits the global read-only grant, and silently ignores flag
+    changes and expunges. Placing the Maildir at root-inbox/Staging makes the
+    internal name "Staging", which the `mailbox Staging` ACL filter matches, so
+    the curation surface is genuinely writable.
+    """
+
+    def test_staging_dir_is_a_mailbox_under_root_inbox(self, staging_user, real_store):
+        expected = os.path.join(real_store.path, ".dovecot-home", "mario", "root-inbox", "Staging")
+        assert staging_service.staging_dir(staging_user) == expected
+
+    def test_remove_staging_dir_also_purges_the_legacy_location(self, staging_user):
+        """Areas created before the move left a Maildir at {home}/staging."""
+        legacy = os.path.join(
+            os.path.dirname(os.path.dirname(staging_service.staging_dir(staging_user))),
+            "staging",
+        )
+        os.makedirs(os.path.join(legacy, "cur"), exist_ok=True)
+        current = staging_service.staging_dir(staging_user)
+        os.makedirs(os.path.join(current, "cur"), exist_ok=True)
+
+        staging_service._remove_staging_dir(staging_user)
+
+        assert not os.path.isdir(current)
+        assert not os.path.isdir(legacy)
