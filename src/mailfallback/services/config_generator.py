@@ -74,8 +74,12 @@ def _dovecot_acl_conf() -> str:
     # ACL as settings blocks (dovecot 2.4.3+ removed the global acl file).
     # Global: every mailbox is owner read-only (lrs) -- covers the dynamic
     # per-account namespaces from the Lua userdb without enumerating them.
-    # Override: the per-user Staging namespace is writable (lrwstie), the
-    # restore-curation surface (delete-before-push in webmail).
+    # Override: the plain `Staging` mailbox is writable (lrwstie), the
+    # restore-curation surface (delete-before-push in webmail). It lives
+    # inside the root namespace rather than a namespace of its own -- these
+    # `mailbox` filters match the namespace-INTERNAL name with the namespace
+    # prefix stripped, so a dedicated namespace would have been seen as
+    # `INBOX` and never matched (see staging_service.staging_dir()).
     # lrwstie = lookup/read/write-flags/write-seen/write-deleted/insert/expunge
     # -- no create/delete-mailbox/admin.
     return """\
