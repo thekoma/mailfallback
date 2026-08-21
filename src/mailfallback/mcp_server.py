@@ -16,6 +16,7 @@ token as IMAP and the REST API. Three properties of this file are load-bearing:
   inside FastAPI's dependency injection.
 """
 
+import base64
 import logging
 from contextlib import contextmanager
 from datetime import datetime
@@ -35,13 +36,26 @@ from starlette.applications import Starlette
 from mailfallback.config import settings as _settings
 from mailfallback.db import SessionLocal
 from mailfallback.mcp_auth import MfbTokenVerifier
-from mailfallback.models import Account, MailIndexMessage, User
-from mailfallback.services import app_credential_service, preview_service, search_service
+from mailfallback.models import Account, JobStatus, MailIndexMessage, SyncJob, User
+from mailfallback.services import (
+    app_credential_service,
+    preview_service,
+    search_service,
+    sync_service,
+)
+from mailfallback.services.audit_service import log_action
+from mailfallback.services.sync_worker import submit_sync_job
 from mailfallback.version import __version__
 
 logger = logging.getLogger(__name__)
 
 MCP_PATH = "/mcp"
+
+# Base64 inflates by a third and the whole result travels inside one
+# JSON-RPC response, so the raw cap must sit well under the transport's own
+# limits. Hitting it does not dead-end the caller — the error names the
+# message's folder and points at imap_coords + a live IMAP fetch instead.
+MCP_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024
 
 
 def _require_scope(scope: str) -> str:
@@ -168,7 +182,7 @@ def _register_tools(mcp: MCPServer) -> None:
 
     _READ_ONLY = ToolAnnotations(read_only_hint=True)
 
-    @mcp.tool(annotations=ToolAnnotations(read_only_hint=True))
+    @mcp.tool(annotations=_READ_ONLY)
     def ping() -> str:
         """Confirm the server is reachable and the token is accepted."""
         _require_scope(app_credential_service.SCOPE_MAIL_READ)
@@ -312,3 +326,184 @@ def _register_tools(mcp: MCPServer) -> None:
             if out is None:
                 raise MCPError(code=INVALID_REQUEST, message="Message not found")
             return out
+
+    @mcp.tool(annotations=_READ_ONLY)
+    def download_attachment(
+        account_id: str, message_id_hash: str, part_index: int
+    ) -> dict[str, Any]:
+        """One attachment's bytes, base64-encoded.
+
+        ``account_id``, ``message_id_hash`` and ``part_index`` are the triple
+        a search hit returns. A part over ``MCP_ATTACHMENT_MAX_BYTES`` is
+        refused rather than served: resolve IMAP coordinates for the message
+        with ``imap_coords`` and fetch it over IMAP instead.
+        """
+        from mailfallback.routers import restore
+
+        with _caller(app_credential_service.SCOPE_MAIL_READ) as (db, user):
+            account = _mcp_account(db, user, account_id)
+            msg_hash = _mcp_hash(message_id_hash)
+            payload, filename, source = restore.extract_attachment_bytes(
+                db, account, msg_hash, part_index
+            )
+            if len(payload) > MCP_ATTACHMENT_MAX_BYTES:
+                msg_row = (
+                    db.query(MailIndexMessage)
+                    .filter(
+                        MailIndexMessage.account_id == account.id,
+                        MailIndexMessage.message_id_hash == msg_hash,
+                    )
+                    .first()
+                )
+                folder = msg_row.folder_path if msg_row else "unknown"
+                raise MCPError(
+                    code=INVALID_REQUEST,
+                    message=(
+                        f"Attachment too large to return over MCP ({len(payload)} bytes, "
+                        f"cap is {MCP_ATTACHMENT_MAX_BYTES}). It lives in {folder!r} — "
+                        "resolve IMAP coordinates with imap_coords and fetch it over IMAP."
+                    ),
+                )
+            log_action(
+                db,
+                user=user,
+                action="attachment.download",
+                resource_type="attachment",
+                resource_id=account.id,
+                resource_name=filename,
+                details={
+                    "message_id_hash": message_id_hash,
+                    "part_index": part_index,
+                    "source": source,
+                    "via": "mcp",
+                },
+                ip_address=None,
+            )
+            return {
+                "filename": filename,
+                "size_bytes": len(payload),
+                "source": source,
+                "content_base64": base64.b64encode(payload).decode("ascii"),
+            }
+
+    @mcp.tool(annotations=_READ_ONLY)
+    def imap_coords(account_id: str, message_ids: list[str]) -> dict[str, Any]:
+        """Message-Ids to live IMAP folder keys and UIDs.
+
+        The bridge to the IMAP path: search here, then FETCH over IMAP with
+        an existing client. Ids beyond ``RESOLVE_UIDS_MAX_IDS`` are ignored
+        entirely — neither resolved nor reported missing. ``imap_unavailable``
+        means Dovecot itself could not be reached: every id in ``missing`` was
+        never actually checked, so the right response is a retry, not
+        concluding the mail is gone.
+        """
+        from mailfallback.routers import restore
+
+        with _caller(app_credential_service.SCOPE_MAIL_READ) as (db, user):
+            account = _mcp_account(db, user, account_id)
+            return restore.resolve_uids_for_account(
+                db, account, message_ids[: restore.RESOLVE_UIDS_MAX_IDS]
+            )
+
+    @mcp.tool(annotations=ToolAnnotations(read_only_hint=False))
+    def sync_now(account_id: str) -> dict[str, Any]:
+        """Queue and run a sync for one mailbox.
+
+        Idempotent in practice: if a sync is already pending or running, that
+        job is returned with ``already_queued: true`` instead of an error.
+        Refused (never queued) when the account is suspended, migrating, an
+        owner is migrating, or the account carries a self-recovering pause
+        (budget/throttle/transient) — unlike the UI, which may warn and
+        override a pause, an agent cannot weigh burning the provider's daily
+        quota on the account owner's behalf, so here a pause is a plain
+        refusal.
+        """
+        with _caller(app_credential_service.SCOPE_SYNC_TRIGGER) as (db, user):
+            account = _mcp_account(db, user, account_id)
+
+            if account.suspended:
+                raise MCPError(code=INVALID_REQUEST, message="Sync blocked: account is suspended")
+            if account.migrating:
+                raise MCPError(
+                    code=INVALID_REQUEST,
+                    message="Sync blocked: account migration in progress",
+                )
+            for owner in account.owners:
+                if owner.migrating:
+                    raise MCPError(
+                        code=INVALID_REQUEST,
+                        message="Sync blocked: user migration in progress",
+                    )
+            if account.sync_paused_until is not None or account.pause_reason is not None:
+                raise MCPError(
+                    code=INVALID_REQUEST,
+                    message=(
+                        f"Sync blocked: paused ({account.pause_reason or 'unknown'}); "
+                        "an agent cannot override a self-recovering pause"
+                    ),
+                )
+
+            job = sync_service.create_sync_job(db, account.id, source="agent")
+            already = False
+            if job is None:
+                already = True
+                job = (
+                    db.query(SyncJob)
+                    .filter(
+                        SyncJob.account_id == account.id,
+                        SyncJob.status.in_([JobStatus.pending, JobStatus.running]),
+                    )
+                    .order_by(SyncJob.requested_at.desc())
+                    .first()
+                )
+                if job is None:  # raced to completion between the two queries
+                    raise MCPError(code=INVALID_REQUEST, message="Could not queue a sync; retry")
+            else:
+                # Only the newly-created-job branch submits — an already-running
+                # job must never be resubmitted to the executor.
+                submit_sync_job(job.id)
+                log_action(
+                    db,
+                    user=user,
+                    action="account.sync",
+                    resource_type="account",
+                    resource_id=account.id,
+                    resource_name=account.email_address,
+                    details={"via": "mcp", "job_id": job.id},
+                    ip_address=None,
+                )
+            return {
+                "job_id": job.id,
+                "account_id": job.account_id,
+                "status": job.status.value,
+                "source": job.source,
+                "already_queued": already,
+                "requested_at": job.requested_at.isoformat() if job.requested_at else None,
+                "started_at": job.started_at.isoformat() if job.started_at else None,
+                "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+                "failure_kind": job.failure_kind,
+            }
+
+    @mcp.tool(annotations=_READ_ONLY)
+    def sync_status(job_id: str) -> dict[str, Any]:
+        """Status of one sync job, scoped to the caller's own mailboxes.
+
+        An unknown job id and another user's job are refused with the same
+        message — this must not become an oracle a caller can use to tell
+        "no such job" apart from "a real job you cannot see".
+        """
+        with _caller(app_credential_service.SCOPE_SYNC_TRIGGER) as (db, user):
+            job = sync_service.get_job(db, job_id)
+            if job is None:
+                raise MCPError(code=INVALID_REQUEST, message="No such mailbox")
+            account = _mcp_account(db, user, job.account_id)
+            return {
+                "job_id": job.id,
+                "account_id": account.id,
+                "status": job.status.value,
+                "source": job.source,
+                "requested_at": job.requested_at.isoformat() if job.requested_at else None,
+                "started_at": job.started_at.isoformat() if job.started_at else None,
+                "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+                "failure_kind": job.failure_kind,
+            }
