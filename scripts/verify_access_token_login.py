@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Prove an access token authenticates against Dovecot IMAP, and nothing else broke.
 
-Run INSIDE the mailfallback container, which can reach dovecot by name:
+Run INSIDE the mailfallback container, which can reach dovecot by name.
+``scripts/`` is deliberately not baked into the image, so the host copy has
+to be piped in on stdin:
 
     docker compose exec -T -w /app mailfallback \
-        uv run --no-sync python scripts/verify_access_token_login.py
+        uv run --no-sync python - < scripts/verify_access_token_login.py
 
 Exits non-zero on the first failed expectation.
 """
@@ -12,6 +14,7 @@ Exits non-zero on the first failed expectation.
 
 import imaplib
 import os
+import shutil
 import sys
 
 from mailfallback.db import SessionLocal
@@ -50,6 +53,11 @@ def main():
         db.commit()
     store = db.query(MailStore).first()
     user = user_service.create_user(db, USERNAME, PASSWORD, UserRole.user, store_id=store.id)
+    # Read before the user row is deleted below — the home dir lives under the
+    # store the probe user was created on, not a hardcoded path.
+    home_dir = os.path.join(
+        store.path, ".dovecot-home", user_service._sanitize_path_component(USERNAME)
+    )
     try:
         _, token = svc.create_credential(db, user, name="probe", scopes=[svc.SCOPE_IMAP])
         _, read_only = svc.create_credential(db, user, name="no-imap", scopes=[svc.SCOPE_MAIL_READ])
@@ -104,6 +112,8 @@ def main():
     finally:
         db.delete(db.query(User).filter(User.username == USERNAME).first())
         db.commit()
+        shutil.rmtree(home_dir, ignore_errors=True)
+        print(f"\nRemoved {home_dir}")
 
     print()
     if failures:
