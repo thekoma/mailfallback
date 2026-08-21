@@ -82,7 +82,7 @@ nav:
     - SSO / OIDC: admin-guide/sso.md
     - OAuth Providers: admin-guide/oauth-providers.md
     - Disaster Recovery: admin-guide/disaster-recovery.md
-  - Guides:
+  - Agent Guide:
     - Agent API: guides/agent-api.md
   - Architecture:
     - Overview: architecture/overview.md

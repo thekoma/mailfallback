@@ -43,9 +43,10 @@ curl -H "Authorization: Bearer mfb_abc123..._def456..." \
 
 The scheme name (`Bearer`) is matched case-insensitively. If the header names
 the bearer scheme at all, the request is treated as a token attempt end to
-end: a token that turns out to be revoked, expired, or malformed gets a plain
-`401`, and the request never falls back to a browser session cookie that
-might be attached to the same connection.
+end: a token that turns out to be revoked, expired, or malformed — or whose
+owning user is disabled or is being migrated to a different mail store —
+gets a plain `401`, and the request never falls back to a browser session
+cookie that might be attached to the same connection.
 
 ## Endpoints
 
@@ -356,7 +357,7 @@ UIDs that client can `SELECT`/`FETCH` directly.
 
 | Condition | Response | Meaning |
 |-----------|----------|---------|
-| Missing, malformed, expired, or revoked token | `401` | Not authenticated. Never falls back to a session. |
+| Missing, malformed, expired, or revoked token — or a token whose owning user is disabled or is being migrated to a different mail store | `401` | Not authenticated. Never falls back to a session. |
 | Token valid, but missing the scope the route requires | `403` | Authenticated, but not authorized for this action. |
 | A mailbox, message, attachment, or job the caller cannot see | `404` | Never `403` — the API does not confirm that something exists if the caller isn't allowed to see it. |
 | `message_id_hash` is not valid hex | `400` | Malformed request, not an authorization outcome. |
