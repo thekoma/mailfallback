@@ -71,6 +71,13 @@ Export the current MFB configuration (accounts, users, groups, stores) as a JSON
 !!! warning "Credentials"
     Exported configs include encrypted credentials. They can only be imported into an instance with the same `MAILFALLBACK_SECRET_KEY`. If the secret key differs, imported accounts will need their credentials re-entered.
 
+!!! note "Access tokens are not exported"
+    Per-user access tokens (`AppCredential`) are deliberately excluded from the
+    export, consistent with notification channels — re-create them on the new
+    instance if needed. Separately, rotating `MAILFALLBACK_SECRET_KEY` invalidates
+    every existing access token, since each token's `secret_hash` is a keyed-HMAC
+    keyed to that secret.
+
 ## Prometheus Metrics
 
 MFB exposes metrics at `/metrics` for Prometheus scraping:

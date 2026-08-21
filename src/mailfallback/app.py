@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     generate_all_configs(settings)
+    _reload_dovecot_after_config()
     db = SessionLocal()
     try:
         default_store = ensure_default_store(db)
@@ -73,6 +74,39 @@ async def lifespan(app: FastAPI):
     from mailfallback.services.backup_worker import shutdown_backup_executor
 
     shutdown_backup_executor()
+
+
+def _reload_dovecot_after_config() -> None:
+    """Best-effort Dovecot reload so freshly written config is actually read.
+
+    ``generate_all_configs`` above only writes files to the shared confs
+    volume; nothing makes Dovecot re-read them. On docker compose this is
+    masked by ``depends_on`` recreating the dovecot container, but on
+    Kubernetes an app-only upgrade can leave the dovecot pod running against
+    stale config (new access tokens silently fail to authenticate, ACL
+    changes don't take effect) with nothing in the UI to explain why.
+
+    Never allowed to fail startup: ``reload_dovecot()`` already catches its
+    own exceptions and returns a bool, but this wrapper catches again
+    defensively and only logs.
+    """
+    from mailfallback.services.dovecot_manager import reload_dovecot
+
+    try:
+        reloaded = reload_dovecot()
+    except Exception:
+        logger.info("Dovecot reload raised unexpectedly -- continuing boot", exc_info=True)
+        return
+
+    if reloaded:
+        logger.info("Dovecot reloaded to pick up regenerated config")
+    else:
+        logger.info(
+            "Dovecot reload did not succeed -- normal at first start on docker "
+            "compose, where dovecot's depends_on makes it start after the app "
+            "so it may not be up yet; if it persists once dovecot is up, "
+            "tokens and ACL changes may be serving stale config"
+        )
 
 
 def _backfill_allowed_stores(db):

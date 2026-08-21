@@ -1,7 +1,8 @@
 """Per-user staging area — copy-in, reconcile, quota, lifecycle.
 
-The staging Maildir ({dovecot_home}/staging) is the source of truth for
-contents: webmail deletions remove files and reconcile() drops their rows.
+The staging Maildir ({home}/root-inbox/Staging, see staging_dir() below) is
+the source of truth for contents: webmail deletions remove files and
+reconcile() drops their rows.
 Rows carry origin (account + folder) for push-to-origin and the byte
 accounting that backs the quota. One area per user; the TTL runs from
 creation BY DESIGN (no extend-on-activity — the workspace shows the expiry

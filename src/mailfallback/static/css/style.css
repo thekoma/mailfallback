@@ -2847,3 +2847,19 @@ body.page-restore-workspace .content { padding-bottom: calc(var(--ws-staging-h, 
   color: var(--ws-text-muted);
 }
 .restore-status-strip .calendar-row.compact { padding: .25rem 0; }
+
+/* Access token shown once after creation */
+.token-reveal {
+    border-left: 3px solid var(--pico-primary);
+}
+
+.token-value {
+    display: block;
+    overflow-wrap: anywhere;
+    user-select: all;
+}
+
+/* .notif-card.channel-off only targets the notification-channel cards; the
+   token table reuses the same "channel-off" class on a <tr>, which that
+   selector never matches, so a revoked token would render unstyled. */
+tr.channel-off { opacity: 0.62; }

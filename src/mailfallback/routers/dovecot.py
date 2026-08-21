@@ -2,9 +2,11 @@
 """Internal API for Dovecot Lua userdb lookups."""
 
 import hmac
+import logging
 import re
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
@@ -18,7 +20,10 @@ from mailfallback.models import (
     account_owners,
     group_members,
 )
+from mailfallback.services import app_credential_service
 from mailfallback.services.recovery_service import namespace_prefix as recovery_namespace_prefix
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/internal/dovecot", tags=["dovecot-internal"])
 
@@ -139,3 +144,49 @@ def account_namespace_prefix(account) -> str:
     """
     short_id = account.id[-4:]
     return f"{account.name} ({account.email_address}) [{short_id}]/"
+
+
+class PassdbRequest(BaseModel):
+    username: str
+    password: str
+    protocol: str | None = None
+
+
+@router.post("/passdb", dependencies=[Depends(_verify_api_key)])
+def passdb_verify(req: PassdbRequest, db: Session = Depends(get_db)):
+    """Verify an access token as an IMAP password, for the Dovecot Lua passdb.
+
+    The status code IS the protocol contract — mfb-lua-passdb.lua maps it:
+      200 -> PASSDB_RESULT_OK              (table return value, never a string)
+      404 -> PASSDB_RESULT_NEXT            (not a token, or not this user's)
+      401 -> PASSDB_RESULT_PASSWORD_MISMATCH
+      other/unreachable -> PASSDB_RESULT_INTERNAL_FAILURE
+
+    404 rather than 401 for an unknown token keeps the SQL passdb reachable and
+    does not reveal whether a prefix exists.
+    """
+    result, _cred = app_credential_service.verify_credential(
+        db,
+        username=req.username,
+        token=req.password,
+        required_scope=app_credential_service.SCOPE_IMAP,
+        kind=req.protocol or "imap",
+    )
+    if result is app_credential_service.VerifyResult.ok:
+        return {"ok": True}
+    if result in (
+        app_credential_service.VerifyResult.not_a_token,
+        app_credential_service.VerifyResult.unknown,
+    ):
+        raise HTTPException(status_code=404, detail="No such access token")
+    if result is app_credential_service.VerifyResult.rejected:
+        raise HTTPException(status_code=401, detail="Access token rejected")
+    # Fail-safe, not fail-shut: a VerifyResult member this endpoint doesn't
+    # recognize (e.g. a future `expired`) must NOT be treated as 401, because
+    # 401 is PASSDB_RESULT_PASSWORD_MISMATCH and stops the Lua passdb from
+    # falling through to the SQL passdb -- an ordinary password login would
+    # break. 404 denies the token while still letting the real password try,
+    # so an unhandled member can only ever be too strict for the token, never
+    # break interactive/webmail login.
+    logger.error("passdb: unhandled VerifyResult member %r, denying as 404", result)
+    raise HTTPException(status_code=404, detail="No such access token")

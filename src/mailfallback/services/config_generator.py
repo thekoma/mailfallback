@@ -74,8 +74,12 @@ def _dovecot_acl_conf() -> str:
     # ACL as settings blocks (dovecot 2.4.3+ removed the global acl file).
     # Global: every mailbox is owner read-only (lrs) -- covers the dynamic
     # per-account namespaces from the Lua userdb without enumerating them.
-    # Override: the per-user Staging namespace is writable (lrwstie), the
-    # restore-curation surface (delete-before-push in webmail).
+    # Override: the plain `Staging` mailbox is writable (lrwstie), the
+    # restore-curation surface (delete-before-push in webmail). It lives
+    # inside the root namespace rather than a namespace of its own -- these
+    # `mailbox` filters match the namespace-INTERNAL name with the namespace
+    # prefix stripped, so a dedicated namespace would have been seen as
+    # `INBOX` and never matched (see staging_service.staging_dir()).
     # lrwstie = lookup/read/write-flags/write-seen/write-deleted/insert/expunge
     # -- no create/delete-mailbox/admin.
     return """\
@@ -87,6 +91,12 @@ protocol imap {
 
 acl_driver = vfile
 acl_globals_only = yes
+# Defaults for mailboxes without an ACL entry come from INBOX (lrs) instead of
+# "owner has every right", which is the private-namespace default. Without this
+# a client can CREATE a top-level mailbox it then cannot delete, even though
+# APPEND and DELETE are correctly denied. The explicit `mailbox Staging` filter
+# below still wins, so the curation surface stays writable.
+acl_defaults_from_inbox = yes
 
 acl readonly {
   acl_id = owner
@@ -186,6 +196,12 @@ passdb oauth2 {{
         f"  }}\n"
         f"}}\n"
         f"{oauth2_section}"
+        # Tokens first; the lua script returns PASSDB_RESULT_NEXT for anything
+        # that is not an "mfb_" token, so ordinary passwords reach passdb sql.
+        f"passdb lua {{\n"
+        f"  lua_file = /etc/dovecot/conf.d/mfb-lua-passdb.lua\n"
+        f"}}\n"
+        f"\n"
         f"passdb sql {{\n"
         f"  query = {passdb_query}\n"
         f"}}\n"
@@ -318,6 +334,91 @@ end
 """
 
 
+def _dovecot_lua_passdb(settings: Any) -> str:
+    # API_KEY is hardcoded into the script because the Dovecot 2.4 official
+    # image has no shell, so env-var expansion is unreliable. Same reasoning
+    # and same shape as _dovecot_lua_userdb.
+    api_base = "http://mailfallback:8000"
+    api_key = settings.dovecot_api_key
+
+    return f"""\
+-- mfb-lua-passdb.lua -- Dovecot 2.4 Lua passdb for MailFallBack access tokens
+--
+-- Verifies "mfb_<prefix>_<secret>" access tokens against the MFB internal API,
+-- so an agent never needs the user's real login password. Ordinary passwords
+-- are handed straight to the next passdb (the SQL one) WITHOUT any HTTP call,
+-- so interactive and webmail logins pay nothing for this.
+--
+-- auth_password_verify receives the plaintext password (PLAIN/LOGIN) and must
+-- return nil or a TABLE on success -- a string second value is a runtime error.
+
+local json = require "json"
+
+local http_client = dovecot.http.client {{
+    connect_timeout = "5s",
+    request_timeout = "10s",
+    request_max_attempts = 3,
+}}
+
+local API_BASE = "{api_base}"
+local API_KEY = "{api_key}"
+local TOKEN_MARKER = "mfb_"
+
+
+function script_init()
+    dovecot.i_info("mfb-lua-passdb: initialized, API base = " .. API_BASE)
+    return 0
+end
+
+function script_deinit()
+end
+
+
+function auth_password_verify(req, password)
+    password = password or ""
+    if string.sub(password, 1, #TOKEN_MARKER) ~= TOKEN_MARKER then
+        -- Not an access token: let the SQL passdb handle the real password.
+        return dovecot.auth.PASSDB_RESULT_NEXT, nil
+    end
+
+    local http_req = http_client:request {{
+        url = API_BASE .. "/api/internal/dovecot/passdb",
+        method = "POST",
+    }}
+    http_req:add_header("X-API-Key", API_KEY)
+    http_req:add_header("Content-Type", "application/json")
+    http_req:set_payload(json.encode {{
+        username = req.user,
+        password = password,
+        protocol = req.protocol or "imap",
+    }})
+
+    local ok, resp = pcall(function() return http_req:submit() end)
+    if not ok then
+        dovecot.i_error("mfb-lua-passdb: API unreachable: " .. tostring(resp))
+        return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE, nil
+    end
+
+    local status = resp:status()
+    if status == 200 then
+        dovecot.i_info("mfb-lua-passdb: token accepted for " .. tostring(req.user))
+        return dovecot.auth.PASSDB_RESULT_OK, {{}}
+    end
+    if status == 404 then
+        -- Unknown token, or a token belonging to another user: fall through.
+        return dovecot.auth.PASSDB_RESULT_NEXT, nil
+    end
+    if status == 401 then
+        dovecot.i_info("mfb-lua-passdb: token rejected for " .. tostring(req.user))
+        return dovecot.auth.PASSDB_RESULT_PASSWORD_MISMATCH, nil
+    end
+
+    dovecot.i_error("mfb-lua-passdb: API returned status " .. tostring(status))
+    return dovecot.auth.PASSDB_RESULT_INTERNAL_FAILURE, nil
+end
+"""
+
+
 # ---------------------------------------------------------------------------
 # Webmail (Roundcube) template
 # ---------------------------------------------------------------------------
@@ -351,7 +452,7 @@ $config['use_subscriptions'] = false;
 $config['check_all_folders'] = true;
 $config['disabled_actions'] = ['mail.compose'];
 // Blank trash = delete directly (flag+expunge). Account namespaces are
-// read-only (no Trash reachable) and the writable Staging/ namespace is a
+// read-only (no Trash reachable) and the writable Staging mailbox is a
 // curation surface — direct deletion there is exactly the intended gesture.
 $config['trash_mbox'] = '';
 $config['search_mods'] = [
@@ -372,8 +473,13 @@ _DOVECOT_FILES: list[tuple[str, Any]] = [
     ("mfb-mail.conf", None),
     ("mfb-acl.conf", _dovecot_acl_conf),
     ("mfb-fts.conf", None),
-    ("mfb-auth.conf", None),
+    # The lua files must be written BEFORE mfb-auth.conf: that file's
+    # passdb/userdb blocks reference them via lua_file, and a Dovecot start
+    # or reload landing between the two would hit a config parse error on a
+    # missing file.
     ("mfb-lua-userdb.lua", None),
+    ("mfb-lua-passdb.lua", None),
+    ("mfb-auth.conf", None),
 ]
 
 
@@ -431,6 +537,8 @@ def generate_dovecot_config(settings: Any) -> list[Path]:
             content = _dovecot_auth_conf(settings)
         elif rel_path == "mfb-lua-userdb.lua":
             content = _dovecot_lua_userdb(settings)
+        elif rel_path == "mfb-lua-passdb.lua":
+            content = _dovecot_lua_passdb(settings)
         else:
             continue  # pragma: no cover
 

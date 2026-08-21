@@ -30,3 +30,27 @@ def test_encrypt_decrypt_with_different_keys():
         raise AssertionError("Should have raised an exception")
     except Exception:
         pass
+
+
+def test_hash_token_is_deterministic_and_keyed():
+    from mailfallback.security import hash_token
+
+    a = hash_token("s3cret", "key-one")
+    b = hash_token("s3cret", "key-one")
+    c = hash_token("s3cret", "key-two")
+
+    assert a == b
+    assert a != c
+    assert len(a) == 64  # sha256 hex
+    assert "s3cret" not in a
+
+
+def test_verify_token_accepts_the_secret_and_rejects_others():
+    from mailfallback.security import hash_token, verify_token
+
+    hashed = hash_token("s3cret", "key-one")
+
+    assert verify_token("s3cret", hashed, "key-one") is True
+    assert verify_token("wrong", hashed, "key-one") is False
+    # A right secret under the wrong server key must not authenticate.
+    assert verify_token("s3cret", hashed, "key-two") is False

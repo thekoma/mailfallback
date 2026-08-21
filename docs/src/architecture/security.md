@@ -147,12 +147,19 @@ default — a logged-in IMAP user (Roundcube or any other client against Dovecot
 cannot delete, modify, or add to a synced mailbox's replica.
 
 !!! note "Staging is the one deliberate exception"
-    The generated ACL file also grants the per-user `Staging` namespace broader
+    The generated ACL file also grants the plain `Staging` mailbox broader
     rights (`lrwstie`: lookup/read/write-flags/write-seen/write-deleted/insert/expunge).
-    `Staging` is the restore workflow's curation surface — where a user reviews
-    and deletes-before-push a set of recovered messages prior to pushing them to
-    a live account — and is never populated by mbsync or included in the
-    always-on local backup semantics. Every other namespace stays `lrs`-only.
+    `Staging` lives inside the root namespace (`{home}/root-inbox/Staging`) rather
+    than in a namespace of its own, because Dovecot's ACL `mailbox` filters match
+    the namespace-INTERNAL mailbox name with the namespace prefix stripped — behind
+    a dedicated namespace the mailbox was seen by the ACL as `INBOX`, so the filter
+    never matched. `Staging` is the restore workflow's curation surface — where a
+    user reviews and deletes-before-push a set of recovered messages prior to
+    pushing them to a live account — and is never populated by mbsync or included
+    in the always-on local backup semantics. `acl_defaults_from_inbox = yes` makes
+    mailboxes without an explicit ACL entry default to INBOX's `lrs` rather than
+    full owner rights, closing a hole where a client could otherwise CREATE a
+    top-level mailbox it could never delete. Every other mailbox stays `lrs`-only.
 
 mbsync is unaffected by any of this: it writes to the Maildir filesystem
 directly on the host, bypassing Dovecot and its ACL layer entirely. The ACL only

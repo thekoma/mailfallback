@@ -360,3 +360,152 @@ def test_userdb_staging_only_user_gets_no_namespaces(client, db_session, default
     resp = client.get("/api/internal/dovecot/userdb/alice", headers=HEADERS)
     assert resp.status_code == 200
     assert resp.json()["namespaces"] == []
+
+
+def _make_token(db_session, user, scopes=None):
+    from mailfallback.services import app_credential_service as svc
+
+    _, token = svc.create_credential(
+        db_session, user, name="agent", scopes=scopes or [svc.SCOPE_IMAP]
+    )
+    return token
+
+
+def test_passdb_accepts_a_valid_token(client, db_session, default_store):
+    user = _create_user(db_session, default_store)
+    token = _make_token(db_session, user)
+
+    resp = client.post(
+        "/api/internal/dovecot/passdb",
+        json={"username": "alice", "password": token, "protocol": "imap"},
+        headers=HEADERS,
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+
+
+def test_passdb_requires_the_api_key(client, db_session, default_store):
+    user = _create_user(db_session, default_store)
+    token = _make_token(db_session, user)
+
+    resp = client.post(
+        "/api/internal/dovecot/passdb",
+        json={"username": "alice", "password": token, "protocol": "imap"},
+    )
+    assert resp.status_code == 401
+
+
+def test_passdb_returns_404_for_a_plain_password(client, db_session, default_store):
+    """404 tells the Lua passdb to return NEXT so the SQL passdb can try."""
+    _create_user(db_session, default_store)
+
+    resp = client.post(
+        "/api/internal/dovecot/passdb",
+        json={"username": "alice", "password": "password", "protocol": "imap"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 404
+
+
+def test_passdb_returns_404_for_an_unknown_prefix(client, db_session, default_store):
+    _create_user(db_session, default_store)
+
+    resp = client.post(
+        "/api/internal/dovecot/passdb",
+        json={"username": "alice", "password": "mfb_nope_secret", "protocol": "imap"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 404
+
+
+def test_passdb_returns_404_when_the_token_belongs_to_another_user(
+    client, db_session, default_store
+):
+    """A valid token presented for a different username is unknown, not a
+    mismatch: 404 (not 401) is what makes the Lua passdb fall through to the
+    SQL passdb, and it must not reveal that the token's prefix exists."""
+    owner = _create_user(db_session, default_store, username="alice")
+    token = _make_token(db_session, owner)
+    _create_user(db_session, default_store, username="bob")
+
+    resp = client.post(
+        "/api/internal/dovecot/passdb",
+        json={"username": "bob", "password": token, "protocol": "imap"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 404
+
+
+def test_passdb_returns_401_for_a_wrong_secret(client, db_session, default_store):
+    from mailfallback.services import app_credential_service as svc
+
+    user = _create_user(db_session, default_store)
+    cred, _ = svc.create_credential(db_session, user, name="a", scopes=[svc.SCOPE_IMAP])
+
+    resp = client.post(
+        "/api/internal/dovecot/passdb",
+        json={
+            "username": "alice",
+            "password": f"mfb_{cred.token_prefix}_wrong",
+            "protocol": "imap",
+        },
+        headers=HEADERS,
+    )
+    assert resp.status_code == 401
+
+
+def test_passdb_returns_401_when_the_imap_scope_is_missing(client, db_session, default_store):
+    from mailfallback.services import app_credential_service as svc
+
+    user = _create_user(db_session, default_store)
+    token = _make_token(db_session, user, scopes=[svc.SCOPE_MAIL_READ])
+
+    resp = client.post(
+        "/api/internal/dovecot/passdb",
+        json={"username": "alice", "password": token, "protocol": "imap"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 401
+
+
+def test_passdb_records_usage_on_success(client, db_session, default_store):
+    from mailfallback.models import AppCredential
+
+    user = _create_user(db_session, default_store)
+    token = _make_token(db_session, user)
+
+    client.post(
+        "/api/internal/dovecot/passdb",
+        json={"username": "alice", "password": token, "protocol": "imap"},
+        headers=HEADERS,
+    )
+
+    cred = db_session.query(AppCredential).one()
+    assert cred.last_used_at is not None
+    assert cred.last_used_kind == "imap"
+
+
+def test_passdb_fails_safe_on_an_unrecognized_verify_result(
+    client, db_session, default_store, monkeypatch
+):
+    """An outcome this endpoint doesn't recognize must fail safe (404), not fail shut (401).
+
+    401 is PASSDB_RESULT_PASSWORD_MISMATCH and stops the Lua passdb from
+    falling through to the SQL passdb, so it would break ordinary password
+    logins. If a future VerifyResult member (e.g. a distinct `expired`) ever
+    reaches this endpoint without an explicit branch, it must be denied as a
+    404 -- wrong for the token, but harmless to interactive/webmail login --
+    never as a 401.
+    """
+    from mailfallback.services import app_credential_service as svc
+
+    _create_user(db_session, default_store)
+    monkeypatch.setattr(svc, "verify_credential", lambda *args, **kwargs: ("expired", None))
+
+    resp = client.post(
+        "/api/internal/dovecot/passdb",
+        json={"username": "alice", "password": "irrelevant", "protocol": "imap"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 404
