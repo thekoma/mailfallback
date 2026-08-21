@@ -315,7 +315,7 @@
             <label for="scope_{{ loop.index }}">
                 <input type="checkbox" id="scope_{{ loop.index }}" name="scopes" value="{{ scope }}"
                        {% if scope == 'imap' %}checked{% endif %}>
-                <code>{{ scope }}</code>
+                <code>{{ scope }}</code>{% if scope in ('mail:read', 'sync:trigger') %} <span class="text-muted text-small">(not usable yet)</span>{% endif %}
             </label>
             {% endfor %}
         </fieldset>

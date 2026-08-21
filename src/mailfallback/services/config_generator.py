@@ -448,7 +448,7 @@ $config['use_subscriptions'] = false;
 $config['check_all_folders'] = true;
 $config['disabled_actions'] = ['mail.compose'];
 // Blank trash = delete directly (flag+expunge). Account namespaces are
-// read-only (no Trash reachable) and the writable Staging/ namespace is a
+// read-only (no Trash reachable) and the writable Staging mailbox is a
 // curation surface — direct deletion there is exactly the intended gesture.
 $config['trash_mbox'] = '';
 $config['search_mods'] = [

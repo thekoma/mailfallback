@@ -54,6 +54,7 @@ src/mailfallback/
 │   ├── s3_probe.py           # boto3 connection probe + bucket helpers (no restic side effects)
 │   ├── repo_inventory.py     # List/classify restic prefixes in a Repository (orphan detection)
 │   ├── config_backup_service.py # Encrypted full-config export/import + scheduled backup runner
+│   ├── app_credential_service.py # Per-user access token lifecycle: create/list/revoke + verify_credential()
 │   └── oauth2.py             # Google + Microsoft OAuth2 token management
 ├── templates/                # Jinja2 HTML templates
 └── static/                   # CSS + JS
@@ -157,6 +158,7 @@ Uses **UUID-based paths** with **LAYOUT=fs** and **SubFolders Verbatim**. Folder
 - **StoreMigration**: Per-account or per-user-home migration. `account_id` set = maildir migration, `user_id` set = dovecot-home migration. Status phases (pending/copying/verifying/cleaning/completed/failed), crash recovery on startup
 - **Store deletion**: Blocked when accounts or user homes still on the store — must drain first via `get_store_contents()`
 - **Orphan detection**: `store_service.detect_orphans()` finds UUID directories on disk not matching any account in the database
+- **AppCredential (migration 028)**: Per-user access tokens, wire format `mfb_<prefix>_<secret>` — `token_prefix` is the indexed lookup key, `secret_hash` is a keyed-HMAC of the secret (keyed to `MAILFALLBACK_SECRET_KEY`, so rotating that key invalidates every existing token). Comma-separated `scopes` ∈ `imap` | `mail:read` | `sync:trigger` (`mail:read` and `sync:trigger` have no consumer until phase 2). Carries expiry, revocation, and `last_used_at`/`last_used_kind`. Excluded from the encrypted config export (`config_backup_service._EXPORT_TABLES`), consistent with notification channels
 
 ## UI Architecture
 
@@ -186,9 +188,10 @@ Uses **UUID-based paths** with **LAYOUT=fs** and **SubFolders Verbatim**. Folder
 - Login blocked during migration (`migrating = false` in SQL WHERE clause)
 - SSL disabled by default (`mfb-ssl.conf: ssl = no`); enable by mounting certs and overriding
 - doveadm HTTP API on port 8080 for stats collection and reload commands
-- **Lua userdb**: `mfb-lua-userdb.lua` calls MFB's internal API (`GET /api/internal/dovecot/userdb/{username}`) at login. Returns dynamic namespace fields per account. Uses `dovecot.http.client` + `require "json"`. Passdb stays SQL.
+- **Lua userdb**: `mfb-lua-userdb.lua` calls MFB's internal API (`GET /api/internal/dovecot/userdb/{username}`) at login. Returns dynamic namespace fields per account. Uses `dovecot.http.client` + `require "json"`.
+- **Lua passdb**: `mfb-lua-passdb.lua` is generated and sits BEFORE `passdb sql` (both written before `mfb-auth.conf`, which references them via `lua_file` — see Minor 1 ordering note in `config_generator.py`). It returns `PASSDB_RESULT_NEXT` without any HTTP call unless the password starts with `mfb_`, so ordinary password logins are unaffected; otherwise it POSTs to `/api/internal/dovecot/passdb`, whose status code IS the contract: 200 OK, 404 NEXT (falls through to SQL passdb), 401 MISMATCH, anything else INTERNAL_FAILURE.
 - **Dynamic namespaces**: Each account becomes a Dovecot namespace. First account = inbox namespace (no prefix). Others get `"Name (email)/"` prefix. MFB is the control plane for IMAP visibility.
-- **ACL read-only**: `acl_driver = vfile`, `acl_globals_only = yes`. ACLs are settings blocks (dovecot 2.4.3+ removed the global acl file): a global `acl readonly { acl_id = owner; acl_rights = lrs }` makes every mailbox owner-read-only (incl. dynamic per-account namespaces), and `mailbox Staging` / `mailbox Staging/*` filters grant `lrwstie` on the per-user restore-staging namespace. Blocks delete, expunge, insert, flag changes everywhere except Staging. mbsync writes directly to filesystem — unaffected by ACLs.
+- **ACL read-only**: `acl_driver = vfile`, `acl_globals_only = yes`. ACLs are settings blocks (dovecot 2.4.3+ removed the global acl file): a global `acl readonly { acl_id = owner; acl_rights = lrs }` makes every mailbox owner-read-only (incl. dynamic per-account namespaces), and `mailbox Staging` / `mailbox Staging/*` filters grant `lrwstie` on the plain `Staging` mailbox that lives inside the root namespace (`{home}/root-inbox/Staging` — there is no separate per-user Staging namespace). `acl_defaults_from_inbox = yes` makes defaults for mailboxes without an ACL entry come from INBOX (`lrs`) rather than the private-namespace default of full owner rights, so a client can't CREATE an undeletable top-level mailbox. Non-obvious: Dovecot's `mailbox` ACL filters match the namespace-INTERNAL mailbox name with the namespace prefix stripped — this is why `Staging` had to move inside the root namespace rather than living in its own. Blocks delete, expunge, insert, flag changes everywhere except Staging. mbsync writes directly to filesystem — unaffected by ACLs.
 
 ## Roundcube Webmail
 
