@@ -8,7 +8,6 @@ themselves live in app_credential_service, so MCP cannot drift away from the
 other two surfaces.
 """
 
-import logging
 from collections.abc import Callable
 
 import anyio
@@ -17,8 +16,6 @@ from sqlalchemy.orm import Session
 
 from mailfallback.db import SessionLocal
 from mailfallback.services import app_credential_service
-
-logger = logging.getLogger(__name__)
 
 
 class MfbTokenVerifier(TokenVerifier):
@@ -61,5 +58,8 @@ class MfbTokenVerifier(TokenVerifier):
                 subject=cred.user.id,
             )
         finally:
-            if self._session_factory is SessionLocal:
-                db.close()
+            # Whoever opens a session owns closing it, regardless of who
+            # supplied the factory: a caller-injected factory (the next
+            # task's request-scoped SessionLocal, or a test's) leaks a
+            # connection per call otherwise.
+            db.close()
