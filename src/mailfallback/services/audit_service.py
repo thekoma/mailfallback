@@ -31,6 +31,8 @@ ACTION_LABELS = {
     "account.suspend": "Suspended account",
     "account.unsuspend": "Unsuspended account",
     "settings.update": "Updated system settings",
+    "token.create": "Created access token",
+    "token.revoke": "Revoked access token",
     "config.export": "Exported configuration",
     "config.import": "Imported configuration",
     "config.restore": "Restored configuration",
