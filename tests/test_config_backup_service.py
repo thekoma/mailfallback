@@ -1,5 +1,6 @@
 """Config backup: export, scrypt+Fernet envelope, import round-trip."""
 
+import datetime
 from unittest.mock import patch
 
 import pytest
@@ -44,6 +45,9 @@ def populated(db_session):
         maildir_path="/data/mailboxes/fixed-uuid",
         credentials=_enc("imap-secret"),
         store_id=store.id,
+        # A plain date, as every synced account carries (#226): keeps the
+        # full round-trip tests exercising Date export + coercion.
+        traffic_date=datetime.date(2026, 8, 2),
     )
     db_session.add(acc)
     db_session.flush()
@@ -94,6 +98,60 @@ class TestExport:
         import json
 
         json.dumps(cbs.build_export(db_session))  # enums/datetimes must be converted
+
+    def test_export_serializes_date_columns(self, db_session, populated):
+        """Regression for #226: accounts.traffic_date is a plain date (not a
+        datetime), and json.dumps has no encoder for date. Every real account
+        gets a traffic_date on its first sync, so the nightly config backup
+        failed on any live install."""
+        import json
+
+        populated["account"].traffic_date = datetime.date(2026, 8, 2)
+        db_session.commit()
+
+        data = cbs.build_export(db_session)
+        json.dumps(data)  # must not raise "Object of type date is not JSON serializable"
+        assert data["tables"]["accounts"][0]["traffic_date"] == "2026-08-02"
+
+    def test_coerce_types_restores_date_columns(self):
+        """The import side must coerce a date column's ISO string back to a
+        date. _coerce_types handled sa.DateTime but not sa.Date, so the value
+        stayed a str and the insert would mistype traffic_date."""
+
+        accounts = cbs._table("accounts")
+        out = cbs._coerce_types(accounts, {"traffic_date": "2026-08-02"})
+        assert out["traffic_date"] == datetime.date(2026, 8, 2)
+
+    def test_coerce_types_keeps_datetime_columns_as_datetimes(self):
+        """A DateTime column must still become a datetime, not get truncated to
+        a date by the new Date branch (DateTime is not a subclass of Date)."""
+
+        accounts = cbs._table("accounts")
+        out = cbs._coerce_types(accounts, {"last_sync_at": "2026-08-02T03:04:05+00:00"})
+        assert isinstance(out["last_sync_at"], datetime.datetime)
+        assert out["last_sync_at"].hour == 3
+
+
+class TestRunConfigBackupWithDates:
+    def test_run_config_backup_succeeds_with_a_date_valued_account(self, db_session, populated):
+        """End-to-end reproduction of #226: the nightly job logged
+        'Config backup failed for <repo>: Object of type date is not JSON
+        serializable'. build_export -> json.dumps inside encrypt_export is
+        where it died; the fixture account carries a traffic_date."""
+        repo = populated["repo"]
+        repo.config_backup_enabled = True
+        repo.config_backup_passphrase = _enc("strong-passphrase")
+        db_session.commit()
+
+        with patch("mailfallback.services.config_backup_service.restic_service") as mock_restic:
+            mock_restic.init_repo.return_value = True
+            mock_restic.run_backup.return_value = {"message_type": "summary"}
+            mock_restic.apply_retention.return_value = {"pruned": True}
+            result = cbs.run_config_backup(db_session, repo)
+
+        assert result["ok"] is True, result
+        assert repo.last_config_backup_status == "ok"
+        assert repo.last_config_backup_error is None
 
 
 class TestEnvelope:
