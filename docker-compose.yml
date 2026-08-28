@@ -46,7 +46,7 @@ services:
 
   dovecot:
     # pinned to latest stable; ACL is generated as settings blocks (2.4.3+ removed the global acl file)
-    image: dovecot/dovecot:2.4.4
+    image: dovecot/dovecot:2.4.5
     restart: unless-stopped
     volumes:
       - dovecot_confd:/etc/dovecot/conf.d:ro
