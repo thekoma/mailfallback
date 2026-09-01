@@ -43,14 +43,14 @@ jobs:
         run: touch CHANGELOG.md
 
       - name: Generate changelog
-        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4
+        uses: orhun/git-cliff-action@3d96a18cc4ec17e9dc69ddcc424ccafaf1f78ce2 # v4
         with:
           config: cliff.toml
           args: --unreleased --tag ${{ steps.ver.outputs.version }} --prepend CHANGELOG.md
 
       - name: Release-notes section for PR body
         id: notes
-        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4
+        uses: orhun/git-cliff-action@3d96a18cc4ec17e9dc69ddcc424ccafaf1f78ce2 # v4
         with:
           config: cliff.toml
           args: --unreleased --tag ${{ steps.ver.outputs.version }} --strip all
