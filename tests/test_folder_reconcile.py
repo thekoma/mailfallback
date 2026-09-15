@@ -132,7 +132,29 @@ def test_a_second_quarantine_in_the_same_minute_gets_a_suffix(tmp_path):
         fr.quarantine_folder(str(tmp_path), "push-dixie", WHEN)
 
     container = tmp_path / "Removed from Source"
-    assert sorted(p.name for p in container.iterdir()) == [
+    assert sorted(p.name for p in container.glob("push-dixie (*)")) == [
         "push-dixie (2026-09-15 1430)",
         "push-dixie (2026-09-15 1430) (2)",
     ]
+
+
+def test_the_container_gets_a_readme_explaining_itself(tmp_path):
+    (tmp_path / "push-dixie" / "cur").mkdir(parents=True)
+    (tmp_path / "push-dixie" / ".mbsyncstate").write_text("x")
+
+    fr.quarantine_folder(str(tmp_path), "push-dixie", WHEN)
+
+    new = tmp_path / "Removed from Source" / "new"
+    bodies = [p.read_text() for p in new.iterdir()]
+    assert len(bodies) == 1
+    assert "no longer synced" in bodies[0]
+    assert "Subject:" in bodies[0]
+
+
+def test_the_readme_is_written_once(tmp_path):
+    for folder in ("a", "b"):
+        (tmp_path / folder / "cur").mkdir(parents=True)
+        (tmp_path / folder / ".mbsyncstate").write_text("x")
+        fr.quarantine_folder(str(tmp_path), folder, WHEN)
+
+    assert len(list((tmp_path / "Removed from Source" / "new").iterdir())) == 1

@@ -10,11 +10,16 @@ import logging
 import os
 import re
 import shutil
+import socket
+import time
 from datetime import datetime
+from email.utils import formatdate
 
 logger = logging.getLogger(__name__)
 
 REMOVED_CONTAINER = "Removed from Source"
+
+_README_TAG = "container-readme"
 
 # "{folder} (YYYY-MM-DD HHMM)", with an optional " (2)" collision suffix.
 _QUARANTINED_RE = re.compile(r"^(?P<name>.+) \(\d{4}-\d{2}-\d{2} \d{4}\)(?: \(\d+\))?$")
@@ -116,6 +121,54 @@ def local_synced_folders(maildir_path: str) -> set[str]:
     return found
 
 
+def write_container_readme(maildir_path: str) -> None:
+    """Drop a one-time explanatory message into the container's own inbox.
+
+    Whoever opens "Removed from Source" in webmail otherwise finds a folder
+    of dated folders with no clue what put them there. Idempotent: a marker
+    in the filename, not the timestamp, is what's checked, since a folder
+    landing in the container twice in the same minute must not double this up.
+
+    No `mailfallback` imports here on purpose (see module docstring), so this
+    replicates the Maildir-write shape of `user_service.create_welcome_email`
+    with the standard library instead of reusing it.
+    """
+    container = os.path.join(maildir_path.rstrip("/"), REMOVED_CONTAINER)
+    new_dir = os.path.join(container, "new")
+    for sub in ("cur", "new", "tmp"):
+        os.makedirs(os.path.join(container, sub), exist_ok=True)
+
+    if any(f".{_README_TAG}." in name for name in os.listdir(new_dir)):
+        return
+
+    timestamp = int(time.time())
+    hostname = socket.gethostname()
+    filename = f"{timestamp}.{_README_TAG}.{hostname}:2,"
+
+    msg = f"""\
+From: MailFallBack <noreply@mailfallback.local>
+To: undisclosed-recipients:;
+Subject: About this folder
+Date: {formatdate(localtime=True)}
+Message-ID: <{_README_TAG}-{timestamp}@mailfallback.local>
+
+Folders in here were removed from the Source and are no longer synced.
+
+MailFallBack keeps the local backup copy it already had. The messages are
+intact and searchable, and the date in each folder's name is when it
+stopped being synced.
+
+Nothing here is sent back to the Source. Delete a folder by hand when you
+no longer want the copy; if the folder comes back at the Source, it is
+synced again as a new folder, and this copy is left untouched.
+"""
+
+    fd = os.open(os.path.join(new_dir, filename), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(msg)
+    logger.info("Wrote README for the removed-folder container: %s", container)
+
+
 def quarantine_folder(maildir_path: str, folder: str, when: datetime) -> str | None:
     """Move a removed folder into the container. Returns the destination.
 
@@ -138,6 +191,7 @@ def quarantine_folder(maildir_path: str, folder: str, when: datetime) -> str | N
         dest = f"{dest} ({n})"
 
     os.makedirs(os.path.dirname(dest), exist_ok=True)
+    write_container_readme(maildir_path)
     shutil.move(source, dest)
     for leftover in os.listdir(dest):
         if leftover.startswith(".mbsyncstate"):
