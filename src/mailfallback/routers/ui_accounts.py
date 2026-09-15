@@ -479,7 +479,11 @@ def _list_removed_folders(maildir_path: str | None) -> list[dict]:
                 "path": entry,
             }
         )
-    removed.sort(key=lambda r: r["when"], reverse=True)
+    # Tie-break on `path` too: two folders quarantined in the same minute
+    # (a same-minute collision, " (2)" suffix) share a `when`, and relying on
+    # os.listdir's unspecified order for those would make the result flaky
+    # across filesystems. Sorting on the full path keeps it deterministic.
+    removed.sort(key=lambda r: (r["when"], r["path"]), reverse=True)
     return removed
 
 
