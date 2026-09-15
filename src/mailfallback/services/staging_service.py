@@ -51,6 +51,10 @@ class StagingQuotaExceededError(Exception):
     pass
 
 
+class StagingAdoptionError(Exception):
+    """A pre-#237 staging Maildir could not be moved onto the current name."""
+
+
 def _safe_username(username: str) -> str:
     return sanitize_path_component(username)
 
@@ -120,9 +124,13 @@ def _adopt_pre_rename_staging_dir(user: User) -> None:
         return
     try:
         os.rename(previous, current)
-    except OSError:
-        logger.warning("Could not adopt pre-rename staging dir %s", previous, exc_info=True)
-        return
+    except OSError as e:
+        # Never degrade to "carry on with the new, empty directory". reconcile
+        # drops the rows whose file is missing — that is how a webmail deletion
+        # propagates — so carrying on would delete every row while the files
+        # sit intact under the old name, leaving an empty-looking area and a
+        # pile of orphans. Blocked is recoverable; that is not.
+        raise StagingAdoptionError(f"Could not adopt {previous} -> {current}: {e}") from e
     logger.info("Adopted pre-rename staging dir %s -> %s", previous, current)
 
 
@@ -355,7 +363,13 @@ def reconcile(db: Session, user: User, area: StagingArea) -> int:
     """Drop rows whose file vanished (webmail deletion); recompute bytes_used.
     Filenames are matched by stable prefix — Dovecot renames on flag changes.
     Commits only when something actually changed."""
-    _adopt_pre_rename_staging_dir(user)
+    try:
+        _adopt_pre_rename_staging_dir(user)
+    except StagingAdoptionError:
+        # Read path (the UI polls it): refuse to reconcile rather than 500.
+        # The rows stay as they are — stale beats destroyed.
+        logger.warning("Skipping reconcile for %r: staging adoption failed", user.username)
+        return 0
     sdir = staging_dir(user)
     on_disk: dict[str, str] = {}
     for sub in ("cur", "new"):

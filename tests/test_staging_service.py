@@ -831,3 +831,54 @@ class TestPreRenameStagingAdoption:
         assert adopted == staging_service.staging_dir(staging_user)
         for sub in ("cur", "new", "tmp"):
             assert os.path.isdir(os.path.join(adopted, sub))
+
+
+class TestFailedAdoptionDoesNotDestroyTheIndex:
+    """A rename that fails must block, not degrade.
+
+    reconcile() drops the rows whose file is missing from the staging Maildir
+    — that is how a webmail deletion propagates. If adoption failed and it
+    scanned the new, empty directory anyway, every row would look deleted: the
+    area would report empty and its files, still sitting under the old name,
+    would become orphans. Worse than never migrating.
+    """
+
+    def _fail_rename(self, monkeypatch):
+        def boom(src, dst):
+            raise OSError(18, "Invalid cross-device link")
+
+        monkeypatch.setattr(staging_service.os, "rename", boom)
+
+    def test_reconcile_keeps_the_rows_when_adoption_fails(
+        self, db_session, staging_user, real_store, tmp_path, monkeypatch
+    ):
+        account = _mk_push_account(db_session, real_store, tmp_path, "adopt")
+        _stage_raw(db_session, staging_user, account, "<m@x>", "1.a.h:2,S")
+        area = db_session.query(StagingArea).filter_by(user_id=staging_user.id).one()
+        before_rows = db_session.query(StagingMessage).filter_by(staging_id=area.id).count()
+        before_bytes = area.bytes_used
+        # Move the staged area back under the pre-rename name, then make the
+        # adoption fail on the way forward.
+        os.rename(
+            staging_service.staging_dir(staging_user),
+            staging_service._pre_rename_staging_dir(staging_user),
+        )
+        self._fail_rename(monkeypatch)
+
+        dropped = staging_service.reconcile(db_session, staging_user, area)
+
+        assert dropped == 0
+        assert db_session.query(StagingMessage).filter_by(staging_id=area.id).count() == before_rows
+        assert area.bytes_used == before_bytes
+
+    def test_ensure_staging_dir_refuses_when_adoption_fails(
+        self, db_session, staging_user, monkeypatch
+    ):
+        previous = staging_service._pre_rename_staging_dir(staging_user)
+        os.makedirs(os.path.join(previous, "cur"), exist_ok=True)
+        self._fail_rename(monkeypatch)
+
+        # Writing into the new directory while the area lives under the old
+        # name would split the index across two Maildirs.
+        with pytest.raises(staging_service.StagingAdoptionError):
+            staging_service.ensure_staging_dir(staging_user)
