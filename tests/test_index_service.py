@@ -2,6 +2,7 @@
 
 import os
 import shutil
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -395,3 +396,45 @@ def test_incremental_new_message_inserted_without_touching_others(db_session, ma
     assert rows_after[new_hash][:2] == ("INBOX", new_fn)
     # Every pre-existing row is byte-for-byte unchanged (incl. last_seen_at).
     assert {h: v for h, v in rows_after.items() if h != new_hash} == rows_before
+
+
+# Characterisation, not red-green: these two pin behaviour that already
+# works. The design (#244 spec §7) leans on _walk_maildir being a plain
+# os.walk that never consults mbsync's Patterns, so quarantined mail (moved
+# under "Removed from Source/<name> (<timestamp>)") is indexed exactly like
+# any other folder — if it weren't, it would also fall out of staging and
+# restore. Both are expected to pass on the first run.
+def test_quarantined_mail_is_indexed_under_its_new_folder_path(
+    db_session, maildir_account, tmp_path
+):
+    q = tmp_path / "Removed from Source" / "push-dixie (2026-09-15 1430)" / "cur"
+    q.mkdir(parents=True)
+    (q / "1234567892.M3.host:2,S").write_bytes(
+        b"From: dave@example.com\r\nSubject: Quarantined\r\n"
+        b"Message-Id: <ghi@host>\r\n\r\nstill here"
+    )
+
+    index_service.upsert_message_set(db_session, maildir_account.id)
+
+    msg = db_session.query(MailIndexMessage).filter(MailIndexMessage.subject == "Quarantined").one()
+    assert msg.folder_path == "Removed from Source/push-dixie (2026-09-15 1430)"
+    assert msg.deleted_at is None
+
+
+def test_the_file_behind_a_quarantined_message_can_be_reconstructed(
+    db_session, maildir_account, tmp_path
+):
+    """maildir_folder_bases is how staging and restore turn an index row back
+    into bytes on disk. A container path with spaces and parentheses must
+    survive that round trip."""
+    folder = "Removed from Source/push-dixie (2026-09-15 1430)"
+    (tmp_path / folder / "cur").mkdir(parents=True)
+    (tmp_path / folder / "cur" / "1234567892.M3.host:2,S").write_bytes(
+        b"Subject: Quarantined\r\nMessage-Id: <ghi@host>\r\n\r\nstill here"
+    )
+    index_service.upsert_message_set(db_session, maildir_account.id)
+
+    bases = index_service.maildir_folder_bases(str(tmp_path), folder)
+
+    assert bases == (str(tmp_path / folder),)
+    assert (Path(bases[0]) / "cur" / "1234567892.M3.host:2,S").exists()
