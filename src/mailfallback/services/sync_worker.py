@@ -455,6 +455,78 @@ def _refresh_oauth_token(
 
 _STATUS_MESSAGES_RE = re.compile(r"MESSAGES\s+(\d+)")
 _LIST_NAME_RE = re.compile(r'"([^"]+)"\s*$')
+# The delimiter sits right after the flags: `(\Flags) "<delim>" "<name>"`, or
+# `(\Flags) NIL "<name>"` for a flat namespace. Matched against the flags
+# prefix, which both LIST line shapes (plain bytes and the literal/tuple
+# form) decode into `decoded` before the name is even known.
+_LIST_DELIM_RE = re.compile(r'^\([^)]*\)\s+(?:"([^"]*)"|NIL)')
+
+
+def _list_upstream_folders(
+    account: "Account", password: str | None, access_token: str | None
+) -> set[str]:
+    """Selectable folder names at the Source. Empty set when the LIST fails.
+
+    An empty result must never be read by a caller as "every folder has been
+    deleted" — folder_reconcile.folders_to_quarantine (a later task) treats
+    an empty set as "we learned nothing", not "nothing remains".
+    """
+    from mailfallback.services.imap_check import connect_imap
+
+    username = account.imap_user or account.email_address or account.name
+    conn = connect_imap(
+        account.imap_host,
+        account.imap_port,
+        account.tls_type or "IMAPS",
+        username,
+        access_token or password,
+        auth_method="xoauth2" if access_token else "login",
+    )
+    try:
+        typ, data = conn.list()
+        if typ != "OK" or not data:
+            return set()
+        names: set[str] = set()
+        for line in data:
+            if not line:
+                continue
+            if isinstance(line, tuple):
+                # Literal-encoded LIST entry (review F4a): imaplib yields
+                # (prefix_with_flags, name_bytes) for folder names that
+                # need a literal (e.g. non-ASCII) — str(tuple) would
+                # garble the name and silently drop the folder.
+                decoded = line[0].decode() if isinstance(line[0], bytes) else str(line[0])
+                raw_name = line[1]
+                name = raw_name.decode() if isinstance(raw_name, bytes) else str(raw_name)
+            else:
+                decoded = line.decode() if isinstance(line, bytes) else str(line)
+                match = _LIST_NAME_RE.search(decoded)
+                name = match.group(1) if match else decoded.rsplit(" ", 1)[-1]
+            if "\\Noselect" in decoded:
+                continue
+            delim_match = _LIST_DELIM_RE.match(decoded)
+            delimiter = delim_match.group(1) if delim_match else None
+            # NIL (group(1) stays None) and "/" both mean "nothing to
+            # translate" — mbsync already writes "/"-separated nested
+            # directories on disk (SubFolders Verbatim), which is exactly
+            # what a "/"-delimiter Source like Gmail already reports.
+            if delimiter and delimiter != "/":
+                # A name that already contains "/" on a "."-delimiter
+                # server (e.g. a provider folder literally called
+                # "A/B") would collide ambiguously with a real nested
+                # folder after this translation. Accepted: there is no
+                # way to tell the two apart from the LIST name alone, and
+                # the failure mode is benign — the folder still lands
+                # inside the "Removed from Source" container where the
+                # user can see and recover it, which beats the
+                # alternative of leaving every nested folder on such a
+                # Source permanently misdetected as removed.
+                name = name.replace(delimiter, "/")
+            names.add(name)
+        return names
+    finally:
+        with contextlib.suppress(Exception):
+            conn.logout()
 
 
 def _folder_excluded(name: str, patterns: list[str]) -> bool:
@@ -489,6 +561,20 @@ def _count_upstream_messages(
 
     extra = json.loads(account.extra_config) if account.extra_config else {}
     excludes = excluded_folder_names(extra.get("patterns", "*"))
+    names = _list_upstream_folders(account, password, access_token)
+    if not names:
+        # None means "no denominator could be established" — deliberately
+        # covering BOTH a failed LIST (_list_upstream_folders returns an
+        # empty set by design, see its docstring) AND a LIST that succeeded
+        # but had nothing selectable. Splitting these back apart to return
+        # (0, 0) on the latter would be the more dangerous answer: a
+        # transient LIST failure would then write
+        # initial_sync_total_messages = 0 and poison that account's
+        # progress denominator permanently, where None only degrades this
+        # one job's ETA. The all-\Noselect case is unreachable in practice
+        # (every real IMAP account has a selectable INBOX); a failed LIST
+        # is not.
+        return None
     username = account.imap_user or account.email_address or account.name
     conn = connect_imap(
         account.imap_host,
@@ -499,28 +585,9 @@ def _count_upstream_messages(
         auth_method="xoauth2" if access_token else "login",
     )
     try:
-        typ, data = conn.list()
-        if typ != "OK" or not data:
-            return None
         total = 0
         folders = 0
-        for line in data:
-            if not line:
-                continue
-            if isinstance(line, tuple):
-                # Literal-encoded LIST entry (review F4a): imaplib yields
-                # (prefix_with_flags, name_bytes) for folder names that
-                # need a literal (e.g. non-ASCII) — str(tuple) would
-                # garble the name and silently drop the folder.
-                decoded = line[0].decode() if isinstance(line[0], bytes) else str(line[0])
-                raw_name = line[1]
-                name = raw_name.decode() if isinstance(raw_name, bytes) else str(raw_name)
-            else:
-                decoded = line.decode() if isinstance(line, bytes) else str(line)
-                match = _LIST_NAME_RE.search(decoded)
-                name = match.group(1) if match else decoded.rsplit(" ", 1)[-1]
-            if "\\Noselect" in decoded:
-                continue
+        for name in names:
             if _folder_excluded(name, excludes):
                 continue
             # Included folder — counted whether or not STATUS yields a
@@ -589,6 +656,132 @@ def _read_until_deadline(job_id: str, stdout, deadline_s: float, on_line) -> Non
         if not line:
             return  # EOF
         on_line(line.rstrip() if isinstance(line, str) else line.decode(errors="replace").rstrip())
+
+
+def _run_invocations(job_id, invocations, account, log_file) -> int:
+    """Run each mbsync invocation in order, stopping at the first failure.
+
+    Extracted so the same loop can be re-run after a folder quarantine
+    without duplicating the budget-stop and deadline handling.
+    """
+    result_code = 1
+    for idx, cmd in enumerate(invocations):
+        if idx and job_id in _budget_stops:
+            # The budget tripped between invocations (the stop found
+            # an already-finished proc) — don't start the full pass.
+            break
+        if idx:
+            marker = f"--- mbsync invocation {idx + 1}/{len(invocations)}: full pass ---"
+            _running_logs[job_id].append(marker)
+            if log_file:
+                log_file.write(marker + "\n")
+                log_file.flush()
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        # CURRENT subprocess — stop_sync_job must kill the right one.
+        _running_procs[job_id] = proc
+        # Re-arm the budget enforcer (review F1): if the sampler
+        # tripped in the window between the marker check above and
+        # this registration, its stop hit the already-reaped previous
+        # proc (a no-op) and the once-guard would never fire again —
+        # the new pass would run unbounded past the budget. The
+        # marker is set BEFORE the sampler's stop call, so seeing it
+        # here closes the race completely.
+        # `_killed_signals` needs the same re-arm for the same reason:
+        # a user Stop landing in that window (or during the slow
+        # reconciliation that precedes the retry) also found the
+        # already-reaped proc, so the UI reported the job stopped
+        # while this pass ran on to completion.
+        if job_id in _budget_stops or job_id in _killed_signals:
+            stop_sync_job(job_id)
+
+        def _emit(text):
+            if settings.debug:
+                logger.debug("[mbsync/%s] %s", account.name if account else job_id, text)
+            _running_logs[job_id].append(text)
+            if log_file:
+                log_file.write(text + "\n")
+                log_file.flush()
+
+        _read_until_deadline(job_id, proc.stdout, settings.sync_job_max_runtime_s, _emit)
+        # _read_until_deadline may have returned early (deadline fired
+        # and sent SIGKILL). Use a short timeout so proc.wait() itself
+        # cannot re-wedge after the read loop gave up.
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "mbsync proc for job %s did not exit 30s after read loop ended — force kill",
+                job_id,
+            )
+            with contextlib.suppress(Exception):
+                proc.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired, Exception):
+                proc.wait(timeout=5)
+        result_code = proc.returncode
+        if result_code != 0:
+            break  # an INBOX-pass failure skips the full pass
+    return result_code
+
+
+def _reconcile_removed_folders(
+    job_id: str,
+    db: Session,
+    account: "Account",
+    password: str | None,
+    access_token: str | None,
+) -> list[str]:
+    """Quarantine local folders that no longer exist at the Source.
+
+    Never raises: this runs on a path that is already failing, and a fault
+    here must not replace the real error with its own.
+    """
+    from mailfallback.services import folder_reconcile
+
+    try:
+        remote = _list_upstream_folders(account, password, access_token)
+        local = folder_reconcile.local_synced_folders(account.maildir_path)
+        extra = json.loads(account.extra_config) if account.extra_config else {}
+        excluded = excluded_folder_names(extra.get("patterns", "*"))
+        missing = folder_reconcile.folders_to_quarantine(local, remote, excluded)
+    except folder_reconcile.ProviderAnomaly as exc:
+        logger.error("Refusing to quarantine folders for %s: %s", account.name, exc)
+        # The spec asks for this refusal to be loud. A server log line is not:
+        # it says nothing on the account page and gives the administrator no
+        # reason to wonder why the folders are still there. Appending to the
+        # running log puts it in job.log, which the real-error branch below
+        # copies into account.last_error — the same surfaces every other sync
+        # failure uses.
+        _running_logs.setdefault(job_id, []).append(
+            f'--- No folder was moved to "{folder_reconcile.REMOVED_CONTAINER}": {exc}. '
+            "Losing that many at once points to a problem at the Source rather than "
+            "deliberate deletions. Check the Source, then sync again. ---"
+        )
+        return []
+    except Exception:
+        logger.warning("Folder reconciliation failed for %s", account.name, exc_info=True)
+        return []
+
+    now = datetime.now(UTC)
+    quarantined = []
+    for folder in missing:
+        try:
+            if folder_reconcile.quarantine_folder(account.maildir_path, folder, now):
+                quarantined.append(folder)
+        except OSError:
+            logger.warning("Could not quarantine %s for %s", folder, account.name, exc_info=True)
+    if quarantined:
+        logger.info(
+            "Quarantined %d folder(s) removed from the Source for %s: %s",
+            len(quarantined),
+            account.name,
+            ", ".join(quarantined),
+        )
+    return quarantined
 
 
 def execute_sync_job(db: Session, job_id: str) -> None:
@@ -823,63 +1016,36 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             if log_file_path:
                 log_fd = os.open(log_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                 log_file = os.fdopen(log_fd, "w")
-            for idx, cmd in enumerate(invocations):
-                if idx and job_id in _budget_stops:
-                    # The budget tripped between invocations (the stop found
-                    # an already-finished proc) — don't start the full pass.
-                    break
-                if idx:
-                    marker = f"--- mbsync invocation {idx + 1}/{len(invocations)}: full pass ---"
-                    _running_logs[job_id].append(marker)
-                    if log_file:
-                        log_file.write(marker + "\n")
-                        log_file.flush()
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                )
-                # CURRENT subprocess — stop_sync_job must kill the right one.
-                _running_procs[job_id] = proc
-                # Re-arm the budget enforcer (review F1): if the sampler
-                # tripped in the window between the marker check above and
-                # this registration, its stop hit the already-reaped previous
-                # proc (a no-op) and the once-guard would never fire again —
-                # the new pass would run unbounded past the budget. The
-                # marker is set BEFORE the sampler's stop call, so seeing it
-                # here closes the race completely.
-                if job_id in _budget_stops:
-                    stop_sync_job(job_id)
-
-                def _emit(text):
-                    if settings.debug:
-                        logger.debug("[mbsync/%s] %s", account.name, text)
-                    _running_logs[job_id].append(text)
-                    if log_file:
-                        log_file.write(text + "\n")
-                        log_file.flush()
-
-                _read_until_deadline(job_id, proc.stdout, settings.sync_job_max_runtime_s, _emit)
-                # _read_until_deadline may have returned early (deadline fired
-                # and sent SIGKILL). Use a short timeout so proc.wait() itself
-                # cannot re-wedge after the read loop gave up.
-                try:
-                    proc.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    logger.warning(
-                        "mbsync proc for job %s did not exit 30s after read loop ended"
-                        " — force kill",
-                        job_id,
-                    )
-                    with contextlib.suppress(Exception):
-                        proc.kill()
-                    with contextlib.suppress(subprocess.TimeoutExpired, Exception):
-                        proc.wait(timeout=5)
-                result_code = proc.returncode
-                if result_code != 0:
-                    break  # an INBOX-pass failure skips the full pass
+            result_code = _run_invocations(job_id, invocations, account, log_file)
             result_output = "\n".join(_running_logs.get(job_id, []))
+
+            # classify_failure FIRST. Only a real error reaches the provider
+            # — a throttle or a network blip tells us nothing about which
+            # folders still exist upstream, and LISTing a throttled provider
+            # only adds load at the worst moment.
+            if (
+                result_code != 0
+                and job_id not in _budget_stops
+                and job_id not in _killed_signals
+                and sync_failures.classify_failure(result_output[-4096:], account.provider) is None
+            ):
+                quarantined = _reconcile_removed_folders(
+                    job_id, db, account, password, status_access_token
+                )
+                # Re-read the stop marker: reconciliation is slow (an IMAP
+                # connect + LIST, an os.walk of the account maildir, N
+                # directory renames), so a Stop pressed during it lands after
+                # the guard above was evaluated. Starting a full pass then
+                # would run exactly the work the user cancelled — and book its
+                # bytes into the daily budget — while the UI said "stopped".
+                if quarantined and job_id not in _killed_signals:
+                    _running_logs[job_id].append(
+                        "--- retry after quarantining folders removed from the Source ---"
+                    )
+                    result_code = _run_invocations(job_id, invocations, account, log_file)
+                # Rebuilt either way: a refused mass-quarantine appends its
+                # reason and nothing else, and that must still reach job.log.
+                result_output = "\n".join(_running_logs.get(job_id, []))
         finally:
             # Stop the sampler BEFORE dropping the proc handle: its final
             # flush makes the job-end ledger/progress state accurate.

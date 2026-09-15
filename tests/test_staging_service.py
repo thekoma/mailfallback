@@ -107,6 +107,37 @@ def _mk_indexed_account(
     return acc, row
 
 
+def _mk_account_with_message_in_folder(
+    db_session,
+    store,
+    tmp_path,
+    owner,
+    folder,
+    name="acc-folder",
+    msgid="<m1@x>",
+    filename="100.m1.host:2,S",
+):
+    """Like _mk_indexed_account, but the message lives under an arbitrary
+    sub-folder of the maildir rather than at the top level (INBOX) — used to
+    give a row a real, indexer-derived folder_path instead of a hand-set one.
+    """
+    acc = Account(
+        name=name,
+        imap_host="h",
+        maildir_path=str(tmp_path / f"mail-{name}"),
+        store_id=store.id,
+    )
+    db_session.add(acc)
+    db_session.flush()
+    if owner is not None:
+        acc.owners.append(owner)
+    db_session.commit()
+    _write_maildir_message(os.path.join(acc.maildir_path, folder), filename, _msg(msgid))
+    index_service.upsert_message_set(db_session, acc.id)
+    row = db_session.query(MailIndexMessage).filter_by(account_id=acc.id).one()
+    return acc, row
+
+
 def _make_snapshot_only(db_session, acc, row, filename="100.m1.host:2,S"):
     """Capture the live file's raw bytes, then turn the message snapshot-only:
     live file removed, row marked deleted, repo + policy + snapshot bit wired."""
@@ -882,3 +913,40 @@ class TestFailedAdoptionDoesNotDestroyTheIndex:
         # name would split the index across two Maildirs.
         with pytest.raises(staging_service.StagingAdoptionError):
             staging_service.ensure_staging_dir(staging_user)
+
+
+class TestQuarantinedMessagesRestoreToTheirOriginalFolder:
+    """staging records original_folder verbatim and the push uses it as the
+    destination ON THE PROVIDER. Left alone, restoring a quarantined message
+    to its origin would create a folder literally named
+    "Removed from Source/push-dixie (2026-09-15 1430)" on the user's real
+    mailbox — MFB's own bookkeeping written upstream, synced back, and
+    quarantined in turn if it ever disappeared."""
+
+    def test_original_folder_records_the_pre_quarantine_name(
+        self, db_session, staging_user, real_store, tmp_path
+    ):
+        acc, row = _mk_account_with_message_in_folder(
+            db_session,
+            real_store,
+            tmp_path,
+            staging_user,
+            "Removed from Source/push-dixie (2026-09-15 1430)",
+            name="acc-quarantined",
+        )
+
+        staging_service.add_messages(db_session, staging_user, [(acc.id, row.message_id_hash)])
+
+        msg = db_session.query(StagingMessage).one()
+        assert msg.original_folder == "push-dixie"
+
+    def test_an_ordinary_folder_is_recorded_unchanged(
+        self, db_session, staging_user, real_store, tmp_path
+    ):
+        acc, row = _mk_account_with_message_in_folder(
+            db_session, real_store, tmp_path, staging_user, "Receipt", name="acc-ordinary"
+        )
+
+        staging_service.add_messages(db_session, staging_user, [(acc.id, row.message_id_hash)])
+
+        assert db_session.query(StagingMessage).one().original_folder == "Receipt"

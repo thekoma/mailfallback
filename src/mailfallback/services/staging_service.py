@@ -34,6 +34,7 @@ from mailfallback.models import (
     User,
     UserRole,
 )
+from mailfallback.services.folder_reconcile import original_folder_name
 from mailfallback.services.index_service import maildir_filename_prefix
 from mailfallback.services.search_service import _accessible_account_ids
 from mailfallback.services.store_service import sanitize_path_component
@@ -348,7 +349,10 @@ def add_messages(
                 staging_id=area.id,
                 source_account_id=account.id,
                 message_id_hash=row.message_id_hash,
-                original_folder=row.folder_path,
+                # The pre-quarantine name: the quarantine is MFB's bookkeeping,
+                # not a place the message ever occupied at the Source, and this
+                # value becomes the destination folder on a restore to origin.
+                original_folder=original_folder_name(row.folder_path),
                 staged_filename=fname,
                 size_bytes=len(raw),
             )

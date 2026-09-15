@@ -1534,3 +1534,56 @@ def test_worker_does_not_relabel_externally_closed_job(tmp_path):
     assert account.pause_reason == "interrupted"
     # The account must NOT have been flipped to error by the worker's classification.
     assert account.sync_state != SyncState.error
+
+
+def test_run_invocations_skips_the_full_pass_after_a_failed_inbox_pass(tmp_path):
+    """The extracted loop keeps the inbox-pass-failure rule (the behaviour
+    test_inbox_pass_failure_skips_full_pass asserts end to end)."""
+    job_id = "job-seam-1"
+    sync_worker._running_logs[job_id] = []
+    cmds = []
+
+    def fake_popen(cmd, **kw):
+        cmds.append(cmd)
+        return _proc(["boom"], code=1)
+
+    try:
+        with patch("mailfallback.services.sync_worker.subprocess.Popen", side_effect=fake_popen):
+            code = sync_worker._run_invocations(
+                job_id, [["mbsync", "-c", "x", "inbox"], ["mbsync", "-c", "x", "-a"]], None, None
+            )
+    finally:
+        sync_worker._running_logs.pop(job_id, None)
+        sync_worker._running_procs.pop(job_id, None)
+
+    assert code == 1
+    assert len(cmds) == 1
+
+
+def test_run_invocations_runs_every_invocation_when_each_succeeds(tmp_path):
+    job_id = "job-seam-2"
+    sync_worker._running_logs[job_id] = []
+    cmds = []
+
+    def fake_popen(cmd, **kw):
+        cmds.append(cmd)
+        return _proc(["ok"], code=0)
+
+    try:
+        with patch("mailfallback.services.sync_worker.subprocess.Popen", side_effect=fake_popen):
+            code = sync_worker._run_invocations(
+                job_id, [["mbsync", "a"], ["mbsync", "b"]], None, None
+            )
+        # Read the log INSIDE the try: the finally below pops the entry, so
+        # reading it after would assert against an empty list.
+        logged = "\n".join(sync_worker._running_logs.get(job_id, []))
+    finally:
+        sync_worker._running_logs.pop(job_id, None)
+        sync_worker._running_procs.pop(job_id, None)
+
+    assert code == 0
+    assert len(cmds) == 2
+    # Both runs land in the same job log, separated by the marker that makes
+    # a two-pass job legible to a human reading it.
+    assert "--- mbsync invocation 2/2: full pass ---" in logged
+    assert logged.count("ok") == 2
