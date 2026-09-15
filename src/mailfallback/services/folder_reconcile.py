@@ -24,10 +24,11 @@ def quarantine_name(folder: str, when: datetime) -> str:
     """The folder's name inside the container.
 
     Minute precision, not seconds or a Unix timestamp: this is a name a human
-    reads in webmail. "/" is folded to "-" so a nested provider folder does not
-    grow a tree inside the container.
+    reads in webmail. "/" and ":" are folded to "-" — "/" so a nested provider
+    folder does not grow a tree inside the container, ":" because it separates
+    flags from the filename in Maildir.
     """
-    leaf = folder.replace("/", "-")
+    leaf = folder.replace("/", "-").replace(":", "-")
     return f"{leaf} ({when.strftime('%Y-%m-%d %H%M')})"
 
 

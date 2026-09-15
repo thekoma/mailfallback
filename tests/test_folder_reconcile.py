@@ -28,6 +28,12 @@ def test_a_nested_folder_keeps_only_its_leaf_name():
     assert fr.quarantine_name("[Gmail]/Spam", WHEN) == "[Gmail]-Spam (2026-09-15 1430)"
 
 
+def test_quarantine_name_folds_colons_from_the_folder_name():
+    # ":" separates the flags from the filename in Maildir.
+    # A provider folder like "Junk:2" must become "Junk-2", not keep the colon.
+    assert fr.quarantine_name("Junk:2", WHEN) == "Junk-2 (2026-09-15 1430)"
+
+
 def test_original_folder_name_strips_the_container_and_the_date():
     quarantined = "Removed from Source/push-dixie (2026-09-15 1430)"
     assert fr.original_folder_name(quarantined) == "push-dixie"
