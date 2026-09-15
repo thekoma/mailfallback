@@ -1,6 +1,6 @@
 """Per-user staging area — copy-in, reconcile, quota, lifecycle.
 
-The staging Maildir ({home}/root-inbox/Staging, see staging_dir() below) is
+The staging Maildir ({home}/root-inbox/MFB-Staging, see staging_dir() below) is
 the source of truth for contents: webmail deletions remove files and
 reconcile() drops their rows.
 Rows carry origin (account + folder) for push-to-origin and the byte
@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
+from mailfallback.constants import STAGING_MAILBOX
 from mailfallback.models import (
     Account,
     MailIndexMessage,
@@ -50,12 +51,16 @@ class StagingQuotaExceededError(Exception):
     pass
 
 
+class StagingAdoptionError(Exception):
+    """A pre-#237 staging Maildir could not be moved onto the current name."""
+
+
 def _safe_username(username: str) -> str:
     return sanitize_path_component(username)
 
 
 def staging_dir(user: User) -> str:
-    """{store}/.dovecot-home/{username}/root-inbox/Staging — the "Staging" mailbox.
+    """{store}/.dovecot-home/{username}/root-inbox/MFB-Staging — the staging mailbox.
 
     Single source of truth for the staging Maildir location. It sits INSIDE the
     mfb_root namespace's mail_path ({home}/root-inbox, set by the Lua userdb),
@@ -71,11 +76,21 @@ def staging_dir(user: User) -> str:
       of its mail_path. A Maildir at the namespace root is not a listable
       mailbox at all, so staged messages had no IMAP mailbox to appear in.
 
+    The name is load-bearing too. Because the ACL matcher is namespace-blind, a
+    filter on the plain name "Staging" also matched a *provider* folder a user
+    happened to call Staging, granting expunge and flag rights over real
+    backed-up mail (#237). No filter syntax distinguishes the two, so the
+    defence is a name a provider folder realistically does not carry.
+
     Keep the construction byte-identical to the home the userdb serves (rstrip
     and sanitisation included), or webmail silently shows an empty folder.
     """
+    return f"{_home_root(user)}/root-inbox/{STAGING_MAILBOX}"
+
+
+def _home_root(user: User) -> str:
     store_path = user.store.path.rstrip("/")
-    return f"{store_path}/.dovecot-home/{_safe_username(user.username)}/root-inbox/Staging"
+    return f"{store_path}/.dovecot-home/{_safe_username(user.username)}"
 
 
 def _legacy_staging_dir(user: User) -> str:
@@ -84,8 +99,48 @@ def _legacy_staging_dir(user: User) -> str:
     Areas created before the move left a Maildir here. Nothing reads it; it is
     purged alongside the current one so the move leaves no orphans behind.
     """
-    store_path = user.store.path.rstrip("/")
-    return f"{store_path}/.dovecot-home/{_safe_username(user.username)}/staging"
+    return f"{_home_root(user)}/staging"
+
+
+def _pre_rename_staging_dir(user: User) -> str:
+    """Location before the #237 rename: the same root-inbox mailbox, named
+    "Staging". Adopted on next use if it still holds an area, purged otherwise.
+    """
+    return f"{_home_root(user)}/root-inbox/Staging"
+
+
+def _adopt_pre_rename_staging_dir(user: User) -> None:
+    """Move a pre-#237 staging Maildir onto the new name, once.
+
+    Without this the rename would strand whoever was mid-curation at upgrade
+    time: staging_ttl_minutes is 10080 — seven days — so "it expires on its
+    own" means a week of their staged mail simply not appearing, with the files
+    still sitting on disk. Never overwrites a live area; if both exist the new
+    one wins and the stale one is left to _remove_staging_dir.
+    """
+    current = staging_dir(user)
+    previous = _pre_rename_staging_dir(user)
+    if os.path.isdir(current) or not os.path.isdir(previous):
+        return
+    try:
+        os.rename(previous, current)
+    except OSError as e:
+        # Never degrade to "carry on with the new, empty directory". reconcile
+        # drops the rows whose file is missing — that is how a webmail deletion
+        # propagates — so carrying on would delete every row while the files
+        # sit intact under the old name, leaving an empty-looking area and a
+        # pile of orphans. Blocked is recoverable; that is not.
+        raise StagingAdoptionError(f"Could not adopt {previous} -> {current}: {e}") from e
+    logger.info("Adopted pre-rename staging dir %s -> %s", previous, current)
+
+
+def ensure_staging_dir(user: User) -> str:
+    """The staging Maildir, adopted from its pre-#237 name if needed, created
+    if absent. Every writer goes through here."""
+    _adopt_pre_rename_staging_dir(user)
+    sdir = staging_dir(user)
+    _ensure_maildir(sdir)
+    return sdir
 
 
 def _ensure_maildir(path: str) -> None:
@@ -101,7 +156,7 @@ def _is_expired(area: StagingArea) -> bool:
 
 
 def _remove_staging_dir(user: User) -> None:
-    for sdir in (staging_dir(user), _legacy_staging_dir(user)):
+    for sdir in (staging_dir(user), _pre_rename_staging_dir(user), _legacy_staging_dir(user)):
         if os.path.isdir(sdir):
             shutil.rmtree(sdir, ignore_errors=True)
             if os.path.isdir(sdir):
@@ -267,8 +322,7 @@ def add_messages(
         return {"staged": 0, "skipped": len(items) - failed, "failed": failed}
 
     area = _get_or_create_area(db, user)
-    sdir = staging_dir(user)
-    _ensure_maildir(sdir)
+    sdir = ensure_staging_dir(user)
 
     staged = 0
     now = datetime.now(UTC)
@@ -309,6 +363,13 @@ def reconcile(db: Session, user: User, area: StagingArea) -> int:
     """Drop rows whose file vanished (webmail deletion); recompute bytes_used.
     Filenames are matched by stable prefix — Dovecot renames on flag changes.
     Commits only when something actually changed."""
+    try:
+        _adopt_pre_rename_staging_dir(user)
+    except StagingAdoptionError:
+        # Read path (the UI polls it): refuse to reconcile rather than 500.
+        # The rows stay as they are — stale beats destroyed.
+        logger.warning("Skipping reconcile for %r: staging adoption failed", user.username)
+        return 0
     sdir = staging_dir(user)
     on_disk: dict[str, str] = {}
     for sub in ("cur", "new"):

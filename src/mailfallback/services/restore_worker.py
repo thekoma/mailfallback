@@ -615,7 +615,11 @@ def _execute_staging_push(db, job, target, tgt_password, tgt_auth_method):
     if not requester:
         _fail_job(db, job, "Requesting user no longer exists")
         return
-    sdir = staging_service.staging_dir(requester)
+    # Through ensure_staging_dir, not staging_dir: a pre-#237 area still under
+    # the old name must be adopted before the files are read, or the push
+    # quietly ships nothing. A failed adoption raises and fails the job, which
+    # is the honest outcome.
+    sdir = staging_service.ensure_staging_dir(requester)
     manifest: dict[str, list[str]] = job.selected_uids or {}
     job.total_messages = sum(len(v) for v in manifest.values())
     db.commit()

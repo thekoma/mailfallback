@@ -165,7 +165,7 @@ def test_restore_staging_bar_no_webmail_link_by_default(client, db_session, defa
     resp = client.get("/restore")
 
     assert resp.status_code == 200
-    assert "_mbox=Staging" not in resp.text
+    assert "_mbox=MFB-Staging" not in resp.text
     assert "Open in webmail" not in resp.text
 
 
@@ -185,7 +185,7 @@ def test_restore_staging_bar_webmail_link_when_enabled(
     resp = client.get("/restore")
 
     assert resp.status_code == 200
-    assert "http://localhost:8001?_task=mail&amp;_mbox=Staging" in resp.text
+    assert "http://localhost:8001?_task=mail&amp;_mbox=MFB-Staging" in resp.text
     assert "Open in webmail" in resp.text
     # The pane's webmail ghost keeps x-show — ghost buttons carry no
     # !important display, so x-show works there (measured; the primary-class

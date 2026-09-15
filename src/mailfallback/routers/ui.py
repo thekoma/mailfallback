@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session, selectinload
 
 from mailfallback.config import settings
+from mailfallback.constants import STAGING_MAILBOX
 from mailfallback.dependencies import get_db
 from mailfallback.models import (
     Account,
@@ -161,6 +162,9 @@ templates.env.filters["time_ago_class"] = _time_ago_class
 templates.env.filters["number"] = _number_format
 templates.env.globals["webmail_url"] = settings.webmail_url
 templates.env.globals["webmail_enabled"] = settings.webmail_enabled
+# The webmail deep link has to name the same mailbox the ACL grants writes on
+# and the Maildir is created under; hardcoding it here is how it drifts.
+templates.env.globals["staging_mailbox"] = STAGING_MAILBOX
 templates.env.globals["app_version"] = __version__
 
 # Honest copy per pause reason — chip tooltips + panel headlines.

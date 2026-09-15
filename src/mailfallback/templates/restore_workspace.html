@@ -468,7 +468,7 @@
           x-text="stagingStatus" x-show="stagingStatus" :title="stagingStatus"></span>
     <span class="ws-staging-grow"></span>
     {% if webmail_enabled and webmail_url %}
-    <a class="ws-btn-ghost" href="{{ webmail_url }}?_task=mail&amp;_mbox=Staging"
+    <a class="ws-btn-ghost" href="{{ webmail_url }}?_task=mail&amp;_mbox={{ staging_mailbox }}"
        target="_blank" rel="noopener">Open in webmail</a>
     {% endif %}
     <button class="ws-btn-ghost ws-btn-ghost-danger" @click="emptyStaging()">Empty</button>
