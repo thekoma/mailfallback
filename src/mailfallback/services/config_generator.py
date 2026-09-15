@@ -11,6 +11,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from mailfallback.constants import STAGING_MAILBOX
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,48 +76,52 @@ def _dovecot_acl_conf() -> str:
     # ACL as settings blocks (dovecot 2.4.3+ removed the global acl file).
     # Global: every mailbox is owner read-only (lrs) -- covers the dynamic
     # per-account namespaces from the Lua userdb without enumerating them.
-    # Override: the plain `Staging` mailbox is writable (lrwstie), the
+    # Override: the staging mailbox is writable (lrwstie), the
     # restore-curation surface (delete-before-push in webmail). It lives
     # inside the root namespace rather than a namespace of its own -- these
     # `mailbox` filters match the namespace-INTERNAL name with the namespace
     # prefix stripped, so a dedicated namespace would have been seen as
     # `INBOX` and never matched (see staging_service.staging_dir()).
+    # That same blindness is why the name is STAGING_MAILBOX and not the plain
+    # "Staging": the filter cannot tell the staging mailbox apart from a
+    # provider folder of the same name, and the plain name therefore granted
+    # write rights over real backed-up mail (#237).
     # lrwstie = lookup/read/write-flags/write-seen/write-deleted/insert/expunge
     # -- no create/delete-mailbox/admin.
-    return """\
+    return f"""\
 mail_plugins = acl
 
-protocol imap {
+protocol imap {{
   mail_plugins = acl imap_acl fts fts_flatcurve
-}
+}}
 
 acl_driver = vfile
 acl_globals_only = yes
 # Defaults for mailboxes without an ACL entry come from INBOX (lrs) instead of
 # "owner has every right", which is the private-namespace default. Without this
 # a client can CREATE a top-level mailbox it then cannot delete, even though
-# APPEND and DELETE are correctly denied. The explicit `mailbox Staging` filter
+# APPEND and DELETE are correctly denied. The explicit staging filter
 # below still wins, so the curation surface stays writable.
 acl_defaults_from_inbox = yes
 
-acl readonly {
+acl readonly {{
   acl_id = owner
   acl_rights = lrs
-}
+}}
 
-mailbox Staging {
-  acl staging {
+mailbox {STAGING_MAILBOX} {{
+  acl staging {{
     acl_id = owner
     acl_rights = lrwstie
-  }
-}
+  }}
+}}
 
-mailbox Staging/* {
-  acl staging_sub {
+mailbox {STAGING_MAILBOX}/* {{
+  acl staging_sub {{
     acl_id = owner
     acl_rights = lrwstie
-  }
-}
+  }}
+}}
 """
 
 

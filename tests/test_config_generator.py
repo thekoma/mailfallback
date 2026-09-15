@@ -147,10 +147,19 @@ def test_dovecot_acl_uses_settings_blocks(tmp_path):
     global_rights = re.search(r"acl readonly \{.*?acl_rights = (\w+)", acl_conf, re.DOTALL)
     assert global_rights and global_rights.group(1) == "lrs", "global ACL must be lrs"
     # Staging mailbox blocks grant the writable set (lrwstie).
-    staging_rights = re.search(r"mailbox Staging \{.*?acl_rights = (\w+)", acl_conf, re.DOTALL)
+    staging_rights = re.search(r"mailbox MFB-Staging \{.*?acl_rights = (\w+)", acl_conf, re.DOTALL)
     assert staging_rights and staging_rights.group(1) == "lrwstie", "Staging must be lrwstie"
-    staging_sub = re.search(r"mailbox Staging/\* \{.*?acl_rights = (\w+)", acl_conf, re.DOTALL)
+    staging_sub = re.search(r"mailbox MFB-Staging/\* \{.*?acl_rights = (\w+)", acl_conf, re.DOTALL)
     assert staging_sub and staging_sub.group(1) == "lrwstie", "Staging/* must be lrwstie"
+    # #237: the filter must not be a bare "Staging". The matcher strips the
+    # namespace prefix before matching, so that name also granted lrwstie to a
+    # provider folder a user happened to call Staging — expunge and flag rights
+    # over real backed-up mail. There is no filter syntax that separates the
+    # two, which is why the staging mailbox carries a name a provider folder
+    # realistically cannot.
+    assert not re.search(r"^mailbox Staging[ /]", acl_conf, re.MULTILINE), (
+        "a bare `mailbox Staging` filter also matches a provider folder named Staging"
+    )
 
 
 def test_dovecot_acl_file_not_emitted(tmp_path):

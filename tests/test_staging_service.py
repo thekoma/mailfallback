@@ -737,7 +737,7 @@ class TestUserdbPathContract:
 
         assert resp.status_code == 200
         home = resp.json()["home"]
-        assert staging_service.staging_dir(user) == f"{home}/root-inbox/Staging"
+        assert staging_service.staging_dir(user) == f"{home}/root-inbox/MFB-Staging"
         assert "mario_rossi" in staging_service.staging_dir(user)
 
 
@@ -748,13 +748,20 @@ class TestStagingLocation:
     the namespace prefix is stripped before matching. A mailbox reached as
     "Staging/INBOX" under a "Staging/" prefix is therefore seen by the ACL as
     "INBOX", inherits the global read-only grant, and silently ignores flag
-    changes and expunges. Placing the Maildir at root-inbox/Staging makes the
-    internal name "Staging", which the `mailbox Staging` ACL filter matches, so
-    the curation surface is genuinely writable.
+    changes and expunges. Placing the Maildir in the root namespace makes its
+    internal name match an ACL filter, so the curation surface is writable.
+
+    The name itself is load-bearing (#237): because the matcher is
+    namespace-blind, a filter on "Staging" also matched a *provider* folder a
+    user happened to call Staging, handing out expunge rights over real
+    backed-up mail. "MFB-Staging" is not a name a provider folder realistically
+    carries.
     """
 
     def test_staging_dir_is_a_mailbox_under_root_inbox(self, staging_user, real_store):
-        expected = os.path.join(real_store.path, ".dovecot-home", "mario", "root-inbox", "Staging")
+        expected = os.path.join(
+            real_store.path, ".dovecot-home", "mario", "root-inbox", "MFB-Staging"
+        )
         assert staging_service.staging_dir(staging_user) == expected
 
     def test_remove_staging_dir_also_purges_the_legacy_location(self, staging_user):
@@ -771,3 +778,56 @@ class TestStagingLocation:
 
         assert not os.path.isdir(current)
         assert not os.path.isdir(legacy)
+
+    def test_remove_staging_dir_also_purges_the_pre_rename_location(self, staging_user):
+        """The "Staging" Maildir left by the rename in #237."""
+        pre_rename = staging_service._pre_rename_staging_dir(staging_user)
+        os.makedirs(os.path.join(pre_rename, "cur"), exist_ok=True)
+
+        staging_service._remove_staging_dir(staging_user)
+
+        assert not os.path.isdir(pre_rename)
+
+
+class TestPreRenameStagingAdoption:
+    """The rename must not silently swallow a live staging area.
+
+    staging_ttl_minutes is 10080 — seven days — so "it expires on its own" is
+    not a migration story for someone mid-curation at upgrade time: their
+    staged mail would simply stop appearing, with the files still on disk.
+    """
+
+    def test_adopts_the_pre_rename_maildir(self, staging_user):
+        pre_rename = staging_service._pre_rename_staging_dir(staging_user)
+        os.makedirs(os.path.join(pre_rename, "cur"), exist_ok=True)
+        with open(os.path.join(pre_rename, "cur", "1.curated:2,"), "w") as fh:
+            fh.write("staged")
+
+        adopted = staging_service.ensure_staging_dir(staging_user)
+
+        assert adopted == staging_service.staging_dir(staging_user)
+        assert os.path.isfile(os.path.join(adopted, "cur", "1.curated:2,"))
+        assert not os.path.exists(pre_rename)
+
+    def test_leaves_an_existing_new_maildir_alone(self, staging_user):
+        current = staging_service.staging_dir(staging_user)
+        os.makedirs(os.path.join(current, "cur"), exist_ok=True)
+        with open(os.path.join(current, "cur", "keep:2,"), "w") as fh:
+            fh.write("new")
+        pre_rename = staging_service._pre_rename_staging_dir(staging_user)
+        os.makedirs(os.path.join(pre_rename, "cur"), exist_ok=True)
+        with open(os.path.join(pre_rename, "cur", "old:2,"), "w") as fh:
+            fh.write("old")
+
+        adopted = staging_service.ensure_staging_dir(staging_user)
+
+        # The live area wins; the stale one is left for _remove_staging_dir.
+        assert os.path.isfile(os.path.join(adopted, "cur", "keep:2,"))
+        assert not os.path.exists(os.path.join(adopted, "cur", "old:2,"))
+
+    def test_creates_the_maildir_when_there_is_nothing_to_adopt(self, staging_user):
+        adopted = staging_service.ensure_staging_dir(staging_user)
+
+        assert adopted == staging_service.staging_dir(staging_user)
+        for sub in ("cur", "new", "tmp"):
+            assert os.path.isdir(os.path.join(adopted, sub))

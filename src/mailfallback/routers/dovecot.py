@@ -116,9 +116,9 @@ def userdb_lookup(username: str, db: Session = Depends(get_db)):
             )
 
     # Staging needs no namespace: staging_service.staging_dir() puts the Maildir
-    # at {home}/root-inbox/Staging, inside the mail_path of the mfb_root inbox
+    # at {home}/root-inbox/MFB-Staging, inside the mail_path of the mfb_root inbox
     # namespace the Lua userdb always creates. Dovecot therefore lists it as the
-    # plain mailbox "Staging", which is the only shape the ACL can grant writes
+    # plain mailbox "MFB-Staging", the only shape the ACL can grant writes
     # to -- `mailbox` filters match the namespace-INTERNAL name, so behind a
     # "Staging/" prefix the mailbox read as "INBOX" and stayed read-only.
     # Lifecycle gating moved with it: the mailbox exists exactly while the
