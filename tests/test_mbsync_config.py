@@ -167,3 +167,47 @@ def test_channel_name_matches_generated_channel():
     )
     assert channel_name("Main gMail") == "main_gmail"
     assert f"Channel {channel_name('Main gMail')}" in config
+
+
+# ---------------------------------------------------------------------------
+# Container negation (removed folders, #244)
+# ---------------------------------------------------------------------------
+
+
+def _rc(**kw):
+    return generate_mbsyncrc(
+        account_name="acct",
+        imap_host="imap.example.com",
+        imap_port=993,
+        username="u",
+        auth_type="app_password",
+        maildir_path="/data/mailboxes/acct",
+        password="p",
+        **kw,
+    )
+
+
+def test_the_container_is_negated_by_default():
+    # Verified against isync 1.5.1: without this the container is itself a
+    # local folder the provider does not have, and mbsync fails on it with
+    # "far side box Removed from Source/... cannot be opened".
+    assert 'Patterns * !"Removed from Source/*"' in _rc()
+
+
+def test_the_container_negation_is_appended_to_the_users_patterns():
+    rc = _rc(extra_config='{"patterns": "INBOX Sent"}')
+    assert 'Patterns INBOX Sent !"Removed from Source/*"' in rc
+
+
+def test_the_users_negations_survive():
+    rc = _rc(extra_config='{"patterns": "* !Spam"}')
+    assert 'Patterns * !Spam !"Removed from Source/*"' in rc
+    from mailfallback.services.mbsync_config import excluded_folder_names
+
+    assert "Spam" in excluded_folder_names('* !Spam !"Removed from Source/*"')
+
+
+def test_the_container_is_reported_as_excluded():
+    from mailfallback.services.mbsync_config import excluded_folder_names
+
+    assert "Removed from Source/*" in excluded_folder_names('* !"Removed from Source/*"')

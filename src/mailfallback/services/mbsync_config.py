@@ -1,6 +1,8 @@
 import json
 import re
 
+from mailfallback.services.folder_reconcile import REMOVED_CONTAINER
+
 
 def _sanitize_value(value: str) -> str:
     return re.sub(r"[\n\r\x00-\x1f]", "", str(value)).strip()
@@ -116,7 +118,11 @@ def generate_mbsyncrc(
     sync = extra.get("sync", "Pull")
     create = extra.get("create", "Near")
     expunge = extra.get("expunge", "None")
-    patterns = extra.get("patterns", "*")
+    # The user's value plus MFB's own negation, composed here and never written
+    # back to extra_config — that field is theirs. The negation is not optional:
+    # the container is a local folder the provider does not have, which is the
+    # exact condition that breaks a channel (#244).
+    patterns = f'{extra.get("patterns", "*")} !"{REMOVED_CONTAINER}/*"'
 
     lines.append("")
     lines.append(f"Channel {safe_name}")
