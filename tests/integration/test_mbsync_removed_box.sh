@@ -249,14 +249,25 @@ write_mbsyncrc "$C6/rc" "$C6/far" "$C6/near" '*'
 run_mbsync "$C6/rc"
 echo "  disk layout under near/ after syncing Parent/Child:"
 find "$C6/near" | sed 's/^/    /'
+# The exact relative-path spelling, computed the same way
+# folder_reconcile.local_synced_folders derives it (os.walk + relpath from
+# the account root): a "/"-joined path, never a flat "Parent.Child"-style
+# name. This is what _list_upstream_folders' delimiter normalisation
+# (sync_worker.py) must produce from a "."-delimiter Source's LIST for the
+# two sides to ever match -- pinning it here so a future isync change that
+# altered this spelling would fail loudly instead of silently
+# reintroducing #244 on any dot-delimiter (self-hosted Dovecot/Courier)
+# Source.
+NESTED_REL=$(find "$C6/near" -mindepth 1 -type d -name Child | sed "s|^$C6/near/||")
 if [ "$MB_EXIT" -eq 0 ] \
   && [ -d "$C6/near/Parent" ] \
   && [ -d "$C6/near/Parent/Child" ] \
   && [ "$(count_msgs "$C6/near/Parent")" -eq 1 ] \
-  && [ "$(count_msgs "$C6/near/Parent/Child")" -eq 1 ]; then
-  pass "nested folder becomes a real nested directory Parent/Child/ (with its own cur/new/tmp), not a flat 'Parent.Child'-style name"
+  && [ "$(count_msgs "$C6/near/Parent/Child")" -eq 1 ] \
+  && [ "$NESTED_REL" = "Parent/Child" ]; then
+  pass "nested folder becomes a real nested directory Parent/Child/ (with its own cur/new/tmp), on-disk spelling pinned as '$NESTED_REL', not a flat 'Parent.Child'-style name"
 else
-  fail "case6: exit=$MB_EXIT (see disk layout printed above)" case6
+  fail "case6: exit=$MB_EXIT on_disk_spelling=[$NESTED_REL] (see disk layout printed above)" case6
 fi
 
 echo

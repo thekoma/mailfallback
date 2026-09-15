@@ -206,3 +206,39 @@ def test_a_failed_list_quarantines_nothing(tmp_path):
 
     with patch.object(sync_worker, "_list_upstream_folders", side_effect=OSError("no route")):
         assert sync_worker._reconcile_removed_folders(session, account, "p", None) == []
+
+
+def test_dot_delimiter_nested_folder_is_not_quarantined(tmp_path):
+    """The actual #244-adjacent bug, not just a string-translation check: a
+    "."-delimiter Source (self-hosted Dovecot/Courier both commonly use it)
+    reports a nested folder as "Parent.Child", while SubFolders Verbatim
+    still writes it on disk as real nested directories, Parent/Child.
+    Without delimiter normalisation in _list_upstream_folders, this nested
+    folder never matches its local counterpart and gets quarantined while
+    it still exists upstream — exercised here through the real LIST parsing
+    (mocking imap_check.connect_imap, not _list_upstream_folders itself)."""
+    session = make_session()
+    account, _job = _mk_maildir_account_and_job(session, tmp_path)
+    maildir = tmp_path / "maildir"
+    _mk_folder(maildir, "INBOX")
+    _mk_folder(maildir, "Parent/Child")
+    session.commit()
+
+    lines = [
+        b'(\\HasNoChildren) "." "INBOX"',
+        b'(\\HasNoChildren) "." "Parent.Child"',
+    ]
+
+    class _Conn:
+        def list(self):
+            return "OK", lines
+
+        def logout(self):
+            pass
+
+    with patch("mailfallback.services.imap_check.connect_imap", return_value=_Conn()):
+        quarantined = sync_worker._reconcile_removed_folders(session, account, "p", None)
+
+    assert quarantined == []
+    assert (maildir / "Parent" / "Child").exists()
+    assert not (maildir / "Removed from Source").exists()

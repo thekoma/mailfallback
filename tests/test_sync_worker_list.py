@@ -50,6 +50,45 @@ def test_a_literal_encoded_name_is_decoded_not_stringified():
         assert sync_worker._list_upstream_folders(_account(), "p", None) == {"Fatturè"}
 
 
+def test_dot_delimiter_nested_folder_is_normalised_to_slash():
+    # Self-hosted Dovecot/Courier commonly report "." as the hierarchy
+    # delimiter. mbsync (SubFolders Verbatim) still writes nested folders as
+    # real nested directories on disk, so the LIST name must be translated
+    # to "/" or every nested folder on such a Source reads as removed.
+    lines = [
+        b'(\\HasNoChildren) "." "INBOX"',
+        b'(\\HasNoChildren) "." "Parent.Child"',
+    ]
+    with patch("mailfallback.services.imap_check.connect_imap", return_value=_Conn(lines)):
+        assert sync_worker._list_upstream_folders(_account(), "p", None) == {
+            "INBOX",
+            "Parent/Child",
+        }
+
+
+def test_slash_delimiter_nested_folder_is_unchanged():
+    # Gmail regression guard: a "/" delimiter must be a no-op.
+    lines = [b'(\\HasNoChildren) "/" "Parent/Child"']
+    with patch("mailfallback.services.imap_check.connect_imap", return_value=_Conn(lines)):
+        assert sync_worker._list_upstream_folders(_account(), "p", None) == {"Parent/Child"}
+
+
+def test_dot_delimiter_literal_encoded_name_is_normalised():
+    # The tuple/literal line shape carries the delimiter in its prefix half
+    # (line[0]) just like the plain-bytes shape — must be normalised too.
+    lines = [(b'(\\HasNoChildren) "." {12}', b"Parent.Fattur\xc3\xa8")]
+    with patch("mailfallback.services.imap_check.connect_imap", return_value=_Conn(lines)):
+        assert sync_worker._list_upstream_folders(_account(), "p", None) == {"Parent/Fatturè"}
+
+
+def test_nil_delimiter_does_not_crash_or_mangle_name():
+    # A flat namespace reports NIL as its delimiter — no hierarchy to
+    # translate. Must not raise and must not touch the name.
+    lines = [b'(\\HasNoChildren) NIL "INBOX"']
+    with patch("mailfallback.services.imap_check.connect_imap", return_value=_Conn(lines)):
+        assert sync_worker._list_upstream_folders(_account(), "p", None) == {"INBOX"}
+
+
 def test_a_failed_list_returns_an_empty_set():
     class _Bad(_Conn):
         def list(self):

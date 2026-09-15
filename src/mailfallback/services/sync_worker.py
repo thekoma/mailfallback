@@ -455,6 +455,11 @@ def _refresh_oauth_token(
 
 _STATUS_MESSAGES_RE = re.compile(r"MESSAGES\s+(\d+)")
 _LIST_NAME_RE = re.compile(r'"([^"]+)"\s*$')
+# The delimiter sits right after the flags: `(\Flags) "<delim>" "<name>"`, or
+# `(\Flags) NIL "<name>"` for a flat namespace. Matched against the flags
+# prefix, which both LIST line shapes (plain bytes and the literal/tuple
+# form) decode into `decoded` before the name is even known.
+_LIST_DELIM_RE = re.compile(r'^\([^)]*\)\s+(?:"([^"]*)"|NIL)')
 
 
 def _list_upstream_folders(
@@ -499,6 +504,24 @@ def _list_upstream_folders(
                 name = match.group(1) if match else decoded.rsplit(" ", 1)[-1]
             if "\\Noselect" in decoded:
                 continue
+            delim_match = _LIST_DELIM_RE.match(decoded)
+            delimiter = delim_match.group(1) if delim_match else None
+            # NIL (group(1) stays None) and "/" both mean "nothing to
+            # translate" — mbsync already writes "/"-separated nested
+            # directories on disk (SubFolders Verbatim), which is exactly
+            # what a "/"-delimiter Source like Gmail already reports.
+            if delimiter and delimiter != "/":
+                # A name that already contains "/" on a "."-delimiter
+                # server (e.g. a provider folder literally called
+                # "A/B") would collide ambiguously with a real nested
+                # folder after this translation. Accepted: there is no
+                # way to tell the two apart from the LIST name alone, and
+                # the failure mode is benign — the folder still lands
+                # inside the "Removed from Source" container where the
+                # user can see and recover it, which beats the
+                # alternative of leaving every nested folder on such a
+                # Source permanently misdetected as removed.
+                name = name.replace(delimiter, "/")
             names.add(name)
         return names
     finally:
