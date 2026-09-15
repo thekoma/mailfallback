@@ -19,6 +19,7 @@ from mailfallback.models import (
     User,
     UserRole,
 )
+from mailfallback.services import notification_service as _ns
 from mailfallback.services.account_service import get_accounts_for_user
 from mailfallback.services.user_service import authenticate_user
 from mailfallback.version import __version__
@@ -165,6 +166,9 @@ templates.env.globals["webmail_enabled"] = settings.webmail_enabled
 # The webmail deep link has to name the same mailbox the ACL grants writes on
 # and the Maildir is created under; hardcoding it here is how it drifts.
 templates.env.globals["staging_mailbox"] = STAGING_MAILBOX
+# The subscription checkboxes are built from these; see notification_service.
+templates.env.globals["notification_problem_events"] = list(_ns.PROBLEM_EVENT_OPTIONS)
+templates.env.globals["notification_activity_events"] = list(_ns.ACTIVITY_EVENT_OPTIONS)
 templates.env.globals["app_version"] = __version__
 
 # Honest copy per pause reason — chip tooltips + panel headlines.
@@ -267,6 +271,35 @@ async def login_submit(request: Request, db: Session = Depends(get_db)):
         ip_address=request.client.host if request.client else None,
     )
     return RedirectResponse("/", status_code=303)
+
+
+def _config_backup_attention_items(repositories) -> list[dict]:
+    """Attention entries for a repository whose CONFIGURATION backup failed.
+
+    Mailbox backup failures already reached this panel; config backup failures
+    did not, and lived only inside a button's title tooltip on the admin backup
+    page — which is how one failed every night for 45 days unnoticed (#248).
+
+    Repository-keyed, not account-keyed, so the entry carries its own href: the
+    panel's default link is /accounts/{id} and a repository is not an account.
+    """
+    items: list[dict] = []
+    for repo in repositories:
+        if not repo.config_backup_enabled:
+            continue
+        if repo.last_config_backup_status != "failed":
+            continue
+        items.append(
+            {
+                "id": repo.id,
+                "name": repo.name,
+                "type": "error",
+                "reason": (repo.last_config_backup_error or "Configuration snapshot failed")[:80],
+                "href": "/admin/backup",
+                "config_backup": True,
+            }
+        )
+    return items
 
 
 def _backup_attention_items(accounts, policies) -> list[dict]:
@@ -391,6 +424,12 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
                 db.query(BackupPolicy).filter(BackupPolicy.account_id.in_(account_ids)).all(),
             )
         )
+
+    # Repositories are an admin-level object; a plain user has no page to act on.
+    if user.role.value == "admin":
+        from mailfallback.models import Repository
+
+        attention.extend(_config_backup_attention_items(db.query(Repository).all()))
 
     recent_jobs = []
     if account_ids:

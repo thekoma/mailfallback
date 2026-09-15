@@ -427,3 +427,105 @@ class TestBackupHeartbeat:
 
         assert backup_worker._backup_progress == {}
         assert backup_worker._running_backup_procs == {}
+
+
+class TestBackupFailureNotificationBookkeeping:
+    """backup_failed shares Account.last_notified_state with the sync problems.
+
+    That slot is a single string and only a successful SYNC ever cleared it, so
+    putting a backup event into it needs two things to stay honest: a
+    successful backup has to release its own marker, and the failed state has
+    to be durable before anyone is told about it.
+    """
+
+    def _restic_ok(self, mock_restic):
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.return_value = {"message_type": "summary"}
+        mock_restic.apply_retention.return_value = {"pruned": True}
+        mock_restic.list_snapshots.return_value = []
+
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_a_second_failure_after_a_success_still_notifies(
+        self, mock_restic, db_session, account_backup, account
+    ):
+        from mailfallback.services import notification_service as ns
+
+        sent = []
+        with patch.object(
+            ns,
+            "notify_account_problem",
+            autospec=True,
+            side_effect=lambda *a, **k: sent.append(a[2]),
+        ):
+            mock_restic.init_repo.return_value = True
+            mock_restic.run_backup.side_effect = RuntimeError("disk full")
+            execute_backup(db_session, account_backup.id)
+
+            # notify_account_problem is what writes the marker; it is patched
+            # out here, so set it the way the real call would.
+            account.last_notified_state = "backup_failed"
+            db_session.commit()
+
+            mock_restic.run_backup.side_effect = None
+            self._restic_ok(mock_restic)
+            execute_backup(db_session, account_backup.id)
+
+            mock_restic.run_backup.side_effect = RuntimeError("disk full again")
+            execute_backup(db_session, account_backup.id)
+
+        db_session.refresh(account)
+        assert account.last_notified_state is None or account.last_notified_state != "backup_failed"
+        assert len(sent) == 2, "the failure after a success was suppressed"
+
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_a_successful_backup_leaves_an_unrelated_marker_alone(
+        self, mock_restic, db_session, account_backup, account
+    ):
+        # The slot is shared: clearing it wholesale would swallow the dedup of
+        # a sync problem that is still current.
+        account.last_notified_state = "sync_error"
+        db_session.commit()
+        self._restic_ok(mock_restic)
+
+        execute_backup(db_session, account_backup.id)
+
+        db_session.refresh(account)
+        assert account.last_notified_state == "sync_error"
+
+    @patch("mailfallback.services.backup_worker.restic_service")
+    def test_the_failed_state_is_committed_before_anyone_is_told(
+        self, mock_restic, db_session, account_backup
+    ):
+        """The notifier starts daemon delivery threads. If the commit that
+        records the failure only happens afterwards and then fails, owners get
+        an alert for a failure the database never recorded — and the dedup
+        marker the notifier just wrote is lost with it. The config-backup path
+        already commits first."""
+        from mailfallback.services import notification_service as ns
+
+        commits = {"count": 0, "at_notify": None}
+        real_commit = db_session.commit
+
+        def counting_commit():
+            commits["count"] += 1
+            return real_commit()
+
+        def record(*args, **kwargs):
+            commits["at_notify"] = commits["count"]
+
+        mock_restic.init_repo.return_value = True
+        mock_restic.run_backup.side_effect = RuntimeError("disk full")
+
+        with (
+            patch.object(db_session, "commit", counting_commit),
+            patch.object(ns, "notify_account_problem", autospec=True, side_effect=record),
+        ):
+            execute_backup(db_session, account_backup.id)
+
+        # One commit records the running state before restic runs; the failure
+        # must add its own before the notification goes out.
+        assert commits["at_notify"] is not None, "no notification was sent"
+        assert commits["at_notify"] >= 2, (
+            f"notified after only {commits['at_notify']} commit(s) — the failed "
+            "state was still uncommitted"
+        )

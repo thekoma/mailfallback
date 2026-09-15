@@ -56,20 +56,11 @@
     Each channel is a single Apprise URL.
 </p>
 
-{# (value, short badge label, badge class, full checkbox label) #}
-{% set problem_events = [
-    ("needs_reauth", "Needs re-auth", "badge-warning", "Needs re-authentication"),
-    ("sync_error", "Sync error", "badge-error", "Sync error"),
-    ("sync_paused", "Paused", "badge-disabled", "Sync paused (budget / throttle)"),
-    ("stale", "Stale", "badge-warning", "Stale (no successful sync for a long time)"),
-] %}
-{% set activity_events = [
-    ("sync_completed", "Sync done", "badge-idle", "Sync completed"),
-    ("initial_sync_completed", "First backup", "badge-idle", "Initial sync completed"),
-    ("restore_completed", "Restore done", "badge-idle", "Restore completed"),
-    ("backup_completed", "Backup done", "badge-idle", "Backup completed"),
-    ("account_added", "Account added", "badge-admin", "Account added"),
-] %}
+{# (value, short badge label, badge class, full checkbox label) — from
+   notification_service, never a second copy: a key that exists in the service
+   but not here has no checkbox, so nobody can subscribe to it. #}
+{% set problem_events = notification_problem_events %}
+{% set activity_events = notification_activity_events %}
 {% set event_options = problem_events + activity_events %}
 
 {% if channels %}

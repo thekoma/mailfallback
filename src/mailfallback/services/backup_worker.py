@@ -72,6 +72,30 @@ def _close_job(job: BackupJob, db: Session, *, failure_kind: str, marker: str) -
         policy.last_error = marker
 
 
+def _notify_backup_failed(db: Session, account, error: str) -> None:
+    """Tell the mailbox owners their off-site backup broke. Never raises.
+
+    Mailbox backups emitted nothing at all, in either direction — the only
+    backup notification in the codebase fired on config-backup *success*
+    (#249). A backup nobody is told about is discovered when it is needed.
+    """
+    try:
+        from mailfallback.services import notification_service
+
+        # notify_account_problem takes no details payload, and it dedupes on
+        # account.last_notified_state — one alert per entry into this state,
+        # the same contract sync_error already has.
+        notification_service.notify_account_problem(
+            db,
+            account,
+            "backup_failed",
+            f"Snapshot failed: {account.name}",
+            error[:500],
+        )
+    except Exception:
+        logger.warning("Failed to send backup_failed notification", exc_info=True)
+
+
 def recover_zombie_backup_jobs(db: Session) -> int:
     """Boot-time crash recovery for off-site backups.
 
@@ -277,6 +301,13 @@ def execute_backup(db: Session, account_backup_id: str, source: str = "schedule"
         backup.last_backup_at = success_at
         backup.last_successful_run_at = success_at
         backup.last_error = None
+        # Release our own dedup marker, and only ours. Account.last_notified_state
+        # is one shared slot across every problem event, so clearing it wholesale
+        # would swallow the dedup of a sync problem that is still current —
+        # while leaving it set makes a fail/success/fail sequence silent from
+        # the second failure on.
+        if account.last_notified_state == "backup_failed":
+            account.last_notified_state = None
 
         job.status = JobStatus.completed
         job.completed_at = success_at
@@ -314,6 +345,24 @@ def execute_backup(db: Session, account_backup_id: str, source: str = "schedule"
             job.failure_kind = "error"
             job.log = str(e)
         logger.error("Backup failed for account %s: %s", account.id, e)
+        # Commit BEFORE notifying, as the config-backup path already does.
+        # notify_account_problem starts daemon delivery threads and writes the
+        # dedup marker; if the only commit were the one in `finally` and it
+        # failed, owners would hold an alert for a failure the database never
+        # recorded, with the marker lost alongside it.
+        try:
+            db.commit()
+        except Exception:
+            # Log rather than swallow, and notify anyway: the backup really did
+            # fail, and saying so is worth more than the bookkeeping. The zombie
+            # sweep reconciles a row left behind by a database that is itself in
+            # trouble.
+            logger.warning(
+                "Could not persist failed backup state for %s before notifying",
+                account.id,
+                exc_info=True,
+            )
+        _notify_backup_failed(db, account, str(e))
 
     finally:
         _backup_progress.pop(job_id, None)

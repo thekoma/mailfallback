@@ -77,11 +77,20 @@
                         <i data-lucide="folder-search" class="icon-md"></i>
                     </button>
                     {% if dest.config_backup_enabled %}
+                    {# The last result was previously readable only by hovering this
+                       button, and looked identical whether it worked or not — which
+                       is how a nightly failure went unseen for 45 days (#248). #}
                     <form method="post" action="/admin/backup/{{ dest.id }}/config-backup" class="inline-form">
-                        <button type="submit" class="icon-btn" title="Store configuration snapshot now{% if dest.last_config_backup_at %} — last: {{ dest.last_config_backup_at | time_ago }} ({{ dest.last_config_backup_status }}){% endif %}">
+                        <button type="submit" class="icon-btn{% if dest.last_config_backup_status == 'failed' %} danger{% endif %}"
+                                title="Store configuration snapshot now{% if dest.last_config_backup_at %} — last: {{ dest.last_config_backup_at | time_ago }} ({{ dest.last_config_backup_status }}){% endif %}">
                             <i data-lucide="file-lock" class="icon-md"></i>
                         </button>
                     </form>
+                    {% if dest.last_config_backup_status == 'failed' %}
+                    <span class="badge badge-error" title="{{ dest.last_config_backup_error }}">
+                        <i data-lucide="alert-circle" class="icon-sm"></i> Configuration snapshot failed
+                    </span>
+                    {% endif %}
                     {% endif %}
                     <form method="post" action="/admin/backup/{{ dest.id }}/delete" class="inline-form"
                         data-confirm="Delete Repository {{ dest.name }}?"

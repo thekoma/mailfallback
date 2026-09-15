@@ -160,10 +160,16 @@
         <span class="badge badge-syncing"><i data-lucide="clock" class="icon-sm"></i></span>
         {% endif %}
         <div class="flex-1">
-            <a href="/accounts/{{ item.id }}"><strong>{{ item.name }}</strong></a>
+            <a href="{{ item.href or '/accounts/' ~ item.id }}"><strong>{{ item.name }}</strong></a>
             <span class="text-small text-muted">— {{ item.reason }}</span>
         </div>
-        {% if item.type == 'error' and item.backup %}
+        {% if item.type == 'error' and item.config_backup %}
+        <form method="post" action="/admin/backup/{{ item.id }}/config-backup">
+            <button type="submit" class="icon-btn primary">
+                <i data-lucide="file-lock" class="icon-sm"></i> Store snapshot now
+            </button>
+        </form>
+        {% elif item.type == 'error' and item.backup %}
         <form method="post" action="/accounts/{{ item.id }}/backup/now">
             <button type="submit" class="icon-btn primary">
                 <i data-lucide="cloud-upload" class="icon-sm"></i> Back up now
