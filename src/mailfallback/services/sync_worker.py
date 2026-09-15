@@ -635,6 +635,71 @@ def _read_until_deadline(job_id: str, stdout, deadline_s: float, on_line) -> Non
         on_line(line.rstrip() if isinstance(line, str) else line.decode(errors="replace").rstrip())
 
 
+def _run_invocations(job_id, invocations, account, log_file) -> int:
+    """Run each mbsync invocation in order, stopping at the first failure.
+
+    Extracted so the same loop can be re-run after a folder quarantine
+    without duplicating the budget-stop and deadline handling.
+    """
+    result_code = 1
+    for idx, cmd in enumerate(invocations):
+        if idx and job_id in _budget_stops:
+            # The budget tripped between invocations (the stop found
+            # an already-finished proc) — don't start the full pass.
+            break
+        if idx:
+            marker = f"--- mbsync invocation {idx + 1}/{len(invocations)}: full pass ---"
+            _running_logs[job_id].append(marker)
+            if log_file:
+                log_file.write(marker + "\n")
+                log_file.flush()
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        # CURRENT subprocess — stop_sync_job must kill the right one.
+        _running_procs[job_id] = proc
+        # Re-arm the budget enforcer (review F1): if the sampler
+        # tripped in the window between the marker check above and
+        # this registration, its stop hit the already-reaped previous
+        # proc (a no-op) and the once-guard would never fire again —
+        # the new pass would run unbounded past the budget. The
+        # marker is set BEFORE the sampler's stop call, so seeing it
+        # here closes the race completely.
+        if job_id in _budget_stops:
+            stop_sync_job(job_id)
+
+        def _emit(text):
+            if settings.debug:
+                logger.debug("[mbsync/%s] %s", account.name if account else job_id, text)
+            _running_logs[job_id].append(text)
+            if log_file:
+                log_file.write(text + "\n")
+                log_file.flush()
+
+        _read_until_deadline(job_id, proc.stdout, settings.sync_job_max_runtime_s, _emit)
+        # _read_until_deadline may have returned early (deadline fired
+        # and sent SIGKILL). Use a short timeout so proc.wait() itself
+        # cannot re-wedge after the read loop gave up.
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "mbsync proc for job %s did not exit 30s after read loop ended — force kill",
+                job_id,
+            )
+            with contextlib.suppress(Exception):
+                proc.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired, Exception):
+                proc.wait(timeout=5)
+        result_code = proc.returncode
+        if result_code != 0:
+            break  # an INBOX-pass failure skips the full pass
+    return result_code
+
+
 def execute_sync_job(db: Session, job_id: str) -> None:
     job = db.query(SyncJob).filter(SyncJob.id == job_id).first()
     if not job:
@@ -867,62 +932,7 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             if log_file_path:
                 log_fd = os.open(log_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                 log_file = os.fdopen(log_fd, "w")
-            for idx, cmd in enumerate(invocations):
-                if idx and job_id in _budget_stops:
-                    # The budget tripped between invocations (the stop found
-                    # an already-finished proc) — don't start the full pass.
-                    break
-                if idx:
-                    marker = f"--- mbsync invocation {idx + 1}/{len(invocations)}: full pass ---"
-                    _running_logs[job_id].append(marker)
-                    if log_file:
-                        log_file.write(marker + "\n")
-                        log_file.flush()
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                )
-                # CURRENT subprocess — stop_sync_job must kill the right one.
-                _running_procs[job_id] = proc
-                # Re-arm the budget enforcer (review F1): if the sampler
-                # tripped in the window between the marker check above and
-                # this registration, its stop hit the already-reaped previous
-                # proc (a no-op) and the once-guard would never fire again —
-                # the new pass would run unbounded past the budget. The
-                # marker is set BEFORE the sampler's stop call, so seeing it
-                # here closes the race completely.
-                if job_id in _budget_stops:
-                    stop_sync_job(job_id)
-
-                def _emit(text):
-                    if settings.debug:
-                        logger.debug("[mbsync/%s] %s", account.name, text)
-                    _running_logs[job_id].append(text)
-                    if log_file:
-                        log_file.write(text + "\n")
-                        log_file.flush()
-
-                _read_until_deadline(job_id, proc.stdout, settings.sync_job_max_runtime_s, _emit)
-                # _read_until_deadline may have returned early (deadline fired
-                # and sent SIGKILL). Use a short timeout so proc.wait() itself
-                # cannot re-wedge after the read loop gave up.
-                try:
-                    proc.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    logger.warning(
-                        "mbsync proc for job %s did not exit 30s after read loop ended"
-                        " — force kill",
-                        job_id,
-                    )
-                    with contextlib.suppress(Exception):
-                        proc.kill()
-                    with contextlib.suppress(subprocess.TimeoutExpired, Exception):
-                        proc.wait(timeout=5)
-                result_code = proc.returncode
-                if result_code != 0:
-                    break  # an INBOX-pass failure skips the full pass
+            result_code = _run_invocations(job_id, invocations, account, log_file)
             result_output = "\n".join(_running_logs.get(job_id, []))
         finally:
             # Stop the sampler BEFORE dropping the proc handle: its final
