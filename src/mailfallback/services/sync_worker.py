@@ -457,23 +457,6 @@ _STATUS_MESSAGES_RE = re.compile(r"MESSAGES\s+(\d+)")
 _LIST_NAME_RE = re.compile(r'"([^"]+)"\s*$')
 
 
-def connect_imap(*args, **kwargs):
-    """Module-local indirection over `imap_check.connect_imap`.
-
-    `_list_upstream_folders` calls this bare name (a real global on this
-    module) so tests can patch `sync_worker.connect_imap` directly. Every
-    other call site in this module keeps doing its own per-call
-    `from mailfallback.services.imap_check import connect_imap` — this
-    wrapper does the same fresh import on every call, so patches aimed at
-    `imap_check.connect_imap` (the whole rest of this test suite) still
-    reach `_list_upstream_folders` too, whether it's called directly or via
-    `_count_upstream_messages`.
-    """
-    from mailfallback.services.imap_check import connect_imap as _connect_imap
-
-    return _connect_imap(*args, **kwargs)
-
-
 def _list_upstream_folders(
     account: "Account", password: str | None, access_token: str | None
 ) -> set[str]:
@@ -483,6 +466,8 @@ def _list_upstream_folders(
     deleted" — folder_reconcile.folders_to_quarantine (a later task) treats
     an empty set as "we learned nothing", not "nothing remains".
     """
+    from mailfallback.services.imap_check import connect_imap
+
     username = account.imap_user or account.email_address or account.name
     conn = connect_imap(
         account.imap_host,
