@@ -63,3 +63,25 @@ class TestEnsureDefaultStore:
         assert store.id == squatter.id
         assert store.is_default is True
         assert db_session.query(MailStore).count() == 1
+
+    def test_prefers_the_canonical_path_when_both_variants_are_present(self, db_session):
+        # MailStore.path is unique as a raw string, so "/p" and "/p/" can both
+        # exist, and which one an unordered first() returns is the database's
+        # choice. This test cannot go red on SQLite: it resolves IN() with an
+        # index scan over path, and the canonical spelling sorts before its
+        # trailing-slash variant (it is a prefix), so the accident favours the
+        # right answer. Postgres — the only supported backend — may use a
+        # bitmap heap scan and return insertion order instead, which is why the
+        # non-canonical row is inserted first here. The test pins the intent.
+        path = settings.bootstrap_store_path.rstrip("/")
+        slashed = MailStore(name="slashed", path=f"{path}/", is_default=False)
+        db_session.add(slashed)
+        db_session.commit()
+        canonical = MailStore(name="canonical", path=path, is_default=False)
+        db_session.add(canonical)
+        db_session.commit()
+
+        store = ensure_default_store(db_session)
+
+        assert store.id == canonical.id
+        assert db_session.query(MailStore).count() == 2

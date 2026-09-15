@@ -42,7 +42,14 @@ def ensure_default_store(db: Session) -> MailStore:
     if store:
         return store
     path = settings.bootstrap_store_path.rstrip("/")
-    store = db.query(MailStore).filter(MailStore.path.in_((path, f"{path}/"))).first()
+    # Two lookups rather than one IN(): path is unique only as a raw string, so
+    # the canonical and trailing-slash spellings can both exist as rows, and an
+    # unordered first() over both would let the database decide which one the
+    # app adopts at startup. Always prefer the canonical spelling.
+    store = (
+        db.query(MailStore).filter(MailStore.path == path).first()
+        or db.query(MailStore).filter(MailStore.path == f"{path}/").first()
+    )
     if store:
         store.is_default = True
     else:
