@@ -691,7 +691,12 @@ def _run_invocations(job_id, invocations, account, log_file) -> int:
         # the new pass would run unbounded past the budget. The
         # marker is set BEFORE the sampler's stop call, so seeing it
         # here closes the race completely.
-        if job_id in _budget_stops:
+        # `_killed_signals` needs the same re-arm for the same reason:
+        # a user Stop landing in that window (or during the slow
+        # reconciliation that precedes the retry) also found the
+        # already-reaped proc, so the UI reported the job stopped
+        # while this pass ran on to completion.
+        if job_id in _budget_stops or job_id in _killed_signals:
             stop_sync_job(job_id)
 
         def _emit(text):
@@ -724,7 +729,11 @@ def _run_invocations(job_id, invocations, account, log_file) -> int:
 
 
 def _reconcile_removed_folders(
-    db: Session, account: "Account", password: str | None, access_token: str | None
+    job_id: str,
+    db: Session,
+    account: "Account",
+    password: str | None,
+    access_token: str | None,
 ) -> list[str]:
     """Quarantine local folders that no longer exist at the Source.
 
@@ -741,6 +750,17 @@ def _reconcile_removed_folders(
         missing = folder_reconcile.folders_to_quarantine(local, remote, excluded)
     except folder_reconcile.ProviderAnomaly as exc:
         logger.error("Refusing to quarantine folders for %s: %s", account.name, exc)
+        # The spec asks for this refusal to be loud. A server log line is not:
+        # it says nothing on the account page and gives the administrator no
+        # reason to wonder why the folders are still there. Appending to the
+        # running log puts it in job.log, which the real-error branch below
+        # copies into account.last_error — the same surfaces every other sync
+        # failure uses.
+        _running_logs.setdefault(job_id, []).append(
+            f'--- No folder was moved to "{folder_reconcile.REMOVED_CONTAINER}": {exc}. '
+            "Losing that many at once points to a problem at the Source rather than "
+            "deliberate deletions. Check the Source, then sync again. ---"
+        )
         return []
     except Exception:
         logger.warning("Folder reconciliation failed for %s", account.name, exc_info=True)
@@ -1008,12 +1028,23 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 and job_id not in _budget_stops
                 and job_id not in _killed_signals
                 and sync_failures.classify_failure(result_output[-4096:], account.provider) is None
-                and _reconcile_removed_folders(db, account, password, status_access_token)
             ):
-                _running_logs[job_id].append(
-                    "--- retry after quarantining folders removed from the Source ---"
+                quarantined = _reconcile_removed_folders(
+                    job_id, db, account, password, status_access_token
                 )
-                result_code = _run_invocations(job_id, invocations, account, log_file)
+                # Re-read the stop marker: reconciliation is slow (an IMAP
+                # connect + LIST, an os.walk of the account maildir, N
+                # directory renames), so a Stop pressed during it lands after
+                # the guard above was evaluated. Starting a full pass then
+                # would run exactly the work the user cancelled — and book its
+                # bytes into the daily budget — while the UI said "stopped".
+                if quarantined and job_id not in _killed_signals:
+                    _running_logs[job_id].append(
+                        "--- retry after quarantining folders removed from the Source ---"
+                    )
+                    result_code = _run_invocations(job_id, invocations, account, log_file)
+                # Rebuilt either way: a refused mass-quarantine appends its
+                # reason and nothing else, and that must still reach job.log.
                 result_output = "\n".join(_running_logs.get(job_id, []))
         finally:
             # Stop the sampler BEFORE dropping the proc handle: its final

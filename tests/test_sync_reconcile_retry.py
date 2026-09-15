@@ -184,16 +184,57 @@ def test_a_provider_anomaly_quarantines_nothing(tmp_path, caplog):
     """Twelve folders local, two upstream: far likelier a broken LIST or a
     provider outage than twelve deliberate deletions."""
     session = make_session()
-    account, _job = _mk_maildir_account_and_job(session, tmp_path)
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
     maildir = tmp_path / "maildir"
     for i in range(12):
         _mk_folder(maildir, f"f{i}")
     session.commit()
 
-    with patch.object(sync_worker, "_list_upstream_folders", return_value={"f0", "f1"}):
-        quarantined = sync_worker._reconcile_removed_folders(session, account, "p", None)
+    try:
+        with patch.object(sync_worker, "_list_upstream_folders", return_value={"f0", "f1"}):
+            quarantined = sync_worker._reconcile_removed_folders(
+                job.id, session, account, "p", None
+            )
+        logged = "\n".join(sync_worker._running_logs.get(job.id, []))
+    finally:
+        sync_worker._running_logs.pop(job.id, None)
 
     assert quarantined == []
+    assert not (maildir / "Removed from Source").exists()
+    # The refusal is a deliberate decision, not a silent no-op: it must say so
+    # somewhere the administrator actually reads.
+    assert "10 of 12 folders missing from the Source" in logged
+
+
+def test_a_refused_mass_quarantine_reaches_the_job_and_the_account(tmp_path):
+    """The whole point of the guard is that MFB decided not to act. Without
+    this, the account goes red with a raw mbsync error and nothing anywhere
+    says a decision was made — the operator has no reason to look."""
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path)
+    maildir = tmp_path / "maildir"
+    for i in range(12):
+        _mk_folder(maildir, f"f{i}")
+    session.commit()
+
+    with (
+        patch(
+            "mailfallback.services.sync_worker.subprocess.Popen",
+            side_effect=lambda cmd, **kw: _proc([DEAD_BOX], code=1),
+        ),
+        PATCH_RC,
+        patch.object(sync_worker, "_list_upstream_folders", return_value={"f0", "f1"}),
+    ):
+        sync_worker.execute_sync_job(session, job.id)
+
+    session.refresh(job)
+    session.refresh(account)
+    assert job.failure_kind == "error"
+    assert "No folder was moved to" in job.log
+    assert "10 of 12 folders missing from the Source" in job.log
+    assert "Check the Source, then sync again" in job.log
+    # The account page reads last_error, so the reason has to travel there too.
+    assert "10 of 12 folders missing from the Source" in account.last_error
     assert not (maildir / "Removed from Source").exists()
 
 
@@ -205,7 +246,7 @@ def test_a_failed_list_quarantines_nothing(tmp_path):
     session.commit()
 
     with patch.object(sync_worker, "_list_upstream_folders", side_effect=OSError("no route")):
-        assert sync_worker._reconcile_removed_folders(session, account, "p", None) == []
+        assert sync_worker._reconcile_removed_folders("job-x", session, account, "p", None) == []
 
 
 def test_dot_delimiter_nested_folder_is_not_quarantined(tmp_path):
@@ -237,8 +278,79 @@ def test_dot_delimiter_nested_folder_is_not_quarantined(tmp_path):
             pass
 
     with patch("mailfallback.services.imap_check.connect_imap", return_value=_Conn()):
-        quarantined = sync_worker._reconcile_removed_folders(session, account, "p", None)
+        quarantined = sync_worker._reconcile_removed_folders("job-x", session, account, "p", None)
 
     assert quarantined == []
     assert (maildir / "Parent" / "Child").exists()
     assert not (maildir / "Removed from Source").exists()
+
+
+def test_a_stop_during_the_reconciliation_cancels_the_retry(tmp_path):
+    """The retry gate reads `_killed_signals` BEFORE reconciling, and the
+    reconciliation is slow — an IMAP connect + LIST, an os.walk of the whole
+    account maildir, N directory renames. A Stop pressed inside that window
+    found the first run's already-reaped proc, so `stop_sync_job` terminated
+    nothing and returned True (the UI said "stopped") while the gate, long
+    since evaluated, launched a full mbsync pass anyway: the machine did the
+    exact work the user cancelled, booking bytes into the daily budget the
+    whole time."""
+    session = make_session()
+    _account, job = _mk_maildir_account_and_job(session, tmp_path)
+    _mk_folder(tmp_path / "maildir", "INBOX")
+    session.commit()
+
+    calls = []
+
+    def fake_popen(cmd, **kw):
+        calls.append(cmd)
+        return _proc([DEAD_BOX], code=1)
+
+    def stop_mid_reconcile(job_id, db, account, password, access_token):
+        sync_worker._killed_signals[job_id] = "SIGTERM"
+        return ["push-dixie"]  # folders WERE quarantined: only the stop holds the retry
+
+    try:
+        with (
+            patch("mailfallback.services.sync_worker.subprocess.Popen", side_effect=fake_popen),
+            PATCH_RC,
+            patch.object(sync_worker, "_reconcile_removed_folders", side_effect=stop_mid_reconcile),
+        ):
+            sync_worker.execute_sync_job(session, job.id)
+    finally:
+        sync_worker._killed_signals.pop(job.id, None)
+
+    assert len(calls) == 1  # no second mbsync pass
+    session.refresh(job)
+    assert job.status == JobStatus.failed
+    assert job.status != JobStatus.completed
+    assert job.signal == "SIGTERM"
+
+
+def test_run_invocations_re_arms_a_stop_that_lands_before_the_new_proc(tmp_path):
+    """The narrower window the gate re-check cannot close: the marker is set
+    AFTER the retry is cleared to run but BEFORE the new proc registers, so
+    the stop hit the previous, already-reaped proc. Mirrors the `_budget_stops`
+    re-arm (review F1) for the user-Stop path, which that fix did not cover."""
+    job_id = "job-killed-rearm"
+    sync_worker._running_logs[job_id] = []
+    stops = []
+    cmds = []
+
+    def fake_popen(cmd, **kw):
+        cmds.append(cmd)
+        sync_worker._killed_signals[job_id] = "SIGTERM"
+        return _proc(["running"], code=0)
+
+    try:
+        with (
+            patch("mailfallback.services.sync_worker.subprocess.Popen", side_effect=fake_popen),
+            patch.object(sync_worker, "stop_sync_job", side_effect=lambda jid: stops.append(jid)),
+        ):
+            sync_worker._run_invocations(job_id, [["mbsync", "a"]], None, None)
+    finally:
+        sync_worker._running_logs.pop(job_id, None)
+        sync_worker._running_procs.pop(job_id, None)
+        sync_worker._killed_signals.pop(job_id, None)
+
+    assert cmds  # the proc did start
+    assert stops == [job_id]  # ...and the re-arm stopped THAT one
