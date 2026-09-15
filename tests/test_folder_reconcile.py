@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from mailfallback.services import folder_reconcile as fr
 
 WHEN = datetime(2026, 9, 15, 14, 30, tzinfo=UTC)
@@ -33,3 +35,54 @@ def test_original_folder_name_strips_the_container_and_the_date():
 def test_original_folder_name_leaves_an_ordinary_folder_alone():
     assert fr.original_folder_name("Receipt") == "Receipt"
     assert fr.original_folder_name("[Gmail]/All Mail") == "[Gmail]/All Mail"
+
+
+def test_a_folder_missing_from_the_remote_is_quarantined():
+    assert fr.folders_to_quarantine({"INBOX", "push-dixie"}, {"INBOX"}, []) == ["push-dixie"]
+
+
+def test_a_folder_still_present_upstream_is_left_alone():
+    assert fr.folders_to_quarantine({"INBOX", "Receipt"}, {"INBOX", "Receipt"}, []) == []
+
+
+def test_a_folder_the_user_excluded_is_never_quarantined():
+    # It has no .mbsyncstate anyway in practice; this is belt and braces.
+    assert fr.folders_to_quarantine({"INBOX", "Spam"}, {"INBOX"}, ["Spam"]) == []
+
+
+def test_a_glob_exclusion_is_honoured():
+    assert fr.folders_to_quarantine({"INBOX", "[Gmail]/Spam"}, {"INBOX"}, ["[Gmail]/*"]) == []
+
+
+def test_an_empty_remote_list_quarantines_nothing():
+    # A failed lookup must never read as "everything was deleted".
+    assert fr.folders_to_quarantine({"INBOX", "Receipt"}, set(), []) == []
+
+
+def test_one_folder_missing_out_of_three_is_ordinary():
+    # 33% of a small mailbox: the ratio alone would trip here, which is why
+    # the guard needs an absolute floor too.
+    assert fr.folders_to_quarantine({"a", "b", "c"}, {"a", "b"}, []) == ["c"]
+
+
+def test_a_mass_disappearance_is_refused():
+    local = {f"f{i}" for i in range(12)}
+    with pytest.raises(fr.ProviderAnomaly):
+        fr.folders_to_quarantine(local, {"f0", "f1"}, [])
+
+
+def test_local_synced_folders_only_returns_folders_with_sync_state(tmp_path):
+    for folder in ("INBOX", "push-dixie"):
+        (tmp_path / folder / "cur").mkdir(parents=True)
+        (tmp_path / folder / ".mbsyncstate").write_text("FarUidValidity 1\n")
+    (tmp_path / "never-synced" / "cur").mkdir(parents=True)
+
+    assert fr.local_synced_folders(str(tmp_path)) == {"INBOX", "push-dixie"}
+
+
+def test_local_synced_folders_ignores_the_container(tmp_path):
+    q = tmp_path / fr.REMOVED_CONTAINER / "old (2026-09-15 1430)"
+    (q / "cur").mkdir(parents=True)
+    (q / ".mbsyncstate").write_text("x")
+
+    assert fr.local_synced_folders(str(tmp_path)) == set()
