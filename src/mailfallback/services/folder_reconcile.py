@@ -128,6 +128,9 @@ def write_container_readme(maildir_path: str) -> None:
     of dated folders with no clue what put them there. Idempotent: a marker
     in the filename, not the timestamp, is what's checked, since a folder
     landing in the container twice in the same minute must not double this up.
+    The guard checks both `new/` and `cur/`: Dovecot moves the message out of
+    `new/` the first time a client opens the mailbox, and that must not read
+    as "no README exists yet".
 
     No `mailfallback` imports here on purpose (see module docstring), so this
     replicates the Maildir-write shape of `user_service.create_welcome_email`
@@ -135,10 +138,12 @@ def write_container_readme(maildir_path: str) -> None:
     """
     container = os.path.join(maildir_path.rstrip("/"), REMOVED_CONTAINER)
     new_dir = os.path.join(container, "new")
+    cur_dir = os.path.join(container, "cur")
     for sub in ("cur", "new", "tmp"):
         os.makedirs(os.path.join(container, sub), exist_ok=True)
 
-    if any(f".{_README_TAG}." in name for name in os.listdir(new_dir)):
+    existing = os.listdir(new_dir) + os.listdir(cur_dir)
+    if any(f".{_README_TAG}." in name for name in existing):
         return
 
     timestamp = int(time.time())
@@ -191,10 +196,19 @@ def quarantine_folder(maildir_path: str, folder: str, when: datetime) -> str | N
         dest = f"{dest} ({n})"
 
     os.makedirs(os.path.dirname(dest), exist_ok=True)
-    write_container_readme(maildir_path)
     shutil.move(source, dest)
     for leftover in os.listdir(dest):
         if leftover.startswith(".mbsyncstate"):
             os.remove(os.path.join(dest, leftover))
     logger.info("Quarantined folder removed from the Source: %s -> %s", source, dest)
+
+    # The README is an explanation, not the point of the operation: a folder
+    # that failed to move would stay stuck resyncing forever, but a folder
+    # that moved fine must never be undone by a disk-full/permissions error
+    # writing this one message.
+    try:
+        write_container_readme(maildir_path)
+    except OSError:
+        logger.warning("Could not write the container README for %s", maildir_path, exc_info=True)
+
     return dest

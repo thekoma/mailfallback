@@ -158,3 +158,33 @@ def test_the_readme_is_written_once(tmp_path):
         fr.quarantine_folder(str(tmp_path), folder, WHEN)
 
     assert len(list((tmp_path / "Removed from Source" / "new").iterdir())) == 1
+
+
+def test_the_readme_is_not_rewritten_once_dovecot_moves_it_to_cur(tmp_path):
+    # A client opening the container's mailbox moves the message from new/
+    # to cur/ — that must not look like "no README exists yet" to the guard.
+    fr.write_container_readme(str(tmp_path))
+    new_dir = tmp_path / fr.REMOVED_CONTAINER / "new"
+    cur_dir = tmp_path / fr.REMOVED_CONTAINER / "cur"
+    for f in new_dir.iterdir():
+        f.rename(cur_dir / f.name)
+
+    fr.write_container_readme(str(tmp_path))
+
+    assert list(new_dir.iterdir()) == []
+
+
+def test_a_readme_write_failure_does_not_block_the_quarantine(tmp_path, monkeypatch):
+    (tmp_path / "push-dixie" / "cur").mkdir(parents=True)
+    (tmp_path / "push-dixie" / ".mbsyncstate").write_text("x")
+
+    def boom(_maildir_path):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(fr, "write_container_readme", boom)
+
+    dest = fr.quarantine_folder(str(tmp_path), "push-dixie", WHEN)
+
+    assert dest is not None
+    assert not (tmp_path / "push-dixie").exists()
+    assert Path(dest).is_dir()
