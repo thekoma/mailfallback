@@ -151,6 +151,22 @@ def test_the_container_gets_a_readme_explaining_itself(tmp_path):
     assert "Subject:" in bodies[0]
 
 
+def test_the_readme_does_not_promise_a_deletion_the_acl_forbids(tmp_path):
+    """The reader of this message is in webmail, where Dovecot's global ACL
+    is `lrs` everywhere outside MFB-Staging: no delete, no expunge, not even
+    a flag change. Telling them to delete the folder by hand is copy that
+    promises an interaction the product does not implement — and it is the
+    one sentence in this message a user will actually try to act on. It must
+    still answer "what do I do next", so it names who can do it."""
+    fr.write_container_readme(str(tmp_path))
+
+    body = next(iter((tmp_path / "Removed from Source" / "new").iterdir())).read_text()
+
+    assert "by hand" not in body
+    assert "administrator" in body
+    assert "read-only" in body
+
+
 def test_the_readme_is_written_once(tmp_path):
     for folder in ("a", "b"):
         (tmp_path / folder / "cur").mkdir(parents=True)

@@ -163,9 +163,11 @@ MailFallBack keeps the local backup copy it already had. The messages are
 intact and searchable, and the date in each folder's name is when it
 stopped being synced.
 
-Nothing here is sent back to the Source. Delete a folder by hand when you
-no longer want the copy; if the folder comes back at the Source, it is
-synced again as a new folder, and this copy is left untouched.
+Nothing here is sent back to the Source. These folders are read-only, like
+the rest of the local backup: ask an administrator to remove one from the
+mail store when you no longer want the copy. If the folder comes back at
+the Source, it is synced again as a new folder, and this copy is left
+untouched.
 """
 
     fd = os.open(os.path.join(new_dir, filename), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
