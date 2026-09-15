@@ -72,6 +72,30 @@ def _close_job(job: BackupJob, db: Session, *, failure_kind: str, marker: str) -
         policy.last_error = marker
 
 
+def _notify_backup_failed(db: Session, account, error: str) -> None:
+    """Tell the mailbox owners their off-site backup broke. Never raises.
+
+    Mailbox backups emitted nothing at all, in either direction — the only
+    backup notification in the codebase fired on config-backup *success*
+    (#249). A backup nobody is told about is discovered when it is needed.
+    """
+    try:
+        from mailfallback.services import notification_service
+
+        # notify_account_problem takes no details payload, and it dedupes on
+        # account.last_notified_state — one alert per entry into this state,
+        # the same contract sync_error already has.
+        notification_service.notify_account_problem(
+            db,
+            account,
+            "backup_failed",
+            f"Snapshot failed: {account.name}",
+            error[:500],
+        )
+    except Exception:
+        logger.warning("Failed to send backup_failed notification", exc_info=True)
+
+
 def recover_zombie_backup_jobs(db: Session) -> int:
     """Boot-time crash recovery for off-site backups.
 
@@ -314,6 +338,7 @@ def execute_backup(db: Session, account_backup_id: str, source: str = "schedule"
             job.failure_kind = "error"
             job.log = str(e)
         logger.error("Backup failed for account %s: %s", account.id, e)
+        _notify_backup_failed(db, account, str(e))
 
     finally:
         _backup_progress.pop(job_id, None)

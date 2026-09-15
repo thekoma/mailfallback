@@ -57,6 +57,7 @@ async def lifespan(app: FastAPI):
         default_store = ensure_default_store(db)
         ensure_admin_exists(db, default_store.id)
         _backfill_allowed_stores(db)
+        _backfill_backup_failed_subscription(db)
         _recover_zombie_jobs(db)
         _cleanup_temp_restore_users(db)
         start_scheduler(db)
@@ -131,6 +132,37 @@ def _backfill_allowed_stores(db):
     for u in db.query(User).all():
         if not u.allowed_stores:
             set_allowed_stores(db, u.id, [u.store_id])
+
+
+def _backfill_backup_failed_subscription(db) -> int:
+    """Subscribe existing channels to backup_failed. Returns rows changed.
+
+    Subscription is strict opt-in, so shipping a new event key on its own
+    reaches nobody who is already set up — the fix would be as silent as the
+    bug (#249). Applied only to channels that already take at least one
+    PROBLEM event: those users asked to hear about breakage, and a backup
+    failing is a new kind of breakage, not a new kind of newsletter. A channel
+    that deliberately subscribes to activity events only is left alone.
+
+    Idempotent, so it can keep running on every boot.
+    """
+    from mailfallback.models import NotificationChannel
+    from mailfallback.services.notification_service import PROBLEM_EVENT_KEYS
+
+    others = {k for k in PROBLEM_EVENT_KEYS if k != "backup_failed"}
+    changed = 0
+    for ch in db.query(NotificationChannel).all():
+        events = list(ch.events or [])
+        if "backup_failed" in events or not others.intersection(events):
+            continue
+        # Reassign rather than append: a JSON column does not see in-place
+        # mutation, and the write would be dropped on commit.
+        ch.events = [*events, "backup_failed"]
+        changed += 1
+    if changed:
+        db.commit()
+        logger.info("Subscribed %d notification channel(s) to backup_failed", changed)
+    return changed
 
 
 def _recover_zombie_jobs(db):

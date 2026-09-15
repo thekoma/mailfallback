@@ -285,7 +285,7 @@ def run_config_backup(db: Session, repository: Repository) -> dict:
                 db,
                 admin_ids,
                 "backup_completed",
-                f"Config backup complete: {repository.name}",
+                f"Configuration snapshot stored: {repository.name}",
                 "Configuration backup finished",
                 details={
                     "repository": repository.name,
@@ -306,6 +306,33 @@ def run_config_backup(db: Session, repository: Repository) -> dict:
         repository.last_config_backup_error = str(e)[:500]
         db.commit()
         logger.error("Config backup failed for %s: %s", repository.name, e)
+        # Isolated for the same reason as the success notification: the status
+        # is already committed, and a send hiccup must not reach an outer
+        # handler that would roll it back. Notifying only on success — which is
+        # what this did — is how a nightly job stayed broken for 45 days.
+        try:
+            from mailfallback.models import User, UserRole
+            from mailfallback.services import notification_service
+
+            admin_ids = [u.id for u in db.query(User).filter(User.role == UserRole.admin).all()]
+            notification_service.notify_users(
+                db,
+                admin_ids,
+                "backup_failed",
+                f"Configuration snapshot failed: {repository.name}",
+                str(e)[:500],
+                details={
+                    "repository": repository.name,
+                    "backend": repository.backend_type.value,
+                    "kind": "configuration",
+                    "error": str(e)[:500],
+                    "failed_at": repository.last_config_backup_at.isoformat()
+                    if repository.last_config_backup_at
+                    else None,
+                },
+            )
+        except Exception:
+            logger.warning("Failed to send backup_failed notification", exc_info=True)
         return {"ok": False, "error": str(e)[:200]}
 
 
