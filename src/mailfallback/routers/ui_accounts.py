@@ -1,6 +1,8 @@
 # src/mailfallback/routers/ui_accounts.py
 import contextlib
 import json
+import os
+import re
 import threading
 
 from fastapi import APIRouter, Depends, Request
@@ -28,6 +30,7 @@ from mailfallback.services.account_service import (
     update_account,
 )
 from mailfallback.services.audit_service import log_action
+from mailfallback.services.folder_reconcile import REMOVED_CONTAINER, original_folder_name
 from mailfallback.services.imap_check import check_imap_credentials, validate_host_not_internal
 from mailfallback.services.migration_service import (
     execute_account_migration,
@@ -435,6 +438,51 @@ async def account_form_submit(request: Request, db: Session = Depends(get_db)):
     return RedirectResponse(f"/accounts/{account.id}", status_code=303)
 
 
+# "{folder} (YYYY-MM-DD HHMM)", with an optional " (2)" collision suffix — see
+# folder_reconcile.quarantine_name, which is what wrote the name in the first
+# place. Only the date is captured here; the folder name itself is recovered
+# via original_folder_name.
+_QUARANTINE_DATE_RE = re.compile(r"\((\d{4}-\d{2}-\d{2} \d{4})\)(?: \(\d+\))?$")
+
+
+def _list_removed_folders(maildir_path: str | None) -> list[dict]:
+    """Folders quarantined because they vanished from the Source.
+
+    There is no database record of this — the filesystem is it. A brand-new
+    account with no maildir yet (or one whose maildir is unreadable) simply
+    has nothing to show, not an error. `cur/`, `new/` and `tmp/` inside the
+    container are the container's own README Maildir, not quarantined
+    folders, and must be excluded.
+    """
+    if not maildir_path:
+        return []
+
+    container = os.path.join(maildir_path.rstrip("/"), REMOVED_CONTAINER)
+    try:
+        entries = os.listdir(container)
+    except OSError:
+        return []
+
+    removed = []
+    for entry in entries:
+        if entry in ("cur", "new", "tmp"):
+            continue
+        if not os.path.isdir(os.path.join(container, entry)):
+            continue
+        match = _QUARANTINE_DATE_RE.search(entry)
+        if not match:
+            continue
+        removed.append(
+            {
+                "name": original_folder_name(f"{REMOVED_CONTAINER}/{entry}"),
+                "when": match.group(1),
+                "path": entry,
+            }
+        )
+    removed.sort(key=lambda r: r["when"], reverse=True)
+    return removed
+
+
 @router.get("/accounts/{account_id}", response_class=HTMLResponse)
 def account_detail(account_id: str, request: Request, db: Session = Depends(get_db)):
     user = _get_session_user(request, db)
@@ -501,6 +549,8 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
 
     recoveries = list_recoveries_for_account(db, account_id)
 
+    removed_folders = _list_removed_folders(account.maildir_path)
+
     timeline_global, folder_timeline_data = _build_bento_timeline(jobs[:30])
 
     from mailfallback.routers.ui import account_live_status
@@ -535,6 +585,8 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
             "allowed_repo_ids": allowed_repo_ids,
             "has_attachments": has_attachments,
             "recoveries": recoveries,
+            "removed_folders": removed_folders,
+            "removed_container": REMOVED_CONTAINER,
             "timeline_global": timeline_global,
             "folder_timeline_data": folder_timeline_data,
         },

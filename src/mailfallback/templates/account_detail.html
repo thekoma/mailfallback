@@ -492,6 +492,34 @@
         {% include "partials/account_recoveries.html" %}
     </details>
     {% endif %}
+    {% if removed_folders %}
+    <details>
+        <summary><strong>{{ removed_container }}</strong> ({{ removed_folders|length }})</summary>
+        <p class="text-muted text-small">
+            These folders were removed from the Source and are no longer synced.
+            MailFallBack keeps the local backup copy already made; browse it in
+            your webmail's "{{ removed_container }}" folder.
+        </p>
+        <div class="table-wrap mt-1">
+        <table>
+            <thead>
+                <tr>
+                    <th>Folder</th>
+                    <th>Removed</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for folder in removed_folders %}
+                <tr>
+                    <td>{{ folder.name }}</td>
+                    <td>{{ folder.when }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </details>
+    {% endif %}
     <details>
         <summary><strong>Connection details</strong></summary>
         <div class="table-wrap mt-1">
