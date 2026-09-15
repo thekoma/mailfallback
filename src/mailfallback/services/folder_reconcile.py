@@ -6,9 +6,13 @@ worth testing on their own, and sync_worker is already long.
 """
 
 import fnmatch
+import logging
 import os
 import re
+import shutil
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 REMOVED_CONTAINER = "Removed from Source"
 
@@ -109,3 +113,33 @@ def local_synced_folders(maildir_path: str) -> set[str]:
         if rel != ".":
             found.add(rel)
     return found
+
+
+def quarantine_folder(maildir_path: str, folder: str, when: datetime) -> str | None:
+    """Move a removed folder into the container. Returns the destination.
+
+    Moved, never copied or deleted: on a plain IMAP server a deleted folder
+    takes the mail with it, and the local copy is then the only one left.
+
+    The sync state goes with the move. Keeping it would make a folder of the
+    same name returning upstream fail with "Unable to recover from UIDVALIDITY
+    change" — trading one permanent error for another.
+    """
+    source = os.path.join(maildir_path.rstrip("/"), folder)
+    if not os.path.isdir(source):
+        return None
+
+    dest = quarantine_path(maildir_path, folder, when)
+    if os.path.exists(dest):
+        n = 2
+        while os.path.exists(f"{dest} ({n})"):
+            n += 1
+        dest = f"{dest} ({n})"
+
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.move(source, dest)
+    for leftover in os.listdir(dest):
+        if leftover.startswith(".mbsyncstate"):
+            os.remove(os.path.join(dest, leftover))
+    logger.info("Quarantined folder removed from the Source: %s -> %s", source, dest)
+    return dest

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -86,3 +87,46 @@ def test_local_synced_folders_ignores_the_container(tmp_path):
     (q / ".mbsyncstate").write_text("x")
 
     assert fr.local_synced_folders(str(tmp_path)) == set()
+
+
+def test_quarantine_folder_moves_the_maildir_and_keeps_the_messages(tmp_path):
+    src = tmp_path / "push-dixie" / "cur"
+    src.mkdir(parents=True)
+    (src / "1.m1.h:2,S").write_text("body")
+    (tmp_path / "push-dixie" / ".mbsyncstate").write_text("FarUidValidity 1\n")
+
+    dest = fr.quarantine_folder(str(tmp_path), "push-dixie", WHEN)
+
+    assert dest == str(tmp_path / "Removed from Source" / "push-dixie (2026-09-15 1430)")
+    assert (Path(dest) / "cur" / "1.m1.h:2,S").read_text() == "body"
+    assert not (tmp_path / "push-dixie").exists()
+
+
+def test_quarantine_folder_drops_the_sync_state(tmp_path):
+    # This is what makes a returning folder a fresh box instead of an
+    # "Unable to recover from UIDVALIDITY change" error.
+    (tmp_path / "push-dixie" / "cur").mkdir(parents=True)
+    (tmp_path / "push-dixie" / ".mbsyncstate").write_text("FarUidValidity 1\n")
+    (tmp_path / "push-dixie" / ".mbsyncstate.journal").write_text("x")
+
+    dest = Path(fr.quarantine_folder(str(tmp_path), "push-dixie", WHEN))
+
+    assert not (dest / ".mbsyncstate").exists()
+    assert not (dest / ".mbsyncstate.journal").exists()
+
+
+def test_quarantine_folder_is_a_noop_when_the_folder_is_gone(tmp_path):
+    assert fr.quarantine_folder(str(tmp_path), "missing", WHEN) is None
+
+
+def test_a_second_quarantine_in_the_same_minute_gets_a_suffix(tmp_path):
+    for _ in range(2):
+        (tmp_path / "push-dixie" / "cur").mkdir(parents=True)
+        (tmp_path / "push-dixie" / ".mbsyncstate").write_text("x")
+        fr.quarantine_folder(str(tmp_path), "push-dixie", WHEN)
+
+    container = tmp_path / "Removed from Source"
+    assert sorted(p.name for p in container.iterdir()) == [
+        "push-dixie (2026-09-15 1430)",
+        "push-dixie (2026-09-15 1430) (2)",
+    ]
