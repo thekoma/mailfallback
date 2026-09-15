@@ -700,6 +700,47 @@ def _run_invocations(job_id, invocations, account, log_file) -> int:
     return result_code
 
 
+def _reconcile_removed_folders(
+    db: Session, account: "Account", password: str | None, access_token: str | None
+) -> list[str]:
+    """Quarantine local folders that no longer exist at the Source.
+
+    Never raises: this runs on a path that is already failing, and a fault
+    here must not replace the real error with its own.
+    """
+    from mailfallback.services import folder_reconcile
+
+    try:
+        remote = _list_upstream_folders(account, password, access_token)
+        local = folder_reconcile.local_synced_folders(account.maildir_path)
+        extra = json.loads(account.extra_config) if account.extra_config else {}
+        excluded = excluded_folder_names(extra.get("patterns", "*"))
+        missing = folder_reconcile.folders_to_quarantine(local, remote, excluded)
+    except folder_reconcile.ProviderAnomaly as exc:
+        logger.error("Refusing to quarantine folders for %s: %s", account.name, exc)
+        return []
+    except Exception:
+        logger.warning("Folder reconciliation failed for %s", account.name, exc_info=True)
+        return []
+
+    now = datetime.now(UTC)
+    quarantined = []
+    for folder in missing:
+        try:
+            if folder_reconcile.quarantine_folder(account.maildir_path, folder, now):
+                quarantined.append(folder)
+        except OSError:
+            logger.warning("Could not quarantine %s for %s", folder, account.name, exc_info=True)
+    if quarantined:
+        logger.info(
+            "Quarantined %d folder(s) removed from the Source for %s: %s",
+            len(quarantined),
+            account.name,
+            ", ".join(quarantined),
+        )
+    return quarantined
+
+
 def execute_sync_job(db: Session, job_id: str) -> None:
     job = db.query(SyncJob).filter(SyncJob.id == job_id).first()
     if not job:
@@ -934,6 +975,22 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 log_file = os.fdopen(log_fd, "w")
             result_code = _run_invocations(job_id, invocations, account, log_file)
             result_output = "\n".join(_running_logs.get(job_id, []))
+
+            # classify_failure FIRST. Only a real error reaches the provider
+            # — a throttle or a network blip tells us nothing about which
+            # folders still exist upstream, and LISTing a throttled provider
+            # only adds load at the worst moment.
+            if (
+                result_code != 0
+                and job_id not in _budget_stops
+                and sync_failures.classify_failure(result_output[-4096:], account.provider) is None
+                and _reconcile_removed_folders(db, account, password, status_access_token)
+            ):
+                _running_logs[job_id].append(
+                    "--- retry after quarantining folders removed from the Source ---"
+                )
+                result_code = _run_invocations(job_id, invocations, account, log_file)
+                result_output = "\n".join(_running_logs.get(job_id, []))
         finally:
             # Stop the sampler BEFORE dropping the proc handle: its final
             # flush makes the job-end ledger/progress state accurate.
