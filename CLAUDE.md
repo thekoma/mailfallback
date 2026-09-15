@@ -226,6 +226,7 @@ When an admin moves a user to a different store:
 - `db_session` fixture with dependency override for `get_db`
 - mbsync subprocess is mocked in tests
 - Run specific test: `uv run pytest tests/test_sync_worker.py -v`
+- `tests/integration/test_mbsync_removed_box.sh` runs the REAL mbsync (isync) from the product image against Maildir-to-Maildir fixtures to pin isync's own behaviour for the removed-folder design (#244) — a dead box, the "Removed from Source" container negated/not negated, a folder returning after quarantine, and the on-disk spelling of nested folders under `SubFolders Verbatim`. No pytest can check claims about isync itself; this catches an isync upgrade that silently changes them. Requires Docker with the image already pulled; not part of the pytest suite.
 
 ## Important Notes
 
