@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from test_sync_worker import (
+    DONE,
     PATCH_RC,
     _isolated_sampler_sessions,  # noqa: F401 -- autouse fixture, offline DB + connect_imap
     _mk_maildir_account_and_job,
@@ -120,6 +121,63 @@ def test_nothing_quarantined_means_no_retry(tmp_path):
         sync_worker.execute_sync_job(session, job.id)
 
     assert len(calls) == 1
+
+
+def test_a_budget_stop_never_reconciles(tmp_path):
+    """A budget stop is a deliberate halt, not a failure to diagnose: it must
+    never LIST a provider MFB just throttled itself against, and never
+    relaunch mbsync past the budget that stopped it.
+
+    Patches `_run_invocations` directly rather than `subprocess.Popen`: going
+    through the real invocation loop would ALSO set `_killed_signals` as a
+    side effect of its own budget-stop re-arm logic (SIGTERM bookkeeping in
+    `stop_sync_job`), which would leave this test passing even if the
+    `_budget_stops` guard clause were deleted — see
+    test_a_killed_job_never_reconciles for that clause in isolation."""
+    session = make_session()
+    _account, job = _mk_maildir_account_and_job(session, tmp_path, initial_sync_completed_at=DONE)
+    session.commit()
+
+    def fake_run_invocations(job_id, invocations, account, log_file):
+        sync_worker._budget_stops.add(job_id)
+        sync_worker._running_logs[job_id].append("killed mid-fetch")
+        return -15
+
+    try:
+        with (
+            patch.object(sync_worker, "_run_invocations", side_effect=fake_run_invocations),
+            PATCH_RC,
+            patch.object(sync_worker, "_reconcile_removed_folders") as reconcile,
+        ):
+            sync_worker.execute_sync_job(session, job.id)
+        reconcile.assert_not_called()
+    finally:
+        sync_worker._budget_stops.discard(job.id)
+
+
+def test_a_killed_job_never_reconciles(tmp_path):
+    """A cancelled sync (user Stop, or the runtime-cap watchdog) leaves an
+    EMPTY log tail — classify_failure reads that as a real error by explicit
+    contract, so the killed-job guard is the only thing standing between a
+    cancelled job and mbsync being relaunched against the provider."""
+    session = make_session()
+    _account, job = _mk_maildir_account_and_job(session, tmp_path, initial_sync_completed_at=DONE)
+    session.commit()
+
+    def fake_run_invocations(job_id, invocations, account, log_file):
+        sync_worker._killed_signals[job_id] = "SIGTERM"
+        return -15  # log stays empty, as a killed proc's read loop produces
+
+    try:
+        with (
+            patch.object(sync_worker, "_run_invocations", side_effect=fake_run_invocations),
+            PATCH_RC,
+            patch.object(sync_worker, "_reconcile_removed_folders") as reconcile,
+        ):
+            sync_worker.execute_sync_job(session, job.id)
+        reconcile.assert_not_called()
+    finally:
+        sync_worker._killed_signals.pop(job.id, None)
 
 
 def test_a_provider_anomaly_quarantines_nothing(tmp_path, caplog):

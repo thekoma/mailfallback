@@ -983,6 +983,7 @@ def execute_sync_job(db: Session, job_id: str) -> None:
             if (
                 result_code != 0
                 and job_id not in _budget_stops
+                and job_id not in _killed_signals
                 and sync_failures.classify_failure(result_output[-4096:], account.provider) is None
                 and _reconcile_removed_folders(db, account, password, status_access_token)
             ):
