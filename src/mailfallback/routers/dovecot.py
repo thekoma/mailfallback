@@ -3,7 +3,6 @@
 
 import hmac
 import logging
-import re
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
@@ -22,6 +21,7 @@ from mailfallback.models import (
 )
 from mailfallback.services import app_credential_service
 from mailfallback.services.recovery_service import namespace_prefix as recovery_namespace_prefix
+from mailfallback.services.store_service import dovecot_home_dir
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +42,7 @@ def userdb_lookup(username: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
 
     store_path = user.store.path.rstrip("/")
-    safe_username = re.sub(r"[^a-zA-Z0-9@._-]", "_", username)
-    home = f"{store_path}/.dovecot-home/{safe_username}"
+    home = dovecot_home_dir(store_path, username)
 
     # Get user's enabled accounts on enabled stores, ordered by created_at
     owned = (

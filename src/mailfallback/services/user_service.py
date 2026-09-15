@@ -1,7 +1,6 @@
 # src/mailfallback/services/user_service.py
 import logging
 import os
-import re
 import socket
 import time
 from email.utils import formatdate
@@ -10,6 +9,10 @@ from sqlalchemy.orm import Session
 
 from mailfallback.models import Repository, User, UserRole
 from mailfallback.security import hash_password, verify_password
+from mailfallback.services.store_service import (
+    remove_dovecot_home,
+    sanitize_path_component,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +93,17 @@ def update_user(db: Session, user_id: str, **kwargs) -> User | None:
 
 
 def delete_user(db: Session, user_id: str) -> bool:
+    """Delete a user and the Dovecot home that belongs to them.
+
+    The home holds root-inbox and the restore Staging mailbox — never the
+    backed-up mail, which lives in the per-account maildirs and is shared with
+    any co-owner. remove_dovecot_home refuses if another user folds onto the
+    same directory, so the deletion cannot reach a bystander's mail either.
+    """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return False
+    remove_dovecot_home(db, user)
     db.delete(user)
     db.commit()
     return True
@@ -121,12 +132,8 @@ def ensure_admin_exists(db: Session, default_store_id: str) -> None:
         )
 
 
-def _sanitize_path_component(name: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9@._-]", "_", name)
-
-
 def create_welcome_email(store_path: str, username: str) -> None:
-    safe_username = _sanitize_path_component(username)
+    safe_username = sanitize_path_component(username)
     inbox_new = os.path.join(store_path, ".dovecot-home", safe_username, "root-inbox", "new")
     os.makedirs(inbox_new, exist_ok=True)
 

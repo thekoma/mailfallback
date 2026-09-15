@@ -17,7 +17,6 @@ with everything else by empty() and cleanup_expired() only.
 import contextlib
 import logging
 import os
-import re
 import shutil
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -36,6 +35,7 @@ from mailfallback.models import (
 )
 from mailfallback.services.index_service import maildir_filename_prefix
 from mailfallback.services.search_service import _accessible_account_ids
+from mailfallback.services.store_service import sanitize_path_component
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class StagingQuotaExceededError(Exception):
 
 
 def _safe_username(username: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9@._-]", "_", username)
+    return sanitize_path_component(username)
 
 
 def staging_dir(user: User) -> str:

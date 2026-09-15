@@ -75,7 +75,7 @@
                                 <i data-lucide="user-check" class="icon-sm"></i> Enable
                             </a>
                             {% endif %}
-                            <a class="dropdown-item dropdown-danger" onclick="closeDropdown(); if(confirm('Delete user {{ u.username }}? This cannot be undone.')) document.querySelector('.delete-form-{{ u.id }}').submit()">
+                            <a class="dropdown-item dropdown-danger" onclick="closeDropdown(); if(confirm('Delete user {{ u.username }}? Their Dovecot home goes too, including anything staged for restore. Backed-up account mail is not touched. This cannot be undone.')) document.querySelector('.delete-form-{{ u.id }}').submit()">
                                 <i data-lucide="trash-2" class="icon-sm"></i> Delete
                             </a>
                             {% endif %}
