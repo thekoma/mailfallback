@@ -80,14 +80,10 @@ def test_the_mcp_endpoint_rejects_an_unauthenticated_call(mcp_app):
 def test_the_mcp_endpoint_accepts_a_valid_token(mcp_app, db_session, default_store):
     # Unlike the bare `client` fixture, entering `mcp_app` via `with
     # TestClient(...)` actually runs the app's lifespan (it has to, to enter
-    # the MCP session manager) — and that lifespan calls ensure_default_store,
-    # which only recognises an EXISTING store as "already have one" via
-    # is_default. The `default_store` fixture doesn't set that flag, so
-    # without this the lifespan tries to create a second store at the same
-    # bootstrap path and hits a UNIQUE constraint on it.
-    default_store.is_default = True
-    db_session.commit()
-
+    # the MCP session manager), so ensure_default_store runs for real against
+    # the unflagged `default_store` fixture. It adopts it rather than
+    # inserting a duplicate at the same bootstrap path (#238) — this test is
+    # what keeps that adoption honest end to end.
     user = create_user(
         db_session, "mcpmount", "mcppass123456", UserRole.user, store_id=default_store.id
     )

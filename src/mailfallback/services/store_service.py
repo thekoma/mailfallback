@@ -30,16 +30,24 @@ def set_default_store(db: Session, store_id: str) -> MailStore | None:
 
 
 def ensure_default_store(db: Session) -> MailStore:
-    """Return the default store, creating one on first boot if none exist."""
+    """Return the default store, adopting or creating one on first boot.
+
+    Asking only "is a store flagged default?" is not enough: MailStore.path is
+    unique, so when no store carries the flag but one already occupies
+    bootstrap_store_path, the insert violated that constraint and the
+    IntegrityError propagated out of the app lifespan — the app refused to
+    start. Adopt the squatter instead.
+    """
     store = get_default_store(db)
     if store:
         return store
-    store = MailStore(
-        name="default",
-        path=settings.bootstrap_store_path.rstrip("/"),
-        is_default=True,
-    )
-    db.add(store)
+    path = settings.bootstrap_store_path.rstrip("/")
+    store = db.query(MailStore).filter(MailStore.path.in_((path, f"{path}/"))).first()
+    if store:
+        store.is_default = True
+    else:
+        store = MailStore(name="default", path=path, is_default=True)
+        db.add(store)
     db.commit()
     db.refresh(store)
     return store
