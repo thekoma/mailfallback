@@ -1,15 +1,67 @@
 import contextlib
+import logging
 import os
 import re
+import shutil
 
 from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
 from mailfallback.models import Account, MailStore, User
 
+logger = logging.getLogger(__name__)
+
+DOVECOT_HOME_DIRNAME = ".dovecot-home"
+
 
 def sanitize_email(email: str) -> str:
     return re.sub(r"[^a-z0-9]", "_", email.lower().strip())
+
+
+def sanitize_path_component(name: str) -> str:
+    """Fold a username into something safe to use as a single path segment.
+
+    Single source of truth: the same expression used to live in three modules
+    at once, and the moment one drifted from the others a deletion would have
+    been computed against a directory Dovecot never used.
+    """
+    return re.sub(r"[^a-zA-Z0-9@._-]", "_", name)
+
+
+def dovecot_home_dir(store_path: str, username: str) -> str:
+    return f"{store_path.rstrip('/')}/{DOVECOT_HOME_DIRNAME}/{sanitize_path_component(username)}"
+
+
+def remove_dovecot_home(db: Session, user: User) -> bool:
+    """Delete a user's Dovecot home. Returns True only if it was removed.
+
+    Refuses when another user on the same store folds onto the same directory.
+    Usernames are unique but their sanitized forms are not — "a b" and "a_b"
+    are two accounts sharing one home — so an unguarded delete would take a
+    bystander's mail with it. That the sharing is itself wrong is a separate
+    problem; the repair for it must not be a data-loss bug.
+    """
+    store = user.store
+    if store is None:
+        return False
+    home = dovecot_home_dir(store.path, user.username)
+
+    others = db.query(User).filter(User.id != user.id, User.store_id == store.id).all()
+    collides = [u.username for u in others if dovecot_home_dir(store.path, u.username) == home]
+    if collides:
+        logger.warning(
+            "Not removing Dovecot home %s for %r: also used by %s",
+            home,
+            user.username,
+            ", ".join(repr(c) for c in collides),
+        )
+        return False
+
+    if not os.path.isdir(home):
+        return False
+    shutil.rmtree(home, ignore_errors=True)
+    logger.info("Removed Dovecot home %s for %r", home, user.username)
+    return not os.path.isdir(home)
 
 
 def get_default_store(db: Session) -> MailStore | None:

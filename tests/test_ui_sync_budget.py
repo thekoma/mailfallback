@@ -546,7 +546,12 @@ def test_first_sync_recap_folders_clamped_to_total(client, db_session, default_s
     # Clamped: numerator shows the total (131), denominator "/ 131" — never
     # the raw 222 (the markup splits the two with the muted denominator span).
     assert '<span class="sync-recap-value">131 <span class="sync-recap-muted">/ 131</span>' in text
-    assert "222" not in text
+    # Scoped to the recap element, not the whole page: the account UUID is
+    # rendered into the markup, and roughly one random UUID in 140 contains
+    # "222" — a bare substring check fails on those runs while the clamp under
+    # test is working perfectly.
+    assert 'sync-recap-value">222' not in text
+    assert "/ 222<" not in text
 
 
 def test_account_live_status_forwards_total_folders(db_session, default_store):

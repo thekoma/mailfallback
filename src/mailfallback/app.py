@@ -154,11 +154,28 @@ def _recover_zombie_jobs(db):
 
 
 def _cleanup_temp_restore_users(db):
-    from mailfallback.services.dovecot_auth import cleanup_temp_imap_users
+    """Retire expired restore users, then collect the homes nothing owns.
+
+    The sweep runs after the row cleanup, not instead of it: teardown only
+    covers homes created from here on, while the ones already on disk — 74 of
+    78 on production when #240 was measured — have no row left to hang the
+    cleanup off. Never allowed to fail startup.
+    """
+    from mailfallback.services.dovecot_auth import (
+        cleanup_temp_imap_users,
+        sweep_orphaned_restore_homes,
+    )
 
     count = cleanup_temp_imap_users(db)
     if count:
         logger.info("Cleaned up %d orphaned restore users", count)
+    try:
+        swept = sweep_orphaned_restore_homes(db)
+    except OSError:
+        logger.warning("Orphaned restore home sweep failed", exc_info=True)
+        return
+    if swept:
+        logger.info("Swept %d orphaned restore home directories", swept)
 
 
 def _resume_migrations(db):
