@@ -540,6 +540,17 @@ def _count_upstream_messages(
     excludes = excluded_folder_names(extra.get("patterns", "*"))
     names = _list_upstream_folders(account, password, access_token)
     if not names:
+        # None means "no denominator could be established" — deliberately
+        # covering BOTH a failed LIST (_list_upstream_folders returns an
+        # empty set by design, see its docstring) AND a LIST that succeeded
+        # but had nothing selectable. Splitting these back apart to return
+        # (0, 0) on the latter would be the more dangerous answer: a
+        # transient LIST failure would then write
+        # initial_sync_total_messages = 0 and poison that account's
+        # progress denominator permanently, where None only degrades this
+        # one job's ETA. The all-\Noselect case is unreachable in practice
+        # (every real IMAP account has a selectable INBOX); a failed LIST
+        # is not.
         return None
     username = account.imap_user or account.email_address or account.name
     conn = connect_imap(
