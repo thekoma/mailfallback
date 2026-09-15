@@ -1,6 +1,7 @@
 import json
 
-from mailfallback.services.mbsync_config import generate_mbsyncrc
+from mailfallback.services.folder_reconcile import REMOVED_CONTAINER
+from mailfallback.services.mbsync_config import excluded_folder_names, generate_mbsyncrc
 
 
 def test_generate_app_password_config():
@@ -133,8 +134,6 @@ def test_verbatim_with_path_and_inbox():
 
 def test_excluded_folder_names_real_gmail_patterns():
     """The REAL gmail patterns string the app generates — quoted negations."""
-    from mailfallback.services.mbsync_config import excluded_folder_names
-
     patterns = '* !"[Gmail]/All Mail" !"[Gmail]/Spam" !"[Gmail]/Trash"'
     assert excluded_folder_names(patterns) == [
         "[Gmail]/All Mail",
@@ -144,8 +143,6 @@ def test_excluded_folder_names_real_gmail_patterns():
 
 
 def test_excluded_folder_names_bare_and_empty():
-    from mailfallback.services.mbsync_config import excluded_folder_names
-
     assert excluded_folder_names("* !Spam !Trash") == ["Spam", "Trash"]
     assert excluded_folder_names("*") == []
     assert excluded_folder_names("") == []
@@ -191,23 +188,39 @@ def test_the_container_is_negated_by_default():
     # Verified against isync 1.5.1: without this the container is itself a
     # local folder the provider does not have, and mbsync fails on it with
     # "far side box Removed from Source/... cannot be opened".
-    assert 'Patterns * !"Removed from Source/*"' in _rc()
+    assert 'Patterns * !"Removed from Source" !"Removed from Source/*"' in _rc()
+
+
+def test_both_the_container_and_its_children_are_negated():
+    """Two negations, not one.
+
+    `!"Removed from Source/*"` alone covers the dated folders INSIDE the
+    container but not the box named exactly "Removed from Source" — and
+    `folder_reconcile.write_container_readme` gives the container its own
+    cur/new/tmp to hold the explanatory message, which makes it a real
+    Maildir box the far side has never heard of. Measured against isync
+    1.5.1 in tests/integration/test_mbsync_removed_box.sh (cases 3 and 4):
+    one negation exits 1, both exit 0.
+    """
+    patterns_line = next(ln for ln in _rc().splitlines() if ln.startswith("Patterns "))
+    assert f'!"{REMOVED_CONTAINER}"' in patterns_line
+    assert f'!"{REMOVED_CONTAINER}/*"' in patterns_line
 
 
 def test_the_container_negation_is_appended_to_the_users_patterns():
     rc = _rc(extra_config='{"patterns": "INBOX Sent"}')
-    assert 'Patterns INBOX Sent !"Removed from Source/*"' in rc
+    assert 'Patterns INBOX Sent !"Removed from Source" !"Removed from Source/*"' in rc
 
 
 def test_the_users_negations_survive():
     rc = _rc(extra_config='{"patterns": "* !Spam"}')
-    assert 'Patterns * !Spam !"Removed from Source/*"' in rc
-    from mailfallback.services.mbsync_config import excluded_folder_names
-
-    assert "Spam" in excluded_folder_names('* !Spam !"Removed from Source/*"')
+    assert 'Patterns * !Spam !"Removed from Source" !"Removed from Source/*"' in rc
+    assert "Spam" in excluded_folder_names(
+        '* !Spam !"Removed from Source" !"Removed from Source/*"'
+    )
 
 
 def test_the_container_is_reported_as_excluded():
-    from mailfallback.services.mbsync_config import excluded_folder_names
-
-    assert "Removed from Source/*" in excluded_folder_names('* !"Removed from Source/*"')
+    excluded = excluded_folder_names('* !"Removed from Source" !"Removed from Source/*"')
+    assert "Removed from Source" in excluded
+    assert "Removed from Source/*" in excluded

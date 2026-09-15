@@ -118,11 +118,19 @@ def generate_mbsyncrc(
     sync = extra.get("sync", "Pull")
     create = extra.get("create", "Near")
     expunge = extra.get("expunge", "None")
-    # The user's value plus MFB's own negation, composed here and never written
-    # back to extra_config — that field is theirs. The negation is not optional:
-    # the container is a local folder the provider does not have, which is the
-    # exact condition that breaks a channel (#244).
-    patterns = f'{extra.get("patterns", "*")} !"{REMOVED_CONTAINER}/*"'
+    # The user's value plus MFB's own negations, composed here and never
+    # written back to extra_config — that field is theirs. This is the ONLY
+    # place the container is excluded; nothing else reads the composed string.
+    # The negations are not optional: the container is a local folder the
+    # provider does not have, which is the exact condition that breaks a
+    # channel (#244). BOTH are needed — isync's "*" matches across the
+    # hierarchy, so the "/*" form covers the dated folders inside the
+    # container but not the box named exactly REMOVED_CONTAINER, and
+    # folder_reconcile.write_container_readme gives that box its own
+    # cur/new/tmp to hold the explanatory message. Measured against isync
+    # 1.5.1: one negation exits 1, both exit 0 (see
+    # tests/integration/test_mbsync_removed_box.sh cases 3 and 4).
+    patterns = f'{extra.get("patterns", "*")} !"{REMOVED_CONTAINER}" !"{REMOVED_CONTAINER}/*"'
 
     lines.append("")
     lines.append(f"Channel {safe_name}")
