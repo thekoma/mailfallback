@@ -301,6 +301,13 @@ def execute_backup(db: Session, account_backup_id: str, source: str = "schedule"
         backup.last_backup_at = success_at
         backup.last_successful_run_at = success_at
         backup.last_error = None
+        # Release our own dedup marker, and only ours. Account.last_notified_state
+        # is one shared slot across every problem event, so clearing it wholesale
+        # would swallow the dedup of a sync problem that is still current —
+        # while leaving it set makes a fail/success/fail sequence silent from
+        # the second failure on.
+        if account.last_notified_state == "backup_failed":
+            account.last_notified_state = None
 
         job.status = JobStatus.completed
         job.completed_at = success_at
@@ -338,6 +345,23 @@ def execute_backup(db: Session, account_backup_id: str, source: str = "schedule"
             job.failure_kind = "error"
             job.log = str(e)
         logger.error("Backup failed for account %s: %s", account.id, e)
+        # Commit BEFORE notifying, as the config-backup path already does.
+        # notify_account_problem starts daemon delivery threads and writes the
+        # dedup marker; if the only commit were the one in `finally` and it
+        # failed, owners would hold an alert for a failure the database never
+        # recorded, with the marker lost alongside it.
+        try:
+            db.commit()
+        except Exception:
+            # Log rather than swallow, and notify anyway: the backup really did
+            # fail, and saying so is worth more than the bookkeeping. The zombie
+            # sweep reconciles a row left behind by a database that is itself in
+            # trouble.
+            logger.warning(
+                "Could not persist failed backup state for %s before notifying",
+                account.id,
+                exc_info=True,
+            )
         _notify_backup_failed(db, account, str(e))
 
     finally:
