@@ -457,6 +457,70 @@ _STATUS_MESSAGES_RE = re.compile(r"MESSAGES\s+(\d+)")
 _LIST_NAME_RE = re.compile(r'"([^"]+)"\s*$')
 
 
+def connect_imap(*args, **kwargs):
+    """Module-local indirection over `imap_check.connect_imap`.
+
+    `_list_upstream_folders` calls this bare name (a real global on this
+    module) so tests can patch `sync_worker.connect_imap` directly. Every
+    other call site in this module keeps doing its own per-call
+    `from mailfallback.services.imap_check import connect_imap` — this
+    wrapper does the same fresh import on every call, so patches aimed at
+    `imap_check.connect_imap` (the whole rest of this test suite) still
+    reach `_list_upstream_folders` too, whether it's called directly or via
+    `_count_upstream_messages`.
+    """
+    from mailfallback.services.imap_check import connect_imap as _connect_imap
+
+    return _connect_imap(*args, **kwargs)
+
+
+def _list_upstream_folders(
+    account: "Account", password: str | None, access_token: str | None
+) -> set[str]:
+    """Selectable folder names at the Source. Empty set when the LIST fails.
+
+    An empty result must never be read by a caller as "every folder has been
+    deleted" — folder_reconcile.folders_to_quarantine (a later task) treats
+    an empty set as "we learned nothing", not "nothing remains".
+    """
+    username = account.imap_user or account.email_address or account.name
+    conn = connect_imap(
+        account.imap_host,
+        account.imap_port,
+        account.tls_type or "IMAPS",
+        username,
+        access_token or password,
+        auth_method="xoauth2" if access_token else "login",
+    )
+    try:
+        typ, data = conn.list()
+        if typ != "OK" or not data:
+            return set()
+        names: set[str] = set()
+        for line in data:
+            if not line:
+                continue
+            if isinstance(line, tuple):
+                # Literal-encoded LIST entry (review F4a): imaplib yields
+                # (prefix_with_flags, name_bytes) for folder names that
+                # need a literal (e.g. non-ASCII) — str(tuple) would
+                # garble the name and silently drop the folder.
+                decoded = line[0].decode() if isinstance(line[0], bytes) else str(line[0])
+                raw_name = line[1]
+                name = raw_name.decode() if isinstance(raw_name, bytes) else str(raw_name)
+            else:
+                decoded = line.decode() if isinstance(line, bytes) else str(line)
+                match = _LIST_NAME_RE.search(decoded)
+                name = match.group(1) if match else decoded.rsplit(" ", 1)[-1]
+            if "\\Noselect" in decoded:
+                continue
+            names.add(name)
+        return names
+    finally:
+        with contextlib.suppress(Exception):
+            conn.logout()
+
+
 def _folder_excluded(name: str, patterns: list[str]) -> bool:
     """mbsync pattern semantics: literal names plus * and ? wildcards ONLY —
     fnmatch's [..] character classes must NOT fire ("[Gmail]/All Mail" is a
@@ -489,6 +553,9 @@ def _count_upstream_messages(
 
     extra = json.loads(account.extra_config) if account.extra_config else {}
     excludes = excluded_folder_names(extra.get("patterns", "*"))
+    names = _list_upstream_folders(account, password, access_token)
+    if not names:
+        return None
     username = account.imap_user or account.email_address or account.name
     conn = connect_imap(
         account.imap_host,
@@ -499,28 +566,9 @@ def _count_upstream_messages(
         auth_method="xoauth2" if access_token else "login",
     )
     try:
-        typ, data = conn.list()
-        if typ != "OK" or not data:
-            return None
         total = 0
         folders = 0
-        for line in data:
-            if not line:
-                continue
-            if isinstance(line, tuple):
-                # Literal-encoded LIST entry (review F4a): imaplib yields
-                # (prefix_with_flags, name_bytes) for folder names that
-                # need a literal (e.g. non-ASCII) — str(tuple) would
-                # garble the name and silently drop the folder.
-                decoded = line[0].decode() if isinstance(line[0], bytes) else str(line[0])
-                raw_name = line[1]
-                name = raw_name.decode() if isinstance(raw_name, bytes) else str(raw_name)
-            else:
-                decoded = line.decode() if isinstance(line, bytes) else str(line)
-                match = _LIST_NAME_RE.search(decoded)
-                name = match.group(1) if match else decoded.rsplit(" ", 1)[-1]
-            if "\\Noselect" in decoded:
-                continue
+        for name in names:
             if _folder_excluded(name, excludes):
                 continue
             # Included folder — counted whether or not STATUS yields a
