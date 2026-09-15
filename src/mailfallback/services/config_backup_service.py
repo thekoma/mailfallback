@@ -85,7 +85,8 @@ def _table(name: str) -> Table:
 def _jsonable(value):
     if isinstance(value, enum.Enum):
         return value.value
-    if isinstance(value, datetime.datetime):
+    # datetime is a subclass of date, so it has to be tested first.
+    if isinstance(value, datetime.datetime | datetime.date):
         return value.isoformat()
     return value
 
@@ -153,9 +154,15 @@ def _coerce_types(table: Table, record: dict) -> dict:
     out = dict(record)
     for col in table.columns:
         v = out.get(col.name)
-        if v is not None and isinstance(v, str) and isinstance(col.type, sa.DateTime):
+        if v is None or not isinstance(v, str):
+            continue
+        # sa.DateTime is not a subclass of sa.Date, so the two are disjoint.
+        if isinstance(col.type, sa.DateTime):
             with contextlib.suppress(ValueError):
                 out[col.name] = datetime.datetime.fromisoformat(v)
+        elif isinstance(col.type, sa.Date):
+            with contextlib.suppress(ValueError):
+                out[col.name] = datetime.date.fromisoformat(v)
     return out
 
 

@@ -1,5 +1,6 @@
 """Config backup: export, scrypt+Fernet envelope, import round-trip."""
 
+import datetime
 from unittest.mock import patch
 
 import pytest
@@ -364,3 +365,44 @@ class TestExportAllowedRepositories:
         db_session.expire_all()
         refreshed = db_session.query(User).filter(User.id == user.id).one()
         assert [r.id for r in refreshed.allowed_repositories] == [repo.id]
+
+
+class TestTrafficDateSerialisation:
+    """Issue #226: the nightly config backup died on the sync-budget ledger.
+
+    accounts.traffic_date is the only sa.Date column in any exported table
+    (every other timestamp is sa.DateTime), so _jsonable had no branch for it
+    and json.dumps inside encrypt_export raised
+    'Object of type date is not JSON serializable'. The suite stayed green
+    because no fixture ever populated the ledger.
+    """
+
+    def test_export_encrypts_an_account_carrying_a_traffic_date(self, db_session, populated):
+        acc = db_session.query(Account).filter(Account.email_address == "a@b.c").one()
+        acc.traffic_date = datetime.date(2026, 7, 30)
+        acc.bytes_synced_today = 1234
+        db_session.commit()
+
+        blob = cbs.encrypt_export(cbs.build_export(db_session), "pw")
+
+        restored = cbs.decrypt_export(blob, "pw")
+        row = next(r for r in restored["tables"]["accounts"] if r["email_address"] == "a@b.c")
+        assert row["traffic_date"] == "2026-07-30"
+
+    def test_import_restores_the_traffic_date_as_a_date(self, db_session, populated):
+        acc = db_session.query(Account).filter(Account.email_address == "a@b.c").one()
+        acc.traffic_date = datetime.date(2026, 7, 30)
+        db_session.commit()
+        data = cbs.decrypt_export(cbs.encrypt_export(cbs.build_export(db_session), "pw"), "pw")
+
+        # Re-import into an empty database: the ledger must come back as a
+        # real date, not the ISO string it travelled as.
+        for table in reversed(cbs._EXPORT_TABLES):
+            db_session.execute(cbs._table(table).delete())
+        db_session.commit()
+
+        result = cbs.import_export(db_session, data)
+
+        assert result["errors"] == []
+        reimported = db_session.query(Account).filter(Account.email_address == "a@b.c").one()
+        assert reimported.traffic_date == datetime.date(2026, 7, 30)
