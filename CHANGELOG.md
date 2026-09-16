@@ -1,3 +1,18 @@
+## [2026.09.1] - 2026-09-16
+
+### Documentation
+
+- Ship an agent skill for the MCP surface *(skills)*
+- Move the MCP skill to skills/ so OpenViking can reach it *(skills)*
+
+### Other
+
+- Merge pull request #252 from thekoma/docs/mcp-skill
+
+docs(skills): ship an agent skill for the MCP surface
+- Merge pull request #254 from thekoma/docs/mcp-skill-path
+
+docs(skills): move the MCP skill to skills/ so OpenViking can reach it
 ## [2026.09.0] - 2026-09-15
 
 ### Documentation
