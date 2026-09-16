@@ -39,7 +39,7 @@ dovecot:
   image:
     repository: dovecot/dovecot
     # renovate: datasource=docker depName=dovecot/dovecot
-    tag: 2.4.4
+    tag: 2.4.5
 
 webmail:
   enabled: true
