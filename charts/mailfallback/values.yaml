@@ -48,7 +48,7 @@ webmail:
   image:
     repository: roundcube/roundcubemail
     # renovate: datasource=docker depName=roundcube/roundcubemail
-    tag: 1.7.2-apache
+    tag: 1.7.4-apache
 
 tika:
   enabled: true
