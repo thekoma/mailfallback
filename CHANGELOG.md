@@ -1,3 +1,26 @@
+## [2026.09.1] - 2026-09-25
+
+### Documentation
+
+- Ship an agent skill for the MCP surface *(skills)*
+- Move the MCP skill to skills/ so OpenViking can reach it *(skills)*
+
+### Fixes
+
+- Index and return Cc and Bcc recipients (#255) *(index)*
+- Merge Bcc from duplicate copies, read headers only on reindex *(index)*
+
+### Other
+
+- Merge pull request #252 from thekoma/docs/mcp-skill
+
+docs(skills): ship an agent skill for the MCP surface
+- Merge pull request #254 from thekoma/docs/mcp-skill-path
+
+docs(skills): move the MCP skill to skills/ so OpenViking can reach it
+- Merge pull request #256 from thekoma/fix/255-index-cc-bcc
+
+fix(index): index and return Cc and Bcc recipients
 ## [2026.09.0] - 2026-09-15
 
 ### Documentation
