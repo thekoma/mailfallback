@@ -110,7 +110,6 @@ def _parse_headers(path: str) -> dict | None:
             date_sent = None
     from_pair = getaddresses([str(msg.get("From", ""))])
     from_name, from_addr = from_pair[0] if from_pair else ("", "")
-    to_addrs = [a for _, a in getaddresses([str(msg.get("To", ""))]) if a]
     return {
         "message_id": msgid,
         "message_id_hash": _hash_message_id(msgid),
@@ -118,9 +117,37 @@ def _parse_headers(path: str) -> dict | None:
         "from_addr": from_addr or None,
         "from_name": from_name or None,
         "subject": str(msg.get("Subject", "")) or None,
-        "to_addrs": to_addrs or None,
+        **_parse_recipients(msg),
         "size_bytes": os.path.getsize(path),
     }
+
+
+def _addresses(msg, header: str) -> list[str]:
+    # get_all: a header repeated in a malformed message must not drop addresses
+    return [a for _, a in getaddresses([str(v) for v in msg.get_all(header, [])]) if a]
+
+
+def _parse_recipients(msg) -> dict:
+    """To/Cc/Bcc address lists of a parsed message (None when absent).
+
+    Bcc survives only in the sender's own copy (Sent, Drafts); received mail
+    never carries it, so an empty bcc_addrs does not mean "no Bcc was sent".
+    """
+    return {
+        "to_addrs": _addresses(msg, "To") or None,
+        "cc_addrs": _addresses(msg, "Cc") or None,
+        "bcc_addrs": _addresses(msg, "Bcc") or None,
+    }
+
+
+def _read_recipients(path: str) -> dict | None:
+    """Headers-only re-read of a file's recipient lists; None if unreadable."""
+    try:
+        with open(path, "rb") as f:
+            msg = BytesHeaderParser(policy=policy.default).parse(f)
+    except OSError:
+        return None
+    return _parse_recipients(msg)
 
 
 def _extract_attachment_text(payload: bytes, content_type: str) -> str | None:
@@ -259,6 +286,9 @@ def upsert_message_set(db: Session, account_id: str) -> int:
     opening them (Maildir files are content-immutable — every change is a
     rename). Rows are written only for real changes: new mail, relocated
     files (flag renames / folder moves), reappearing mail, disappeared mail.
+    Rows indexed before Cc/Bcc were (recipients_indexed_at IS NULL) get their
+    headers re-read once, the first time the walk meets their file; rows whose
+    file is gone keep the partial list (only snapshots still hold the bytes).
     Returns the count of rows written.
     """
     account = db.query(Account).filter(Account.id == account_id).first()
@@ -280,18 +310,24 @@ def upsert_message_set(db: Session, account_id: str) -> int:
     # One bulk read instead of one SELECT per message.
     by_file: dict[tuple[str, str], bytes] = {}
     by_hash: dict[bytes, tuple[str, str, bool]] = {}
-    for h, folder, fn, deleted_at in (
+    # Rows indexed before Cc/Bcc were (#255): re-read their headers when the
+    # walk meets one of their files. One-off per row — the marker is set after.
+    recipients_pending: set[bytes] = set()
+    for h, folder, fn, deleted_at, recipients_indexed_at in (
         db.query(
             MailIndexMessage.message_id_hash,
             MailIndexMessage.folder_path,
             MailIndexMessage.maildir_filename,
             MailIndexMessage.deleted_at,
+            MailIndexMessage.recipients_indexed_at,
         )
         .filter(MailIndexMessage.account_id == account_id)
         .yield_per(BATCH_SIZE)
     ):
         by_file[(folder, fn)] = h
         by_hash[h] = (folder, fn, deleted_at is not None)
+        if recipients_indexed_at is None:
+            recipients_pending.add(h)
 
     seen_hashes: set[bytes] = set()
     seen_files: set[tuple[str, str]] = set()
@@ -304,8 +340,23 @@ def upsert_message_set(db: Session, account_id: str) -> int:
             seen_files.add(key)
             known = by_file.get(key)
             if known is not None:
-                # Content-immutable file already indexed: nothing to do.
+                # Content-immutable file already indexed: nothing to do —
+                # unless the row pre-dates the Cc/Bcc columns.
                 seen_hashes.add(known)
+                if known in recipients_pending:
+                    recipients_pending.discard(known)
+                    recipients = _read_recipients(full_path)
+                    if recipients is not None:
+                        db.query(MailIndexMessage).filter(
+                            MailIndexMessage.account_id == account_id,
+                            MailIndexMessage.message_id_hash == known,
+                        ).update(
+                            {**recipients, "recipients_indexed_at": datetime.now(UTC)},
+                            synchronize_session=False,
+                        )
+                        touched += 1
+                        if touched % BATCH_SIZE == 0:
+                            db.commit()
                 continue
             parsed = _parse_headers(full_path)
             if not parsed:
@@ -331,6 +382,7 @@ def upsert_message_set(db: Session, account_id: str) -> int:
                     # parse failure (None) stays NULL so the backfill
                     # (attachments_indexed_at IS NULL) retries the file
                     attachments_indexed_at=now if atts is not None else None,
+                    recipients_indexed_at=now,
                     **parsed,
                 )
             )

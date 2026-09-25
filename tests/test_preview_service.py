@@ -47,6 +47,26 @@ def _mk_account(db_session, default_store, tmp_path):
 
 
 class TestPreviewLive:
+    def test_recipients_come_from_the_message_not_the_row(
+        self, db_session, default_store, tmp_path
+    ):
+        """A row indexed before Cc/Bcc were (#255) — or a snapshot-only one the
+        walk can never re-read — must not make the preview show a partial list."""
+        acc = _mk_account(db_session, default_store, tmp_path)
+        raw = _msg("<cc@x>", subject="reply all")
+        raw["Cc"] = "cc@example.com"
+        _write_maildir_message(acc.maildir_path, "300.m1.host:2,S", raw)
+        index_service.upsert_message_set(db_session, acc.id)
+        row = db_session.query(MailIndexMessage).filter_by(account_id=acc.id).one()
+        row.cc_addrs = None
+        row.recipients_indexed_at = None
+        db_session.commit()
+
+        out = preview_service.get_preview(db_session, acc, row.message_id_hash)
+
+        assert out["cc_addrs"] == ["cc@example.com"]
+        assert out["bcc_addrs"] == []
+
     def test_live_preview_returns_body_and_attachments(self, db_session, default_store, tmp_path):
         acc = _mk_account(db_session, default_store, tmp_path)
         _write_maildir_message(

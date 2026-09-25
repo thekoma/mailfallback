@@ -22,7 +22,11 @@ from mailfallback.models import (
     SnapshotMessage,
 )
 from mailfallback.services import restic_service
-from mailfallback.services.index_service import maildir_filename_prefix, maildir_folder_bases
+from mailfallback.services.index_service import (
+    _parse_recipients,
+    maildir_filename_prefix,
+    maildir_folder_bases,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +198,10 @@ def get_preview(db: Session, account: Account, message_id_hash: bytes) -> dict |
         "subject": row.subject,
         "from_addr": row.from_addr,
         "from_name": row.from_name,
-        "to_addrs": row.to_addrs or [],
+        # Recipients from the message bytes, not the row: a row indexed before
+        # Cc/Bcc were (#255) — or a snapshot-only one the walk can never
+        # re-read — would otherwise show a partial recipient list.
+        **{k: v or [] for k, v in _parse_recipients(msg).items()},
         "date_sent": row.date_sent.isoformat() if row.date_sent else None,
         "folder_path": row.folder_path,
         "alive_in_live": row.deleted_at is None,

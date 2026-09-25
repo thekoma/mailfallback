@@ -102,6 +102,8 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
       "from_addr": "billing@fiscozen.it",
       "from_name": "Fiscozen",
       "to_addrs": ["andrea@example.com"],
+      "cc_addrs": ["accounting@example.com"],
+      "bcc_addrs": [],
       "date_sent": "2026-07-02T10:03:00Z",
       "folder_path": "INBOX",
       "alive_in_live": true,
@@ -119,6 +121,11 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
   "partial": false
 }
 ```
+
+`query` matches the subject, the sender and every recipient in `To`, `Cc`
+and `Bcc`. `bcc_addrs` is only ever filled on the sender's own copy (Sent,
+Drafts): received mail never carries a `Bcc` header, so an empty list there
+does not mean nobody was Bcc'd.
 
 Request fields: `query`, `account_ids` (omit for "every visible mailbox"),
 `range_start` / `range_end`, `include_deleted` (default `true`),
@@ -200,6 +207,8 @@ curl -H "Authorization: Bearer $TOKEN" \
   "from_addr": "billing@fiscozen.it",
   "from_name": "Fiscozen",
   "to_addrs": ["andrea@example.com"],
+  "cc_addrs": ["accounting@example.com"],
+  "bcc_addrs": [],
   "date_sent": "2026-07-02T10:03:00Z",
   "folder_path": "INBOX",
   "alive_in_live": true,

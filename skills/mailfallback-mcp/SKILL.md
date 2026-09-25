@@ -107,6 +107,7 @@ answers ("you have no such email") from a call that never actually looked.
 | `imap_unavailable: true` on `imap_coords` | Dovecot was unreachable. **Every id in `missing` was never checked.** | Retry. Never conclude the mail is gone. |
 | `already_queued: true` on `sync_now` | A sync was already pending or running; that job is returned. | Nothing further. Poll it with `sync_status`. |
 | `content_search_available: false` on `search_attachments` | Content search is switched off, so `include_content` meant nothing. | Without this flag there is no way to tell "no matches" from "the feature is off". Say which. |
+| `to_addrs` / `cc_addrs` / `bcc_addrs` on `search_mail` / `get_message` | The full recipient list is all three together. `bcc_addrs` is only filled on the sender's own copy (Sent, Drafts). | Count recipients across all three before saying who a message went to. An empty `bcc_addrs` on received mail is not proof nobody was Bcc'd. |
 | `source` on `get_message` / `download_attachment` | Whether it came from the live Maildir or a restic snapshot. | Worth mentioning for an old message. |
 
 ## Errors

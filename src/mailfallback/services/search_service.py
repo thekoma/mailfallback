@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, func, literal_column, null, text
+from sqlalchemy import Text, and_, cast, func, literal_column, null, text
 from sqlalchemy.orm import Query, Session
 
 from mailfallback.models import (
@@ -63,7 +63,7 @@ def search_messages(
     page: int = 1,
     page_size: int = 50,
 ) -> dict[str, Any]:
-    """Phase 1 (always): Postgres index query over subject/from/to.
+    """Phase 1 (always): Postgres index query over subject/from/to/cc/bcc.
 
     Deep search (deep=True): also run a full-folder Dovecot body search over the
     in-scope accounts' live folders and union the matches into the query via
@@ -119,11 +119,16 @@ def search_messages(
         if db.bind.dialect.name == "postgresql":
             text_match = MailIndexMessage.tsv.op("@@")(func.plainto_tsquery("simple", query))
         else:
+            # SQLite (tests only): the recipient lists are JSON text there,
+            # so a substring match stands in for the tsv's address tokens.
             pat = f"%{query}%"
             text_match = (
                 (MailIndexMessage.subject.ilike(pat))
                 | (MailIndexMessage.from_addr.ilike(pat))
                 | (MailIndexMessage.from_name.ilike(pat))
+                | (cast(MailIndexMessage.to_addrs, Text).ilike(pat))
+                | (cast(MailIndexMessage.cc_addrs, Text).ilike(pat))
+                | (cast(MailIndexMessage.bcc_addrs, Text).ilike(pat))
             )
         if body_hashes:
             q = q.filter(text_match | MailIndexMessage.message_id_hash.in_(body_hashes))
@@ -194,6 +199,8 @@ def search_messages(
                 "from_addr": r.from_addr,
                 "from_name": r.from_name,
                 "to_addrs": r.to_addrs or [],
+                "cc_addrs": r.cc_addrs or [],
+                "bcc_addrs": r.bcc_addrs or [],
                 "date_sent": r.date_sent.isoformat() if r.date_sent else None,
                 "folder_path": r.folder_path,
                 "alive_in_live": r.deleted_at is None,

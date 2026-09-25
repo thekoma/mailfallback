@@ -59,6 +59,63 @@ def test_upsert_message_set_inserts_new_messages(db_session, maildir_account):
     assert by_subject["Hello"].folder_path == "INBOX"
 
 
+def test_upsert_message_set_indexes_cc_and_bcc(db_session, maildir_account, tmp_path):
+    (tmp_path / "INBOX" / "cur" / "1234567892.M3.host:2,S").write_bytes(
+        b"From: me@example.com\r\n"
+        b"Subject: Reply all\r\n"
+        b"Message-Id: <cc@host>\r\n"
+        b"To: one@example.com\r\n"
+        b"Cc: Two <two@example.com>, three@example.com\r\n"
+        b"Bcc: four@example.com\r\n"
+        b"\r\n"
+        b"body"
+    )
+    index_service.upsert_message_set(db_session, maildir_account.id)
+
+    by_subject = {m.subject: m for m in db_session.query(MailIndexMessage).all()}
+    row = by_subject["Reply all"]
+    assert row.to_addrs == ["one@example.com"]
+    assert row.cc_addrs == ["two@example.com", "three@example.com"]
+    assert row.bcc_addrs == ["four@example.com"]
+    assert row.recipients_indexed_at is not None
+    # No Cc/Bcc header: NULL, not an empty list pretending we looked
+    assert by_subject["Hello"].cc_addrs is None
+    assert by_subject["Hello"].bcc_addrs is None
+
+
+def test_upsert_message_set_reindexes_recipients_of_pre_cc_rows(
+    db_session, maildir_account, tmp_path
+):
+    """Rows indexed before migration 029 carry only To. The next walk must
+    re-read their headers — otherwise old mail keeps a partial recipient list
+    forever, since the walk never reopens a file it already knows."""
+    (tmp_path / "INBOX" / "cur" / "1234567892.M3.host:2,S").write_bytes(
+        b"From: me@example.com\r\n"
+        b"Subject: Old reply\r\n"
+        b"Message-Id: <old@host>\r\n"
+        b"To: one@example.com\r\n"
+        b"Cc: two@example.com\r\n"
+        b"\r\n"
+        b"body"
+    )
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    # Simulate the pre-029 state of every row
+    db_session.query(MailIndexMessage).update(
+        {"cc_addrs": None, "bcc_addrs": None, "recipients_indexed_at": None}
+    )
+    db_session.commit()
+
+    n = index_service.upsert_message_set(db_session, maildir_account.id)
+    db_session.expire_all()
+
+    assert n == 3  # every row re-read once
+    rows = {m.subject: m for m in db_session.query(MailIndexMessage).all()}
+    assert rows["Old reply"].cc_addrs == ["two@example.com"]
+    assert all(r.recipients_indexed_at is not None for r in rows.values())
+    # One-off: a third walk has nothing left to re-read
+    assert index_service.upsert_message_set(db_session, maildir_account.id) == 0
+
+
 def test_upsert_message_set_marks_missing_as_deleted(db_session, maildir_account, tmp_path):
     index_service.upsert_message_set(db_session, maildir_account.id)
     # Remove the second file

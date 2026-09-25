@@ -74,6 +74,10 @@ class SearchHitOut(BaseModel):
     from_addr: str | None = None
     from_name: str | None = None
     to_addrs: list[str] = Field(default_factory=list)
+    cc_addrs: list[str] = Field(default_factory=list)
+    # Only the sender's own copy (Sent, Drafts) carries Bcc: empty here does
+    # not mean nobody was Bcc'd on a received message.
+    bcc_addrs: list[str] = Field(default_factory=list)
     date_sent: datetime | None = None
     folder_path: str
     alive_in_live: bool
@@ -124,6 +128,10 @@ class MessageOut(BaseModel):
     from_addr: str | None = None
     from_name: str | None = None
     to_addrs: list[str] = Field(default_factory=list)
+    cc_addrs: list[str] = Field(default_factory=list)
+    # Only the sender's own copy (Sent, Drafts) carries Bcc: empty here does
+    # not mean nobody was Bcc'd on a received message.
+    bcc_addrs: list[str] = Field(default_factory=list)
     date_sent: datetime | None = None
     folder_path: str
     alive_in_live: bool
