@@ -140,13 +140,29 @@ def _parse_recipients(msg) -> dict:
     }
 
 
+def _read_header_block(f) -> bytes:
+    """Bytes up to and including the blank line that ends the headers.
+
+    BytesHeaderParser.parse(f) reads the whole file even though it ignores
+    the body — for the one-off recipient re-read of every indexed message
+    that would mean reading every body and attachment too.
+    """
+    lines = []
+    for line in f:
+        lines.append(line)
+        if line in (b"\r\n", b"\n"):
+            break
+    return b"".join(lines)
+
+
 def _read_recipients(path: str) -> dict | None:
     """Headers-only re-read of a file's recipient lists; None if unreadable."""
     try:
         with open(path, "rb") as f:
-            msg = BytesHeaderParser(policy=policy.default).parse(f)
+            header_block = _read_header_block(f)
     except OSError:
         return None
+    msg = BytesHeaderParser(policy=policy.default).parsebytes(header_block)
     return _parse_recipients(msg)
 
 
@@ -332,6 +348,7 @@ def upsert_message_set(db: Session, account_id: str) -> int:
     seen_hashes: set[bytes] = set()
     seen_files: set[tuple[str, str]] = set()
     relocations: dict[bytes, tuple[str, str]] = {}
+    dup_bcc: dict[bytes, set[str]] = {}
     touched = 0
     _reset_tika_stats()
     try:
@@ -368,6 +385,11 @@ def upsert_message_set(db: Session, account_id: str) -> int:
                 # move, or an additional duplicate copy) — decide after the
                 # walk, when seen_files is complete.
                 relocations.setdefault(h, key)
+                # The row holds the headers of whichever copy was walked
+                # first; only the sender's copy carries Bcc, so an Inbox copy
+                # of a self-Bcc'd message would otherwise hide it.
+                if parsed["bcc_addrs"]:
+                    dup_bcc.setdefault(h, set()).update(parsed["bcc_addrs"])
                 continue
             by_hash[h] = (folder, filename, False)
             by_file[key] = h
@@ -400,6 +422,22 @@ def upsert_message_set(db: Session, account_id: str) -> int:
                 db.commit()
 
         now = datetime.now(UTC)
+
+        # Bcc seen on duplicate copies: one batched read, a write only when
+        # the row is missing an address (the common case writes nothing).
+        dup_items = list(dup_bcc.items())
+        for i in range(0, len(dup_items), BATCH_SIZE):
+            chunk = dict(dup_items[i : i + BATCH_SIZE])
+            for row in db.query(MailIndexMessage).filter(
+                MailIndexMessage.account_id == account_id,
+                MailIndexMessage.message_id_hash.in_(chunk),
+            ):
+                stored = list(row.bcc_addrs or [])
+                missing = sorted(chunk[row.message_id_hash] - set(stored))
+                if missing:
+                    row.bcc_addrs = stored + missing
+                    touched += 1
+            db.commit()
 
         # Relocations and un-deletes: write only rows whose stored pointer is
         # stale or whose deleted flag must flip. A stored pointer that still

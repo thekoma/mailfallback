@@ -116,6 +116,46 @@ def test_upsert_message_set_reindexes_recipients_of_pre_cc_rows(
     assert index_service.upsert_message_set(db_session, maildir_account.id) == 0
 
 
+def test_upsert_message_set_merges_bcc_from_a_duplicate_copy(db_session, maildir_account, tmp_path):
+    """A self-Bcc'd message: the Inbox copy (walked first) has no Bcc header,
+    the Sent copy does. The row must not keep the Inbox copy's partial list."""
+    headers = (
+        b"From: me@example.com\r\n"
+        b"Subject: Self bcc\r\n"
+        b"Message-Id: <selfbcc@host>\r\n"
+        b"To: one@example.com\r\n"
+    )
+    (tmp_path / "INBOX" / "cur" / "1234567893.M4.host:2,S").write_bytes(headers + b"\r\nbody")
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    sent_cur = tmp_path / "Sent" / "cur"
+    sent_cur.mkdir(parents=True)
+    (sent_cur / "1234567894.M5.host:2,S").write_bytes(
+        headers + b"Bcc: me@example.com, other@example.com\r\n\r\nbody"
+    )
+
+    index_service.upsert_message_set(db_session, maildir_account.id)
+    db_session.expire_all()
+
+    row = db_session.query(MailIndexMessage).filter_by(message_id="<selfbcc@host>").one()
+    assert row.bcc_addrs == ["me@example.com", "other@example.com"]
+    assert row.folder_path == "INBOX"  # the stored pointer stays put
+    # Already merged: later walks write nothing
+    assert index_service.upsert_message_set(db_session, maildir_account.id) == 0
+
+
+def test_read_header_block_leaves_the_body_unread():
+    """The one-off recipient re-read touches every indexed message: it must
+    not pull bodies and attachments off disk along with the headers."""
+    import io
+
+    f = io.BytesIO(b"To: a@example.com\r\nCc: b@example.com\r\n\r\n" + b"x" * 10_000)
+
+    block = index_service._read_header_block(f)
+
+    assert block == b"To: a@example.com\r\nCc: b@example.com\r\n\r\n"
+    assert len(f.read()) == 10_000
+
+
 def test_upsert_message_set_marks_missing_as_deleted(db_session, maildir_account, tmp_path):
     index_service.upsert_message_set(db_session, maildir_account.id)
     # Remove the second file
