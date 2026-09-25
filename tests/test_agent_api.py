@@ -62,6 +62,8 @@ def _indexed_account(db_session, store, tmp_path, owner, name="acc", msgid="<m1@
     msg["Message-Id"] = msgid
     msg["From"] = "Mittente <sender@example.com>"
     msg["To"] = "dest@example.com"
+    msg["Cc"] = "Uno <cc-one@example.com>, cc-two@example.com"
+    msg["Bcc"] = "hidden@example.com"
     msg["Subject"] = "quarterly invoice"
     msg["Date"] = "Thu, 11 Jun 2026 10:00:00 +0200"
     msg.set_content("body text")
@@ -212,6 +214,24 @@ class TestSearch:
         # message_id_hash is the address the message and attachment endpoints take
         assert len(hit["message_id_hash"]) == 40
 
+    def test_an_address_only_in_cc_finds_the_message(
+        self, client, db_session, default_store, tmp_path, agent_user, read_token
+    ):
+        """#255: Cc was dropped at index time, so searching a Cc-only
+        recipient found nothing."""
+        _indexed_account(db_session, default_store, tmp_path, agent_user)
+
+        resp = client.post(
+            f"{BASE}/search", json={"query": "cc-two@example.com"}, headers=_bearer(read_token)
+        )
+
+        assert resp.status_code == 200
+        hits = resp.json()["results"]
+        assert len(hits) == 1
+        assert hits[0]["to_addrs"] == ["dest@example.com"]
+        assert hits[0]["cc_addrs"] == ["cc-one@example.com", "cc-two@example.com"]
+        assert hits[0]["bcc_addrs"] == ["hidden@example.com"]
+
     def test_body_matched_is_null_when_deep_not_requested(
         self, client, db_session, default_store, tmp_path, agent_user, read_token
     ):
@@ -259,6 +279,21 @@ class TestMessage:
         assert body["source"] == "live"
         assert "body_snippet" in body
         assert isinstance(body["attachments"], list)
+
+    def test_returns_to_cc_and_bcc_recipients(
+        self, client, db_session, default_store, tmp_path, agent_user, read_token
+    ):
+        """#255: an agent that saw only To concluded a message went to one
+        person when it went to several."""
+        acc, row = _indexed_account(db_session, default_store, tmp_path, agent_user)
+
+        body = client.get(
+            f"{BASE}/messages/{acc.id}/{row.message_id_hash.hex()}", headers=_bearer(read_token)
+        ).json()
+
+        assert body["to_addrs"] == ["dest@example.com"]
+        assert body["cc_addrs"] == ["cc-one@example.com", "cc-two@example.com"]
+        assert body["bcc_addrs"] == ["hidden@example.com"]
 
     def test_another_users_message_is_404_not_403(
         self, client, db_session, default_store, tmp_path, agent_user, read_token

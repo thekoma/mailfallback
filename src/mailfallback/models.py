@@ -660,6 +660,9 @@ class MailIndexMessage(Base):
     from_name = Column(Text)
     subject = Column(Text)
     to_addrs = Column(ARRAY(Text).with_variant(JSON(), "sqlite"))
+    cc_addrs = Column(ARRAY(Text).with_variant(JSON(), "sqlite"))
+    # Only the sender's own copy (Sent, Drafts) carries a Bcc header.
+    bcc_addrs = Column(ARRAY(Text).with_variant(JSON(), "sqlite"))
     folder_path = Column(Text, nullable=False)
     maildir_filename = Column(Text, nullable=False)
     size_bytes = Column(Integer)
@@ -682,6 +685,10 @@ class MailIndexMessage(Base):
     tsv = Column(TSVECTOR().with_variant(Text(), "sqlite"))
     has_attachments = Column(Boolean, nullable=False, server_default=text("false"))
     attachments_indexed_at = Column(DateTime(timezone=True))
+    # NULL = row indexed before Cc/Bcc were (migration 029): the next live
+    # walk re-reads its headers. cc_addrs IS NULL can't be the marker — most
+    # mail simply has no Cc.
+    recipients_indexed_at = Column(DateTime(timezone=True))
 
 
 class MailIndexAttachment(Base):

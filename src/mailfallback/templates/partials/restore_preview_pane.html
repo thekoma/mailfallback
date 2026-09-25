@@ -26,6 +26,8 @@
       <p class="ws-preview-kv">
         <strong>From</strong> <span x-text="preview.from_addr || '?'"></span>
         <strong>To</strong> <span x-text="(preview.to_addrs || []).join(', ') || '—'"></span><br>
+        <template x-if="(preview.cc_addrs || []).length"><span><strong>Cc</strong> <span x-text="preview.cc_addrs.join(', ')"></span><br></span></template>
+        <template x-if="(preview.bcc_addrs || []).length"><span><strong>Bcc</strong> <span x-text="preview.bcc_addrs.join(', ')"></span><br></span></template>
         <strong>Date</strong> <span x-text="preview.date_sent ? preview.date_sent.slice(0,16).replace('T',' ') : '—'"></span>
         <strong>Folder</strong> <span x-text="preview.folder_path"></span>
         <strong>Source</strong> <span x-text="preview.source"></span>
