@@ -475,11 +475,11 @@ works fine.
 Same three scopes as the REST API (`imap`, `mail:read`, `sync:trigger`) —
 see [Creating a token](#creating-a-token) above. A token holding only `imap`
 reaches the server (authentication succeeds) but every tool call on it is
-refused, because none of the eight tools accept the bare `imap` scope. That's
+refused, because none of the nine tools accept the bare `imap` scope. That's
 intentional: `imap` is the scope the IMAP-only skills use, and it shouldn't
 imply anything more here either.
 
-Eight tools, mirroring the REST endpoints above:
+Nine tools, mirroring the REST endpoints above:
 
 | Tool | Arguments | Scope | Read-only |
 |------|-----------|-------|-----------|
@@ -488,11 +488,12 @@ Eight tools, mirroring the REST endpoints above:
 | `search_attachments` | `query`, `account_ids`, `exts`, `min_size`, `max_size`, `include_content`, `range_start`, `range_end`, `page`, `page_size` | `mail:read` | yes |
 | `get_message` | `account_id`, `message_id_hash` | `mail:read` | yes |
 | `download_attachment` | `account_id`, `message_id_hash`, `part_index` | `mail:read` | yes |
+| `get_attachment_text` | `account_id`, `message_id_hash`, `part_index` | `mail:read` | yes |
 | `imap_coords` | `account_id`, `message_ids` | `mail:read` | yes |
 | `sync_now` | `account_id` | `sync:trigger` | **no** |
 | `sync_status` | `job_id` | `sync:trigger` | yes |
 
-Seven tools are annotated read-only (`read_only_hint: true`), so an MCP
+Eight tools are annotated read-only (`read_only_hint: true`), so an MCP
 client that surfaces that hint can auto-approve them without a
 confirmation prompt. `sync_now` is the only one that changes state — it
 queues a sync job — and is annotated accordingly.
@@ -518,6 +519,10 @@ Two tools carry MCP-specific notes worth calling out on their own:
   response bounded. Read it as a route, not a dead end: the error names the
   message's folder and points the caller at `imap_coords` to resolve IMAP
   coordinates and fetch the same attachment directly over IMAP instead.
+- **`get_attachment_text`** returns the attachment as plain text, for a
+  client that cannot decode base64: the text Tika stored at index time, or an
+  on-demand extraction for a part indexed before Tika was on. `text` is null
+  when there is nothing to extract or content extraction is off.
 - **`imap_coords`** returns namespace-prefixed IMAP folder keys (exactly as
   Dovecot publishes them — `SELECT` them as-is) and real IMAP UIDs, the
   bridge from an MCP search hit to fetching over an existing IMAP

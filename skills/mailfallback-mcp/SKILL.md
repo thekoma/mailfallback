@@ -13,7 +13,7 @@ metadata:
 # MailFallBack over MCP
 
 MailFallBack (MFB) backs up IMAP mailboxes to local Maildir and indexes them.
-This skill covers its MCP surface: eight tools over streamable HTTP, one
+This skill covers its MCP surface: nine tools over streamable HTTP, one
 static bearer token, two scopes that matter.
 
 Read-only except `sync_now`. There is no tool that sends, edits or deletes
@@ -55,7 +55,7 @@ and replaced.
 `mail:read` does not imply `imap`, and `imap` implies nothing here. Ask for
 `mail:read` alone unless the task really needs to queue a sync.
 
-## The eight tools
+## The nine tools
 
 | Tool | Arguments | Scope |
 |------|-----------|-------|
@@ -64,11 +64,12 @@ and replaced.
 | `search_attachments` | `query`, `account_ids`, `exts`, `min_size`, `max_size`, `include_content`, `range_start`, `range_end`, `page`, `page_size` | `mail:read` |
 | `get_message` | `account_id`, `message_id_hash` | `mail:read` |
 | `download_attachment` | `account_id`, `message_id_hash`, `part_index` | `mail:read` |
+| `get_attachment_text` | `account_id`, `message_id_hash`, `part_index` | `mail:read` |
 | `imap_coords` | `account_id`, `message_ids` | `mail:read` |
 | `sync_now` | `account_id` | `sync:trigger` |
 | `sync_status` | `job_id` | `sync:trigger` |
 
-Seven carry `read_only_hint: true`, so a client that surfaces the hint can
+Eight carry `read_only_hint: true`, so a client that surfaces the hint can
 auto-approve them. `sync_now` is the only one that changes state.
 
 `page_size` caps at 200 on both search tools.
@@ -84,7 +85,8 @@ nothing to look up in between.
 2. `get_message(account_id, message_id_hash)` for headers and a body snippet,
    capped at 2048 characters.
 3. `download_attachment(account_id, message_id_hash, part_index)` for the file,
-   base64 in `content_base64`.
+   base64 in `content_base64`. To read a PDF or document, call
+   `get_attachment_text` with the same triple instead: plain text, no decoding.
 
 Start with `list_mailboxes` when you do not already know which mailbox to
 search, or when the user's phrasing implies one ("my work mail"). Its
