@@ -275,7 +275,13 @@ class TestToolAnnotations:
         """A client should be able to tell which tools change nothing."""
         tools = anyio.run(server.list_tools)
         by_name = {t.name: t for t in tools}
-        for name in ("list_mailboxes", "search_mail", "search_attachments", "get_message"):
+        for name in (
+            "list_mailboxes",
+            "search_mail",
+            "search_attachments",
+            "get_message",
+            "get_attachment_text",
+        ):
             assert by_name[name].annotations.read_only_hint is True, name
 
 
@@ -360,6 +366,87 @@ class TestDownloadAttachment:
         message = str(exc.value)
         assert "imap_coords" in message
         assert "INBOX" in message
+
+
+class TestGetAttachmentText:
+    def _hit(self, server, db_session, default_store, tmp_path, tool_user, monkeypatch):
+        acc, row = _account_with_attachment(db_session, default_store, tmp_path, tool_user)
+        _as(monkeypatch, ["mail:read"], tool_user)
+        part = _call(server, "search_mail", query="attachment")["results"][0]["attachments"][0]
+        return acc, row, part["part_index"]
+
+    def _text(self, server, acc, row, part):
+        return _call(
+            server,
+            "get_attachment_text",
+            account_id=acc.id,
+            message_id_hash=row.message_id_hash.hex(),
+            part_index=part,
+        )
+
+    def test_returns_the_indexed_text_without_calling_tika(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        from mailfallback.models import MailIndexAttachment
+
+        acc, row, part = self._hit(
+            server, db_session, default_store, tmp_path, tool_user, monkeypatch
+        )
+        db_session.query(MailIndexAttachment).filter_by(account_id=acc.id).update(
+            {"content_text": "Totale 574,08"}
+        )
+        db_session.commit()
+        monkeypatch.setattr(cfg.settings, "tika_enabled", True)
+        monkeypatch.setattr(
+            index_service, "_tika_put", lambda *a: pytest.fail("must not re-extract")
+        )
+
+        out = self._text(server, acc, row, part)
+
+        assert out["text"] == "Totale 574,08"
+        assert out["source"] == "index"
+        assert out["filename"] == "invoice.pdf"
+
+    def test_extracts_on_demand_when_the_index_has_no_text(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        acc, row, part = self._hit(
+            server, db_session, default_store, tmp_path, tool_user, monkeypatch
+        )
+        monkeypatch.setattr(cfg.settings, "tika_enabled", True)
+        seen = []
+        monkeypatch.setattr(
+            index_service, "_tika_put", lambda payload, ct: seen.append((payload, ct)) or "hello"
+        )
+
+        out = self._text(server, acc, row, part)
+
+        assert out["text"] == "hello"
+        assert out["source"] == "extracted"
+        assert seen == [(b"%PDF-1.4 fake", "application/pdf")]
+
+    def test_null_text_when_extraction_is_off(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        acc, row, part = self._hit(
+            server, db_session, default_store, tmp_path, tool_user, monkeypatch
+        )
+        monkeypatch.setattr(cfg.settings, "tika_enabled", False)
+
+        out = self._text(server, acc, row, part)
+
+        assert out["text"] is None
+        assert out["source"] == "index"
+
+    def test_an_unknown_part_is_not_found(
+        self, server, db_session, default_store, tmp_path, tool_user, monkeypatch
+    ):
+        acc, row, _ = self._hit(server, db_session, default_store, tmp_path, tool_user, monkeypatch)
+
+        with pytest.raises(Exception) as exc:
+            self._text(server, acc, row, 99)
+
+        assert "Attachment not found" in str(exc.value)
 
 
 class TestSyncTools:

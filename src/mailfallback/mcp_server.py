@@ -1,5 +1,5 @@
 # src/mailfallback/mcp_server.py
-"""The MCP server: eight tools over the same services the REST API uses.
+"""The MCP server: nine tools over the same services the REST API uses.
 
 Mounted at /mcp over streamable HTTP and authenticated with the same access
 token as IMAP and the REST API. Three properties of this file are load-bearing:
@@ -92,6 +92,15 @@ class AttachmentDownloadOut(BaseModel):
     size_bytes: int
     source: str
     content_base64: str
+
+
+class AttachmentTextOut(BaseModel):
+    """``get_attachment_text``'s envelope: the attachment as plain text."""
+
+    filename: str | None = None
+    content_type: str | None = None
+    text: str | None = None
+    source: str
 
 
 def _require_scope(scope: str) -> str:
@@ -534,6 +543,51 @@ def _register_tools(mcp: MCPServer) -> None:
                 size_bytes=len(payload),
                 source=source,
                 content_base64=base64.b64encode(payload).decode("ascii"),
+            )
+
+    @mcp.tool(annotations=_READ_ONLY)
+    def get_attachment_text(
+        account_id: str, message_id_hash: str, part_index: int
+    ) -> AttachmentTextOut:
+        """One attachment as plain text, for a client that cannot decode base64.
+
+        Same triple as ``download_attachment``. Returns the text Tika extracted
+        at index time (``source: "index"``); a part indexed before extraction
+        was on is extracted now (``source: "extracted"``). ``text`` is null when
+        there is nothing to extract (encrypted PDF, unknown format) or content
+        extraction is switched off.
+        """
+        from mailfallback.routers import restore
+        from mailfallback.services import index_service
+
+        with _caller(app_credential_service.SCOPE_MAIL_READ) as (db, user):
+            account = _mcp_account(db, user, account_id)
+            msg_hash = _mcp_hash(message_id_hash)
+            att = (
+                db.query(MailIndexAttachment)
+                .filter(
+                    MailIndexAttachment.account_id == account.id,
+                    MailIndexAttachment.message_id_hash == msg_hash,
+                    MailIndexAttachment.part_index == part_index,
+                )
+                .first()
+            )
+            if att is None:
+                raise LookupError("Attachment not found")
+            text, source = att.content_text, "index"
+            if text is None and _settings.tika_enabled:
+                if (
+                    att.size_bytes is not None
+                    and att.size_bytes > index_service.TIKA_MAX_PART_BYTES
+                ):
+                    raise ValueError("Attachment too large to extract text from")
+                payload, _, _ = restore.extract_attachment_bytes(db, account, msg_hash, part_index)
+                text, source = index_service._tika_put(payload, att.content_type), "extracted"
+            return AttachmentTextOut(
+                filename=att.filename,
+                content_type=att.content_type,
+                text=text,
+                source=source,
             )
 
     @mcp.tool(annotations=_READ_ONLY)
