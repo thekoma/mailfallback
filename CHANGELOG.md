@@ -1,3 +1,22 @@
+## [2026.09.2] - 2026-09-30
+
+### Documentation
+
+- Add elephant/goldfish slash commands *(claude)*
+- Record product context and the first UI critique *(design)*
+
+### Features
+
+- Unify mailbox status across every surface *(ui)*
+
+### Other
+
+- Merge pull request #258 from thekoma/docs/eg-workflow
+
+docs(claude): add elephant/goldfish slash commands
+- Merge pull request #260 from thekoma/feat/mailbox-status-resolver
+
+feat(ui): unify mailbox status across every surface
 ## [2026.09.1] - 2026-09-29
 
 ### Documentation
