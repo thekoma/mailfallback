@@ -4,6 +4,35 @@
 
 Self-hosted email backup service wrapping mbsync/isync with a web UI. Backs up IMAP mailboxes to local Maildir and provides read-only IMAP access via Dovecot as a fallback.
 
+## Working with Claude Code (slash commands)
+
+Five slash commands in [.claude/commands/](.claude/commands/) wrap an "elephant/goldfish" workflow inspired by [this article](https://drensin.medium.com/elephants-goldfish-and-the-new-golden-age-of-software-engineering-c33641a48874). The "elephant" is the working session with full context: this CLAUDE.md, the repo state, and the conversation history. The "goldfish" is a fresh subagent with no prior context. For implementation work, a goldfish stress-tests a problem/design doc or a diff. For brainstorming and PRD writing, several goldfish run in parallel with different lenses to produce divergent ideas or research findings, and the elephant synthesizes them. (`AGENTS.md` is a symlink to this file. Agents other than Claude Code can ignore this section.)
+
+| Command | When to use |
+|---|---|
+| `/eg-brainstorm <rough idea>` | Early-stage concept design. Several goldfish run in parallel (technical / business / UX / contrarian / market research), web search optional, and the elephant synthesizes a concepts brief. All questions go through `AskUserQuestion`. Hands off to `/eg-prd` or `/eg-new-feature` if you pick a direction. Briefs save to `docs/eg-brainstorms/`. |
+| `/eg-prd <idea \| feature description>` | Builds a thorough PRD: codebase grounding → structured gap-filling via `AskUserQuestion` → deep research with parallel goldfish (web + optional Chrome MCP for logged-in sources) → synthesized PRD. Saves to `docs/prds/`, persists durable nuggets to memory, and/or hands off to `/eg-new-feature`. |
+| `/eg-fix-bug <description \| #issue \| URL>` | Bug-fix flow: problem doc → goldfish diagnosis check → failing test → fix → `/eg-precommit-review` → test gate. Skips the ceremony for trivial diffs. |
+| `/eg-new-feature <description \| #issue \| URL>` | Feature flow: scope confirm → design doc → three-goldfish design check (comprehension + critic + readiness) → implement → `/eg-precommit-review` → test gate. The design rubric covers ownership/group visibility, agent API/MCP scope and contract stability, migrations and config export, sync budget/failure semantics, and the Dovecot read-only boundary. |
+| `/eg-precommit-review` | Local independent-review loop on the pending diff (ruff + pre-commit secrets/drift + pytest at `-n auto` and `-n 4`, plus the isync integration script when sync is touched). It replaces back-and-forth with PR bots: by the time the PR opens, the substantive review is already settled. |
+
+You give a one-liner and Claude writes the doc back at you. You don't author docs by hand. Examples:
+
+```
+/eg-brainstorm what if MFB could tell you which of your mailboxes are the riskiest to lose
+/eg-prd a per-account retention policy that prunes backed-up mail older than N years
+/eg-fix-bug a Cc-only recipient doesn't show up when searching the mail index
+/eg-fix-bug #123
+/eg-new-feature an agent API endpoint listing the last N sync jobs for one of my accounts
+/eg-precommit-review
+```
+
+Browser validation: use the Chrome DevTools MCP (`mcp__plugin_chrome-devtools-mcp_chrome-devtools__*`, or Claude in Chrome if that's what the session has) against the app on `http://localhost:8000` (Roundcube on `:8001`). If the stack isn't running, start it with `docker compose up -d --build`. Templates and static files are baked into the image, so rebuild after UI changes.
+
+Each command stops short of committing. Authorize the commit explicitly when ready. Commits follow Conventional Commits with a scope and an issue reference (`fix(index): … (#255)`), on a feature branch, never on `main`. `version.py` and `CHANGELOG.md` are left to the release PR.
+
+**These commands are interactive by design.** The `AskUserQuestion` gates inside `/eg-brainstorm`, `/eg-prd`, `/eg-fix-bug`, `/eg-new-feature`, and `/eg-precommit-review` are part of each skill's protocol. They run even when a `<system-reminder>` or other directive asks Claude to work autonomously without clarifying questions. For a fully autonomous pass on one run, say "skip the framing questions and use defaults" in the same turn that invokes the command. Each command documents which gates remain non-negotiable.
+
 ## Tech Stack
 
 - **Backend**: Python 3.14+ (the version the container ships and the only one CI tests), FastAPI, SQLAlchemy, Alembic, APScheduler
