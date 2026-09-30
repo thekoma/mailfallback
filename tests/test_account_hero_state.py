@@ -241,7 +241,7 @@ def test_error_hero_ignores_older_job_when_host_guard_failed_unstarted(
     job's message, log tail or "Failed <time>"."""
     create_user(db_session, "hadmin", "pass", UserRole.admin, store_id=default_store.id)
     old_error = "IMAP command 'LOGIN' returned NO - old failure A"
-    a = _app_password_box(db_session, default_store)
+    a = _app_password_box(db_session, default_store, total_messages=4321)
     now = datetime.now(UTC)
     db_session.add(
         SyncJob(
@@ -294,6 +294,10 @@ def test_error_hero_ignores_older_job_when_host_guard_failed_unstarted(
         for stale in ("Old failure A headline", "old technical detail A", "old tail line A"):
             assert stale not in html
         assert "Failed 3 days ago" not in html
+        assert "/log/download" not in html
+        # Account facts, not job facts: they stay true and stay visible.
+        assert "Last success:" in html
+        assert "4,321 msgs" in html
 
 
 def test_error_hero_keeps_snap_for_runtime_cap_kill(db_session, default_store):

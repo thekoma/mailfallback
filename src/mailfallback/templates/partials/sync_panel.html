@@ -214,13 +214,16 @@
     </details>
     {% endif %}
 
-    {% if last_job %}
+    {# last_job is None when it didn't cause the current error: drop the
+       job-derived facts, keep the account's own. #}
+    {% if last_job or account.last_sync_at or account.total_messages %}
+    {% set sep = joiner(" · ") %}
     <p class="text-xs text-muted mt-025">
-        Failed {{ last_job.completed_at | time_ago }}
-        {% if account.last_sync_at %} · Last success: {{ account.last_sync_at | time_ago }}{% endif %}
-        {% if account.total_messages %} · {{ account.total_messages | number }} msgs{% endif %}
-        {% if last_job.log_path %}
-        · <a href="/api/sync/jobs/{{ last_job.id }}/log/download" class="text-xs">Download full log</a>
+        {% if last_job %}{{ sep() }}Failed {{ last_job.completed_at | time_ago }}{% endif %}
+        {% if account.last_sync_at %}{{ sep() }}Last success: {{ account.last_sync_at | time_ago }}{% endif %}
+        {% if account.total_messages %}{{ sep() }}{{ account.total_messages | number }} msgs{% endif %}
+        {% if last_job and last_job.log_path %}
+        {{ sep() }}<a href="/api/sync/jobs/{{ last_job.id }}/log/download" class="text-xs">Download full log</a>
         {% endif %}
     </p>
     {% endif %}
