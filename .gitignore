@@ -57,7 +57,9 @@ data/
 .superpowers/
 
 # Agent working artifacts — not public (kept locally, untracked)
-.claude/
+.claude/*
+# ...except the project slash commands CLAUDE.md documents
+!.claude/commands/
 docs/superpowers/
 
 # MkDocs build output
