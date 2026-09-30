@@ -11,10 +11,12 @@
         FTS {% if fts.status == 'running' %}{{ fts.progress_current }}/{{ fts.progress_total }}{% elif fts.status == 'failed' %}error{% else %}idle{% endif %}
     </span>
 
-    <span class="status-badge {% if syncing_count > 0 and error_accounts %}status-active{% elif error_accounts %}status-error{% elif syncing_count > 0 %}status-active{% else %}status-neutral{% endif %}"
+    <span class="status-badge {% if error_accounts %}status-error{% elif attention_accounts %}status-warning{% elif syncing_count > 0 %}status-active{% else %}status-neutral{% endif %}"
           onclick="toggleStatusDetail('sync')">
         <i data-lucide="refresh-cw" class="icon-sm {% if syncing_count > 0 %}spin{% endif %}"></i>
-        {{ syncing_count }} syncing{% if error_accounts %} · {{ error_accounts|length }} errors{% endif %}
+        {{ syncing_count }} syncing
+        {%- if error_accounts %} · {{ error_accounts|length }} error{{ 's' if error_accounts|length != 1 else '' }}{% endif %}
+        {%- if attention_accounts %} · {{ attention_accounts|length }} need{{ 's' if attention_accounts|length == 1 else '' }} sign-in{% endif %}
     </span>
 
     <span class="status-badge {% if active_restores %}status-active{% else %}status-neutral{% endif %}"
@@ -80,15 +82,20 @@
 </div>
 
 <div id="status-detail-sync" class="status-detail" style="display:none;">
-    {% if syncing_count == 0 and not error_accounts %}
-    <span class="text-small text-muted">All accounts idle</span>
+    {% if syncing_count == 0 and not error_accounts and not attention_accounts %}
+    <span class="text-small text-muted">No mailbox syncing</span>
     {% else %}
     {% if syncing_count > 0 %}
-    <span class="text-small">{{ syncing_count }} sync job{{ 's' if syncing_count != 1 else '' }} running</span><br>
+    <span class="text-small">{{ syncing_count }} mailbox{{ 'es' if syncing_count != 1 else '' }} syncing</span><br>
     {% endif %}
     {% for acct in error_accounts %}
     <div class="text-small text-error-state">
-        &#10007; <a href="/accounts/{{ acct.id }}">{{ acct.name }}</a> — {{ acct.last_error[:60] if acct.last_error else 'sync failed' }}
+        &#10007; <a href="/accounts/{{ acct.id }}">{{ acct.name }}</a> — {{ acct.label }}{% if acct.detail %}: {{ acct.detail[:60] }}{% endif %}
+    </div>
+    {% endfor %}
+    {% for acct in attention_accounts %}
+    <div class="text-small text-warn-state">
+        &#9888; <a href="/accounts/{{ acct.id }}">{{ acct.name }}</a> — {{ acct.label }}{% if acct.detail %}: {{ acct.detail[:60] }}{% endif %}
     </div>
     {% endfor %}
     {% endif %}

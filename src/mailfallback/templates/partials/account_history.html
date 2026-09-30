@@ -1,15 +1,8 @@
-{% macro job_row(job) %}
+{% macro job_row(job, outcomes) %}
 <tr>
     <td>{{ job.requested_at.strftime('%Y-%m-%d %H:%M') if job.requested_at else '' }}</td>
     <td>{{ job.source }}</td>
-    <td>
-        {% if job.status.value == 'completed' %}<span class="badge badge-idle">{{ job.status.value }}</span>
-        {% elif job.status.value == 'failed' %}<span class="badge badge-error">{{ job.status.value }}</span>
-        {% elif job.status.value == 'running' %}<span class="badge badge-syncing">{{ job.status.value }}</span>
-        {% elif job.status.value == 'pending' %}<span class="badge badge-syncing">{{ job.status.value }}</span>
-        {% else %}<span class="badge">{{ job.status.value }}</span>
-        {% endif %}
-    </td>
+    <td>{% set o = outcomes[job.id] %}<span class="badge {{ o.badge }}">{{ o.label }}</span></td>
     <td>{{ job.exit_code if job.exit_code is not none else '—' }}</td>
     <td>{% if job.log %}<button class="icon-btn" onclick="showLogModal(this)" data-log="{{ job.log|e }}">View</button>{% endif %}</td>
 </tr>
@@ -23,7 +16,7 @@
     </thead>
     <tbody>
         {% for job in jobs[:3] %}
-        {{ job_row(job) }}
+        {{ job_row(job, outcomes) }}
         {% endfor %}
     </tbody>
 </table>
@@ -46,7 +39,7 @@
     <table>
         <tbody>
             {% for job in jobs[3:] %}
-            {{ job_row(job) }}
+            {{ job_row(job, outcomes) }}
             {% endfor %}
         </tbody>
     </table>

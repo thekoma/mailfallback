@@ -30,6 +30,7 @@ from mailfallback.dependencies import Principal, get_db, require_scope
 from mailfallback.models import Account, MailIndexMessage
 from mailfallback.routers.restore import RESOLVE_UIDS_MAX_IDS
 from mailfallback.services import app_credential_service, preview_service, search_service
+from mailfallback.services.mailbox_status import MailboxStatus, resolve_many
 from mailfallback.services.sync_worker import submit_sync_job
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,50 @@ router = APIRouter(prefix="/api/v1/agent", tags=["agent"], dependencies=[Depends
 _READ = require_scope(app_credential_service.SCOPE_MAIL_READ)
 
 
+class MailboxStatusOut(BaseModel):
+    """A mailbox's health, from the same resolver every UI surface uses.
+
+    ``state``, ``tone`` and ``action`` are plain strings, not JSON-Schema
+    enums, so a new value never breaks a generated client: the known values
+    are listed in each description and may grow without a /v2. Treat an
+    unknown ``state`` by its ``tone``. ``label`` is display text, not a
+    contract. There is deliberately no free-text detail: it would carry raw
+    ``last_error`` (untrusted IMAP-server / mbsync output).
+    """
+
+    state: str = Field(
+        description=(
+            "One of: migrating, suspended, sign_in_needed, first_sync, syncing, paused, "
+            "stopped, error, initial_sync, initial_stalled, waiting, stale, current. "
+            "New values may be added."
+        )
+    )
+    tone: str = Field(
+        description="One of: ok, active, attention, error, muted. New values may be added."
+    )
+    label: str = Field(description="Informational English display text; not a stable contract.")
+    action: str | None = Field(
+        description=(
+            "One of: reconnect, update_password, retry, sync_now, or null. New values may be added."
+        )
+    )
+    needs_attention: bool
+    last_success_at: datetime | None = None
+    resumes_at: datetime | None = None
+
+    @classmethod
+    def from_status(cls, status: MailboxStatus) -> "MailboxStatusOut":
+        return cls(
+            state=status.state.value,
+            tone=status.tone.value,
+            label=status.label,
+            action=status.action.value if status.action else None,
+            needs_attention=status.needs_attention,
+            last_success_at=status.last_success_at,
+            resumes_at=status.resumes_at,
+        )
+
+
 class MailboxOut(BaseModel):
     account_id: str
     name: str
@@ -57,6 +102,7 @@ class MailboxOut(BaseModel):
     last_sync_at: datetime | None = None
     indexed_messages: int
     folders: list[str]
+    status: MailboxStatusOut
 
 
 class MessageAttachmentOut(BaseModel):
@@ -222,6 +268,7 @@ def list_mailboxes(principal: Principal = Depends(_READ), db: Session = Depends(
         .all()
     ):
         folders.setdefault(account_id, []).append(folder)
+    statuses = resolve_many(db, accounts)
 
     return [
         MailboxOut(
@@ -232,6 +279,7 @@ def list_mailboxes(principal: Principal = Depends(_READ), db: Session = Depends(
             last_sync_at=a.last_sync_at,
             indexed_messages=counts.get(a.id, 0),
             folders=sorted(folders.get(a.id, [])),
+            status=MailboxStatusOut.from_status(statuses[a.id]),
         )
         for a in accounts
     ]

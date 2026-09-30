@@ -2,7 +2,12 @@
 revoked OAuth token (e.g. after a Gmail password change) is visible without
 opening the account (2026-06-28)."""
 
-from mailfallback.models import SyncState, UserRole
+import re
+import uuid
+from datetime import UTC, datetime, timedelta
+
+from mailfallback.models import Account, AuthType, JobStatus, SyncJob, SyncState, UserRole
+from mailfallback.services import sync_worker
 from mailfallback.services.account_service import assign_owner, create_account
 from mailfallback.services.user_service import create_user
 
@@ -28,3 +33,171 @@ def test_dashboard_flags_needs_reauth_account(client, db_session, default_store)
     # surfaced in the Needs Attention panel with a one-click reconnect link
     assert "Sign-in expired" in resp.text
     assert f"/auth/google/start?account_id={account.id}" in resp.text
+
+
+# --- mailbox status resolver (docs/designs/mailbox-status-resolver.md) -------
+
+
+def _admin(client, db_session, default_store):
+    user = create_user(db_session, "dashadmin", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "dashadmin", "password": "pass"})
+    return user
+
+
+def _box(db_session, default_store, **kw):
+    kw.setdefault("initial_sync_completed_at", datetime.now(UTC) - timedelta(days=30))
+    kw.setdefault("last_sync_at", datetime.now(UTC) - timedelta(minutes=5))
+    account = Account(
+        name=kw.pop("name", "Box"),
+        provider=kw.pop("provider", "other"),
+        imap_host="imap.example.com",
+        maildir_path=f"/data/mailboxes/{uuid.uuid4()}",
+        store_id=default_store.id,
+        **kw,
+    )
+    db_session.add(account)
+    db_session.commit()
+    return account
+
+
+def _attention_block(html: str) -> str:
+    m = re.search(r"Needs Attention.*?</details>", html, re.S)
+    return m.group(0) if m else ""
+
+
+def test_initial_sync_is_not_an_attention_item(client, db_session, default_store):
+    _admin(client, db_session, default_store)
+    a = _box(
+        db_session,
+        default_store,
+        name="FreshGmail",
+        initial_sync_completed_at=None,
+        last_sync_at=None,
+        initial_sync_total_messages=5000,
+    )
+    sync_worker._live_progress["dash-job"] = {"account_id": a.id, "pct": 40.0}
+    try:
+        resp = client.get("/")
+    finally:
+        sync_worker._live_progress.pop("dash-job", None)
+    assert resp.status_code == 200
+    assert "FreshGmail" not in _attention_block(resp.text)
+    assert "initial sync" not in _attention_block(resp.text)
+
+
+def test_reauth_badge_is_warning_not_error(client, db_session, default_store):
+    _admin(client, db_session, default_store)
+    _box(
+        db_session,
+        default_store,
+        name="Outlook",
+        provider="microsoft",
+        auth_type=AuthType.oauth2,
+        credentials="x",
+        sync_state=SyncState.needs_reauth,
+    )
+    block = _attention_block(client.get("/").text)
+    assert "Sign-in expired" in block
+    assert '<span class="badge badge-warning"><i data-lucide="log-in"' in block
+    assert "badge-error" not in block
+
+
+def test_reauth_turns_source_stage_to_attention(client, db_session, default_store):
+    _admin(client, db_session, default_store)
+    for i in range(4):
+        _box(db_session, default_store, name=f"ok{i}")
+    _box(
+        db_session,
+        default_store,
+        name="Outlook",
+        provider="microsoft",
+        auth_type=AuthType.oauth2,
+        credentials="x",
+        sync_state=SyncState.needs_reauth,
+    )
+    text = client.get("/").text
+    source = re.search(r"</i> Source.*?</div>\s*</a>", text, re.S).group(0)
+    assert "4 of 5 connected" in source
+    assert "stats-dot-warning" in source
+    local = re.search(r"</i> Local backup.*?</div>\s*</a>", text, re.S).group(0)
+    assert "1 of 5 need attention" in local
+    assert "stats-dot-warning" in local
+
+
+def test_credential_error_offers_update_password_link(client, db_session, default_store):
+    _admin(client, db_session, default_store)
+    a = _box(
+        db_session,
+        default_store,
+        name="OldISP",
+        auth_type=AuthType.app_password,
+        sync_state=SyncState.error,
+        last_error="AUTHENTICATIONFAILED Invalid credentials",
+    )
+    block = _attention_block(client.get("/").text)
+    assert f'href="/accounts/{a.id}#admin-edit"' in block
+    assert "Update password" in block
+    assert f'hx-post="/api/sync/{a.id}"' not in block
+
+
+def test_recent_activity_budget_pause_is_not_failed(client, db_session, default_store):
+    _admin(client, db_session, default_store)
+    a = _box(
+        db_session,
+        default_store,
+        name="Fastmail",
+        pause_reason="budget",
+        sync_paused_until=datetime.now(UTC) + timedelta(hours=5),
+    )
+    now = datetime.now(UTC)
+    db_session.add(
+        SyncJob(
+            account_id=a.id,
+            status=JobStatus.failed,
+            failure_kind="budget_paused",
+            requested_at=now - timedelta(minutes=3),
+            started_at=now - timedelta(minutes=3),
+            completed_at=now - timedelta(minutes=1),
+        )
+    )
+    db_session.commit()
+    text = client.get("/").text
+    activity = re.search(r"Recent Activity.*?</details>", text, re.S).group(0)
+    assert "paused (daily limit)" in activity
+    assert "badge-error" not in activity
+    assert "badge-info" in activity
+
+
+def test_suspended_error_is_not_attention(client, db_session, default_store):
+    _admin(client, db_session, default_store)
+    _box(
+        db_session,
+        default_store,
+        name="OffOnPurpose",
+        suspended=True,
+        sync_state=SyncState.error,
+        last_error="boom",
+    )
+    text = client.get("/").text
+    assert "OffOnPurpose" not in _attention_block(text)
+    assert "<strong>0</strong> errors" in text
+
+
+def test_paused_and_stale_item_still_offers_sync_now(client, db_session, default_store):
+    """The agent-facing action is None while paused, but the UI trigger
+    overrides a pause, so the dashboard button follows the state."""
+    _admin(client, db_session, default_store)
+    a = _box(
+        db_session,
+        default_store,
+        name="LongPaused",
+        pause_reason="budget",
+        sync_paused_until=datetime.now(UTC) + timedelta(hours=5),
+        last_sync_at=datetime.now(UTC) - timedelta(days=10),
+        sync_schedule="0 * * * *",
+    )
+    block = _attention_block(client.get("/").text)
+    assert "LongPaused" in block
+    assert "Last sync was 10 days ago." in block
+    assert f'hx-post="/api/sync/{a.id}"' in block
+    assert "Sync now" in block

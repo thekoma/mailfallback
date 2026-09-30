@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.orm import Session
 
 from mailfallback.config import settings
+from mailfallback.constants import TOKEN_REFRESH_FAILED
 from mailfallback.db import SessionLocal
 from mailfallback.models import Account, JobStatus, SyncJob, SyncState
 from mailfallback.services import index_service, sync_budget, sync_failures
@@ -30,6 +31,11 @@ _sync_executor: ThreadPoolExecutor | None = None
 _running_procs: dict[str, subprocess.Popen] = {}
 _running_logs: dict[str, list[str]] = {}
 _killed_signals: dict[str, str] = {}
+# job_id → the runtime cap (seconds) that killed it. The deadline stop goes
+# through stop_sync_job like a user Stop, so without this marker the two are
+# indistinguishable at finalisation — and a cap kill is a real failure, not a
+# deliberate stop. Consumed at finalisation; discarded in the finally.
+_deadline_stops: dict[str, float] = {}
 
 # === Byte meter / sampler (sync-budget spec §2/§3/§5) ===
 # Sampling cadence of the maildir walk. Module constant so tests shrink it.
@@ -53,9 +59,9 @@ def get_live_log(job_id: str) -> str | None:
     return None
 
 
-# Sentinel error message: set on the account when the OAuth refresh token is
-# rejected, matched by the UI to surface the re-authenticate flow.
-TOKEN_REFRESH_FAILED = "Failed to refresh OAuth2 token"
+# TOKEN_REFRESH_FAILED (the sentinel set when the OAuth refresh token is
+# rejected) lives in mailfallback.constants; it stays importable from here
+# via the import above.
 
 
 def get_sync_executor() -> ThreadPoolExecutor:
@@ -649,6 +655,7 @@ def _read_until_deadline(job_id: str, stdout, deadline_s: float, on_line) -> Non
     while True:
         if time.monotonic() - start > deadline_s:
             logger.warning("mbsync job %s exceeded %ss runtime cap — stopping", job_id, deadline_s)
+            _deadline_stops[job_id] = deadline_s
             with contextlib.suppress(Exception):
                 stop_sync_job(job_id)
             return
@@ -1095,6 +1102,7 @@ def execute_sync_job(db: Session, job_id: str) -> None:
         job_signal = _killed_signals.pop(job_id, None)
         if job_signal:
             job.signal = job_signal
+        deadline_cap = _deadline_stops.pop(job_id, None)
 
         snap = parse_mbsync_lines(result_output.splitlines())
         job.mbsync_version = snap.mbsync_version
@@ -1202,6 +1210,29 @@ def execute_sync_job(db: Session, job_id: str) -> None:
                 "sync_paused",
                 f"{account.name}: sync paused (budget_paused)",
                 "Self-recovering; will resume automatically.",
+            )
+        elif job_signal and deadline_cap is not None:
+            # Killed by the runtime cap, not by a person: a real failure.
+            # failure_kind="error" keeps it red everywhere (a user Stop
+            # leaves failure_kind None and reads as a muted "Stopped"), and
+            # last_error names the cause instead of repeating the log head.
+            cap_msg = f"Sync exceeded the {deadline_cap:g}s runtime cap"
+            job.status = JobStatus.failed
+            job.failure_kind = "error"
+            job.log = f"{job.log}\n{cap_msg}" if job.log else cap_msg
+            account.sync_state = SyncState.error
+            account.last_error = cap_msg
+            account.sync_paused_until = None
+            account.pause_reason = None
+            logger.warning("Sync for %s hit the runtime cap (%ss)", account.name, deadline_cap)
+            from mailfallback.services import notification_service
+
+            notification_service.notify_account_problem(
+                db,
+                account,
+                "sync_error",
+                f"{account.name}: sync failed",
+                cap_msg,
             )
         elif job_signal:
             # User-initiated stop: today's behavior (a budget stop also
@@ -1319,6 +1350,7 @@ def execute_sync_job(db: Session, job_id: str) -> None:
         # discard here too (idempotent) so a leaked marker can't relabel a
         # FUTURE job of the same id (impossible) or sit forever in the set.
         _budget_stops.discard(job_id)
+        _deadline_stops.pop(job_id, None)
         if config_path and not settings.debug:
             os.unlink(config_path)
         if token_file and os.path.exists(token_file):

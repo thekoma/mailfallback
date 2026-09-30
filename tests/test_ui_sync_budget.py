@@ -179,6 +179,73 @@ def test_accounts_table_error_chip_unchanged(client, db_session, default_store):
     assert '<span class="badge badge-error"><i data-lucide="alert-circle"' in resp.text
 
 
+def test_accounts_table_reauth_shows_sign_in_needed(client, db_session, default_store):
+    _login(client, db_session, default_store)
+    _mk_account(
+        db_session,
+        default_store,
+        auth_type="oauth2",
+        credentials="x",
+        sync_state=SyncState.needs_reauth,
+        initial_sync_completed_at=datetime.now(UTC),
+    )
+
+    resp = client.get("/partials/accounts-table")
+
+    assert '<span class="badge badge-warning"><i data-lucide="key-round"' in resp.text
+    assert "Sign-in needed" in resp.text
+    assert "badge-error" not in resp.text
+
+
+def test_accounts_table_oauth_without_credentials_shows_sign_in_needed(
+    client, db_session, default_store
+):
+    """Was a red "Unauthenticated" chip: nothing is broken, a sign-in is due."""
+    _login(client, db_session, default_store)
+    _mk_account(db_session, default_store, auth_type="oauth2", credentials=None)
+
+    resp = client.get("/partials/accounts-table")
+
+    assert "Sign-in needed" in resp.text
+    assert "Unauthenticated" not in resp.text
+    assert "badge-error" not in resp.text
+
+
+def test_accounts_table_hidden_account_shows_status_too(client, db_session, default_store):
+    _login(client, db_session, default_store)
+    _mk_account(
+        db_session,
+        default_store,
+        enabled=False,
+        initial_sync_completed_at=datetime.now(UTC),
+        last_sync_at=datetime.now(UTC),
+    )
+
+    resp = client.get("/partials/accounts-table")
+
+    assert "Hidden" in resp.text
+    assert (
+        '<span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i>'
+        " idle</span>" in resp.text
+    )
+
+
+def test_accounts_table_first_sync_chip_has_no_title(client, db_session, default_store):
+    _login(client, db_session, default_store)
+    account = _mk_account(db_session, default_store, sync_state=SyncState.syncing)
+    _seed_progress(account)
+    try:
+        resp = client.get("/partials/accounts-table")
+    finally:
+        _clear_progress()
+
+    assert (
+        '<span class="badge badge-info"><i data-lucide="loader" class="icon-sm spin"></i>'
+        " Initial sync 38%</span>"
+    ) in resp.text
+    assert 'title="First full sync incomplete"' not in resp.text
+
+
 # ---------------------------------------------------------------------------
 # Account detail: initial-sync panel + budget field
 # ---------------------------------------------------------------------------
@@ -290,10 +357,12 @@ def test_api_patch_budget(client, db_session, default_store):
 # ---------------------------------------------------------------------------
 
 
-def test_dashboard_excludes_paused_and_shows_initial_info(client, db_session, default_store):
+def test_dashboard_excludes_paused_and_initial_sync_from_attention(
+    client, db_session, default_store
+):
     """A self-recovering pause never reads as an error (account-level
-    pause_reason check); initial-syncing accounts surface as an INFO line
-    with pct/ETA, not as an error with a Retry button."""
+    pause_reason check), and an initial sync in progress is not an attention
+    item at all — it is working (mailbox status resolver)."""
     _login(client, db_session, default_store)
     # Artificial worst case: error state WITH a pause set — the account-level
     # exclusion must keep it out of the error stat and the error list.
@@ -317,9 +386,10 @@ def test_dashboard_excludes_paused_and_shows_initial_info(client, db_session, de
 
     text = resp.text
     assert resp.status_code == 200
-    # Initial-sync info line, compact, with pct + ETA.
-    assert "initial sync 38%" in text
-    assert "ETA ≈ 3d" in text
+    # The initial sync is not listed under Needs Attention.
+    assert "initial sync 38%" not in text
+    assert "ETA ≈ 3d" not in text
+    assert "Needs Attention" not in text
     # The paused account is not listed as a red error.
     assert "OVERQUOTA tail" not in text
 
@@ -374,8 +444,8 @@ def test_first_sync_panel_pico_progress_and_recap(client, db_session, default_st
     real = ui_accounts._compute_hero_state
 
     def fake_state(acc, db):
-        _state, _snap, last_job = real(acc, db)
-        return "first-sync", snap, last_job
+        _state, _snap, last_job, status = real(acc, db)
+        return "first-sync", snap, last_job, status
 
     try:
         with patch.object(ui_accounts, "_compute_hero_state", fake_state):
@@ -432,8 +502,8 @@ def test_first_sync_panel_early_phase_indeterminate(client, db_session, default_
     real = ui_accounts._compute_hero_state
 
     def fake_state(acc, db):
-        _s, _sn, lj = real(acc, db)
-        return "first-sync", snap, lj
+        _s, _sn, lj, st = real(acc, db)
+        return "first-sync", snap, lj, st
 
     # No sampler entry -> pct None; total None too.
     with patch.object(ui_accounts, "_compute_hero_state", fake_state):
@@ -488,8 +558,8 @@ def test_first_sync_recap_folders_shows_total_when_known(client, db_session, def
     real = ui_accounts._compute_hero_state
 
     def fake_state(acc, db):
-        _s, _sn, lj = real(acc, db)
-        return "first-sync", snap, lj
+        _s, _sn, lj, st = real(acc, db)
+        return "first-sync", snap, lj, st
 
     try:
         with patch.object(ui_accounts, "_compute_hero_state", fake_state):
@@ -533,8 +603,8 @@ def test_first_sync_recap_folders_clamped_to_total(client, db_session, default_s
     real = ui_accounts._compute_hero_state
 
     def fake_state(acc, db):
-        _s, _sn, lj = real(acc, db)
-        return "first-sync", snap, lj
+        _s, _sn, lj, st = real(acc, db)
+        return "first-sync", snap, lj, st
 
     try:
         with patch.object(ui_accounts, "_compute_hero_state", fake_state):

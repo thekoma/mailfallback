@@ -151,6 +151,9 @@
             hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
             <i data-lucide="refresh-cw" class="icon-md"></i> Try again
         </button>
+        {% if status and status.action and status.action.value == "update_password" and can_modify %}
+        <a class="icon-btn" href="#admin-edit"><i data-lucide="key-round" class="icon-md"></i> Update password</a>
+        {% endif %}
         {% if snap and snap.errors and snap.errors[0].action in ("retry",) %}
         <button class="icon-btn" title="Test connection"
             onclick="testConnectionFromHero('{{ account.imap_host }}', {{ account.imap_port }}, '{{ account.tls_type }}')">
@@ -232,10 +235,12 @@
     </div>
 </div>
 <div class="hero-body">
+    {% if can_modify %}
     <a href="/auth/{{ account.provider }}/start?account_id={{ account.id }}" class="icon-btn primary">
         {% with provider=account.provider %}{% include "partials/provider_logo.html" %}{% endwith %}
         Reconnect with {{ account.provider | capitalize }}
     </a>
+    {% endif %}
     <p class="text-small text-muted mt-025">
         Your {{ account.provider | capitalize }} sign-in expired. Sync will resume automatically as soon as you reconnect.
         {% if account.last_sync_at %}
@@ -288,6 +293,55 @@
         {%- if live.budget_bytes %} · {{ (live.bytes_today or 0) | filesizeformat }} / {{ live.budget_bytes | filesizeformat }} today{% endif -%}
     </p>
     {% endif %}
+</div>
+
+{% elif hero_state == "stopped" %}
+{# ── STATE: STOPPED (a user stopped the last sync — not a failure) ── #}
+<div class="hero-header">
+    <div class="hero-title">
+        <i data-lucide="circle-slash" class="icon-lg"></i>
+        <strong>Sync stopped</strong>
+    </div>
+    <div class="hero-actions">
+        <button class="icon-btn" title="Sync now"
+            hx-post="/api/sync/{{ account.id }}" hx-swap="none"
+            hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);if(d.warning){showToast(d.warning,'error')}htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
+            <i data-lucide="refresh-cw" class="icon-md"></i> Sync now
+        </button>
+    </div>
+</div>
+<div class="hero-body">
+    <p>{{ status.detail }}
+    {% if account.last_sync_at %}
+    <br>Last sync {{ account.last_sync_at | time_ago }} · {{ account.total_messages | number }} messages
+    {% endif %}
+    </p>
+</div>
+
+{% elif hero_state == "out-of-date" %}
+{# ── STATE: OUT OF DATE (nothing copied for longer than the schedule allows) ── #}
+<div class="hero-header">
+    <div class="hero-title">
+        <i data-lucide="alert-triangle" class="icon-lg"></i>
+        <strong>{{ status.label }}</strong>
+    </div>
+    <div class="hero-actions">
+        <button class="icon-btn" title="Sync now"
+            hx-post="/api/sync/{{ account.id }}" hx-swap="none"
+            hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);if(d.warning){showToast(d.warning,'error')}htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
+            <i data-lucide="refresh-cw" class="icon-md"></i> Sync now
+        </button>
+    </div>
+</div>
+<div class="hero-body">
+    <p>{{ status.detail }}
+    {% if status.resumes_at %}
+    <br>Paused — resumes {{ status.resumes_at | time_until }}
+    {% endif %}
+    {% if account.last_sync_at %}
+    <br>Last sync {{ account.last_sync_at | time_ago }} · {{ account.total_messages | number }} messages
+    {% endif %}
+    </p>
 </div>
 
 {% elif hero_state == "paused" %}

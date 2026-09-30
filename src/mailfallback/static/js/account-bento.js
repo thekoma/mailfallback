@@ -120,8 +120,12 @@
         // URL hash takes priority over localStorage so deep-links from /recover
         // and similar wizards land on the right section open. Hash format:
         // #admin-edit, #admin-offsite, #admin-ownership, etc. Never auto-open delete.
-        const hashTarget = (location.hash || "").replace(/^#admin-/, "");
-        if (hashTarget && hashTarget !== "delete" && document.getElementById("admin-" + hashTarget)) {
+        // Returns true when the hash named a section and it was opened.
+        function openFromHash() {
+            const hashTarget = (location.hash || "").replace(/^#admin-/, "");
+            if (!hashTarget || hashTarget === "delete" || !document.getElementById("admin-" + hashTarget)) {
+                return false;
+            }
             open(hashTarget);
             localStorage.setItem(storageKey, hashTarget);
             // Defer scroll to next tick so the layout has settled.
@@ -131,6 +135,18 @@
                     block: "start",
                 });
             }, 50);
+            // Drop the hash once it has done its job: a second click on the
+            // same "#admin-edit" link must change the hash again, or no
+            // hashchange fires and the link silently stops working.
+            history.replaceState(null, "", location.pathname + location.search);
+            return true;
+        }
+
+        // In-page links (the hero's "Update password" → #admin-edit) change
+        // only the hash, so the load-time check alone would never see them.
+        window.addEventListener("hashchange", openFromHash);
+
+        if (openFromHash()) {
             return;
         }
 
