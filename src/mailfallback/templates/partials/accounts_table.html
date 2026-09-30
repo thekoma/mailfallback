@@ -2,12 +2,12 @@
 <table>
     <thead>
         <tr>
-            <th class="cell-wrap">Account</th>
+            <th class="cell-wrap">Mailbox</th>
             {% if user and user.role.value == "admin" %}<th>Owner</th>{% endif %}
-            <th>Auth</th>
+            <th>Sign-in</th>
             <th>Stats</th>
             <th>Status</th>
-            <th>Last Sync</th>
+            <th>Last sync</th>
             <th>Repository</th>
             <th class="text-right">Actions</th>
         </tr>
@@ -29,22 +29,19 @@
             </td>
             {% endif %}
             <td>
-                {% if account.auth_type.value == "oauth2" %}
                 <span class="auth-badge">
+                    {% if account.auth_type.value == "oauth2" %}
                     {% with provider=account.provider %}{% include "partials/provider_logo.html" %}{% endwith %}
-                    {% if account.provider == "microsoft" %}Microsoft{% elif account.provider == "google" %}Google{% else %}OAuth2{% endif %}
-                </span>
-                {% else %}
-                <span class="auth-badge">
+                    {% else %}
                     <i data-lucide="key-round" class="icon-sm"></i>
-                    Password
+                    {% endif %}
+                    {{ account | auth_label }}
                 </span>
-                {% endif %}
             </td>
             <td class="cell-stats">
                 {% if account.folder_stats %}
                 <span class="text-small">
-                    <i data-lucide="mail" class="icon-sm icon-inline"></i>{{ account.total_messages }}{% if account.unread_messages %} <span class="text-muted">· {{ account.unread_messages }} unread</span>{% endif %}{% if account.maildir_size_bytes %} <span class="text-muted">· {{ account.maildir_size_bytes|filesizeformat }}</span>{% endif %}
+                    <i data-lucide="mail" class="icon-sm icon-inline"></i>{{ account.total_messages | number }}{% if account.unread_messages %} <span class="text-muted">· {{ account.unread_messages | number }} unread</span>{% endif %}{% if account.maildir_size_bytes %} <span class="text-muted">· {{ account.maildir_size_bytes|filesizeformat }}</span>{% endif %}
                 </span>
                 {% else %}
                 <span class="text-muted">—</span>
@@ -88,7 +85,7 @@
             <td>
                 <div class="actions flex-end">
                     <div class="dropdown-wrap">
-                        <button class="icon-btn" onclick="toggleDropdown(this, event)">
+                        <button class="icon-btn" title="Mailbox actions" aria-label="Mailbox actions" onclick="toggleDropdown(this, event)">
                             <i data-lucide="more-vertical" class="icon-md"></i>
                         </button>
                         <div class="dropdown-menu hidden">
@@ -96,7 +93,7 @@
                             <a class="dropdown-item dropdown-danger"
                                 hx-post="/api/sync/{{ account.id }}/stop" hx-swap="none"
                                 hx-on::after-request="startSyncPolling()">
-                                <i data-lucide="square" class="icon-sm"></i> Stop Sync
+                                <i data-lucide="square" class="icon-sm"></i> Stop sync
                             </a>
                             {% else %}
                             <a class="dropdown-item {% if account.migrating or account.suspended or not account.is_authenticated %}dropdown-disabled{% endif %}"
@@ -104,7 +101,7 @@
                                 hx-post="/api/sync/{{ account.id }}" hx-swap="none"
                                 hx-on::after-request="startSyncPolling()"
                                 {% endif %}>
-                                <i data-lucide="refresh-cw" class="icon-sm"></i> Sync Now
+                                <i data-lucide="refresh-cw" class="icon-sm"></i> Sync now
                             </a>
                             {% endif %}
                             <hr class="dropdown-divider">

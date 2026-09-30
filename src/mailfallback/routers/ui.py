@@ -30,7 +30,10 @@ from mailfallback.services.mailbox_status import (
     Tone,
     resolve_job_outcome,
     resolve_many,
+    sign_in_message,
+    sign_in_never_completed,
 )
+from mailfallback.services.sync_progress import UNKNOWN_ERROR_MESSAGE, error_category
 from mailfallback.services.user_service import authenticate_user
 from mailfallback.version import __version__
 
@@ -158,6 +161,31 @@ def _time_ago_class(value):
     return "sync-error"
 
 
+# Providers that refuse the normal account password over IMAP and need an app
+# password. AuthType.app_password also covers the plain password of a generic
+# IMAP server (provider "other", the PEC providers, …), which is just a password.
+_APP_PASSWORD_PROVIDERS = frozenset({"google", "microsoft", "yahoo", "icloud"})
+
+
+# Providers whose IMAP host is fixed: the edit form hides the host field for
+# them, so no copy may tell the owner to check it.
+FIXED_HOST_PROVIDERS = ("google", "microsoft", "yahoo", "icloud", "protonmail")
+
+
+def _password_noun(account) -> str:
+    """ "app password" or "password" — the one word every password surface uses."""
+    return "app password" if account.provider in _APP_PASSWORD_PROVIDERS else "password"
+
+
+def _auth_label(account) -> str:
+    """How a mailbox signs in, in the owner's words (not the SASL mechanism)."""
+    if str(getattr(account.auth_type, "value", account.auth_type)) != "oauth2":
+        return _password_noun(account).capitalize()
+    return {"google": "Google sign-in", "microsoft": "Microsoft sign-in"}.get(
+        account.provider, "Sign-in"
+    )
+
+
 def _number_format(value):
     try:
         return f"{int(value):,}"
@@ -172,6 +200,12 @@ templates.env.filters["time_until"] = _time_until
 templates.env.filters["duration_human"] = _duration_human
 templates.env.filters["time_ago_class"] = _time_ago_class
 templates.env.filters["number"] = _number_format
+templates.env.filters["auth_label"] = _auth_label
+templates.env.filters["password_noun"] = _password_noun
+templates.env.globals["fixed_host_providers"] = FIXED_HOST_PROVIDERS
+templates.env.globals["error_category"] = error_category
+templates.env.globals["sign_in_message"] = sign_in_message
+templates.env.globals["sign_in_never_completed"] = sign_in_never_completed
 templates.env.globals["webmail_url"] = settings.webmail_url
 templates.env.globals["webmail_enabled"] = settings.webmail_enabled
 # The webmail deep link has to name the same mailbox the ACL grants writes on
@@ -413,13 +447,15 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         if st.state == MailboxState.sign_in_needed:
             # Revoked/expired OAuth token (e.g. provider password change) —
             # only an owner can fix it, so surface it with a one-click
-            # reconnect, not buried in the account page.
+            # reconnect, not buried in the account page. Someone who can't
+            # reconnect is told who can, not handed an action they lack.
             attention.append(
                 {
                     "id": a.id,
                     "name": a.name,
                     "type": "reauth",
-                    "reason": "Sign-in expired — reconnect needed",
+                    "reason": sign_in_message(a, can_modify=can_modify),
+                    "never_connected": sign_in_never_completed(a),
                     "provider": a.provider,
                     "action": NextAction.reconnect.value if can_modify else None,
                 }
@@ -433,9 +469,11 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
                     "id": a.id,
                     "name": a.name,
                     "type": "error",
-                    # last_error can hold a whole mbsync log — keep it short.
-                    "reason": (a.last_error or "Sync failed")[:80],
+                    # The classified headline; the raw last_error (a whole
+                    # mbsync log at worst) stays on the detail page.
+                    "reason": st.detail,
                     "action": action,
+                    "password_noun": _password_noun(a),
                 }
             )
         else:  # stale, initial_stalled
@@ -610,7 +648,10 @@ def system_status_partial(request: Request, db: Session = Depends(get_db)):
 
     def _row(a):
         st = statuses[a.id]
-        return {"id": a.id, "name": a.name, "label": st.label, "detail": st.detail}
+        # "Sync failed: The last sync failed." says nothing twice: an
+        # unclassified error shows the label alone.
+        detail = None if st.detail == UNKNOWN_ERROR_MESSAGE else st.detail
+        return {"id": a.id, "name": a.name, "label": st.label, "detail": detail}
 
     error_accounts = [_row(a) for a in all_accounts if statuses[a.id].tone == Tone.error]
     # Sign-in only: stale / stalled live on the dashboard, and a deliberately

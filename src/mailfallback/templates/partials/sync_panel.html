@@ -16,7 +16,7 @@
         <strong>Up to date</strong>
     </div>
     <div class="hero-actions">
-        <button class="icon-btn primary" title="Sync Now"
+        <button class="icon-btn primary" title="Sync now"
             hx-post="/api/sync/{{ account.id }}" hx-swap="none"
             hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
             <i data-lucide="refresh-cw" class="icon-md"></i> Sync now
@@ -45,7 +45,7 @@
     </div>
 </div>
 <div class="hero-body">
-    <p>No messages downloaded yet. This account is connected and ready.</p>
+    <p>No messages downloaded yet. This mailbox is connected and ready.</p>
 </div>
 
 {% elif hero_state in ("syncing", "syncing-indeterminate", "first-sync") %}
@@ -65,7 +65,7 @@
 </div>
 <div class="hero-body">
     {% if hero_state == "first-sync" %}
-    <p class="text-small text-muted">This may take a while — the first sync downloads every message in your account.</p>
+    <p class="text-small text-muted">This may take a while — the first sync downloads every message in this mailbox.</p>
     {% endif %}
 
     {% if live and live.initial_sync %}
@@ -143,7 +143,7 @@
 <div class="hero-header">
     <div class="hero-title">
         <i data-lucide="x-circle" class="icon-lg"></i>
-        <strong>Backup failed</strong>
+        <strong>Sync failed</strong>
     </div>
     <div class="hero-actions">
         <button class="icon-btn primary" title="Try again"
@@ -152,9 +152,12 @@
             <i data-lucide="refresh-cw" class="icon-md"></i> Try again
         </button>
         {% if status and status.action and status.action.value == "update_password" and can_modify %}
-        <a class="icon-btn" href="#admin-edit"><i data-lucide="key-round" class="icon-md"></i> Update password</a>
+        <a class="icon-btn" href="#admin-edit"><i data-lucide="key-round" class="icon-md"></i> Update {{ account | password_noun }}</a>
         {% endif %}
-        {% if snap and snap.errors and snap.errors[0].action in ("retry",) %}
+        {# One classification for the whole hero, from the same input as
+           every other surface (account.last_error): the headline is the
+           resolver's status.detail, the sub-text and buttons key on this. #}
+        {% if error_category(account.last_error) in ("network", "tls", "unresolved_host") %}
         <button class="icon-btn" title="Test connection"
             onclick="testConnectionFromHero('{{ account.imap_host }}', {{ account.imap_port }}, '{{ account.tls_type }}')">
             <i data-lucide="plug" class="icon-md"></i> Test connection
@@ -163,42 +166,54 @@
     </div>
 </div>
 <div class="hero-body">
-    {% if snap and snap.errors %}
-    {% set err = snap.errors[0] %}
-    <p class="hero-error-headline"><strong>{{ err.user_message }}</strong></p>
-    {% if err.category == "auth" %}
+    {% set category = error_category(account.last_error) %}
+    {% set is_admin = user and user.role.value == "admin" %}
+    {% set ask_owner = "Ask the mailbox owner or an admin to check the mailbox settings." %}
+    {# The resolver's headline (the cause) — the dashboard and the strip show
+       the same one. What to do depends on who is looking, so it lives here. #}
+    <p class="hero-error-headline"><strong>{{ status.detail }}</strong></p>
+    {% if category == "auth" %}
     <p class="text-small">
         {% if account.auth_type.value == "oauth2" %}
-        {{ account.provider | capitalize }} rejected the credentials. This usually means the token expired or was revoked.
+        The {{ {"google": "Google", "microsoft": "Microsoft"}.get(account.provider, "provider") }} sign-in expired or was revoked.
+        {% if can_modify %}Reconnect to resume syncing.{% else %}Ask the mailbox owner or an admin to reconnect it.{% endif %}
         {% else %}
-        The server rejected the password. Check that the credentials are correct.
+        {% set noun = account | password_noun %}
+        {% if can_modify %}Check the {{ noun }}, then update it.{% else %}Ask the mailbox owner or an admin to update the {{ noun }}.{% endif %}
         {% endif %}
     </p>
-    {% if err.action == "reauth" and account.auth_type.value == "oauth2" %}
+    {% if account.auth_type.value == "oauth2" and can_modify %}
     <a href="/auth/{{ account.provider }}/start?account_id={{ account.id }}" class="icon-btn primary mt-025">
         {% with provider=account.provider %}{% include "partials/provider_logo.html" %}{% endwith %}
-        Re-authenticate
+        Reconnect
     </a>
     {% endif %}
-    {% elif err.category == "network" %}
-    <p class="text-small">Couldn't connect to <strong>{{ account.imap_host }}</strong>. The server may be down or unreachable.</p>
-    {% elif err.category == "tls" %}
-    <p class="text-small">Encryption handshake failed with <strong>{{ account.imap_host }}</strong>. Check TLS settings.</p>
-    {% elif err.category == "rate_limit" %}
-    <p class="text-small">The server is rate-limiting connections. We'll keep retrying automatically.</p>
-    {% elif err.category == "disk" %}
-    <p class="text-small">A storage error occurred. Check disk space and permissions.</p>
-    {% elif err.category == "config" %}
-    <p class="text-small">There's a problem with the sync configuration. Check account settings.</p>
+    {% elif category == "network" %}
+    <p class="text-small">Couldn't connect to <strong>{{ account.imap_host }}</strong>. The server may be down or unreachable from here.</p>
+    {% elif category == "tls" %}
+    <p class="text-small">The encryption handshake with <strong>{{ account.imap_host }}</strong> failed.
+        {% if can_modify %}Check the TLS settings.{% else %}{{ ask_owner }}{% endif %}</p>
+    {% elif category == "rate_limit" %}
+    <p class="text-small">The next syncs retry automatically.</p>
+    {% elif category == "disk" %}
+    <p class="text-small">{% if is_admin %}Check the disk space and permissions of the mail store.{% else %}Ask an admin to check the mail store.{% endif %}</p>
+    {% elif category == "config" %}
+    <p class="text-small">{% if can_modify %}Check the mailbox settings.{% else %}{{ ask_owner }}{% endif %}</p>
+    {% elif category in ("internal_host", "unresolved_host") and account.provider in fixed_host_providers %}
+    {# The provider's host is fixed (not editable), so the settings are not
+       the fix: this server's DNS or network is. #}
+    {% set server = {"google": "Google", "microsoft": "Microsoft", "yahoo": "Yahoo", "icloud": "iCloud", "protonmail": "Proton"}[account.provider] %}
+    <p class="text-small">MFB couldn't look up {{ server }}'s mail server correctly from here. Try again later;
+        {% if is_admin %}if it keeps failing, check this server's DNS and network.{% else %}if it keeps failing, ask an admin to check this server's DNS and network.{% endif %}</p>
+    {% elif category in ("internal_host", "unresolved_host") %}
+    <p class="text-small">{% if can_modify %}Check the IMAP host in the mailbox settings.{% else %}{{ ask_owner }}{% endif %}</p>
     {% endif %}
 
+    {% if snap and snap.errors %}
     <details class="mt-025">
         <summary class="text-small text-muted">Technical details</summary>
-        <pre class="log-viewer mt-025">{{ err.technical_detail }}</pre>
+        <pre class="log-viewer mt-025">{{ snap.errors[0].technical_detail }}</pre>
     </details>
-
-    {% elif account.last_error %}
-    <p><strong>Backup failed — unknown error</strong></p>
     {% endif %}
 
     {% if snap and snap.raw_tail %}
@@ -220,8 +235,8 @@
     {% set sep = joiner(" · ") %}
     <p class="text-xs text-muted mt-025">
         {% if last_job %}{{ sep() }}Failed {{ last_job.completed_at | time_ago }}{% endif %}
-        {% if account.last_sync_at %}{{ sep() }}Last success: {{ account.last_sync_at | time_ago }}{% endif %}
-        {% if account.total_messages %}{{ sep() }}{{ account.total_messages | number }} msgs{% endif %}
+        {% if account.last_sync_at %}{{ sep() }}Last successful sync {{ account.last_sync_at | time_ago }}{% endif %}
+        {% if account.total_messages %}{{ sep() }}{{ account.total_messages | number }} messages{% endif %}
         {% if last_job and last_job.log_path %}
         {{ sep() }}<a href="/api/sync/jobs/{{ last_job.id }}/log/download" class="text-xs">Download full log</a>
         {% endif %}
@@ -238,16 +253,19 @@
     </div>
 </div>
 <div class="hero-body">
+    {% set provider_name = {"google": "Google", "microsoft": "Microsoft"}.get(account.provider) %}
     {% if can_modify %}
     <a href="/auth/{{ account.provider }}/start?account_id={{ account.id }}" class="icon-btn primary">
         {% with provider=account.provider %}{% include "partials/provider_logo.html" %}{% endwith %}
-        Reconnect with {{ account.provider | capitalize }}
+        {% if sign_in_never_completed(account) %}Connect{% else %}Reconnect{% endif %}{% if provider_name %} with {{ provider_name }}{% endif %}
     </a>
     {% endif %}
     <p class="text-small text-muted mt-025">
-        Your {{ account.provider | capitalize }} sign-in expired. Sync will resume automatically as soon as you reconnect.
+        {# Same sentence as the dashboard: per viewer, and never "expired"
+           for a token refresh that retries on its own. #}
+        {{ sign_in_message(account, can_modify=can_modify) }}
         {% if account.last_sync_at %}
-        <br>Last successful sync: {{ account.last_sync_at | time_ago }}
+        <br>Last successful sync {{ account.last_sync_at | time_ago }}
         {% if account.total_messages %} · {{ account.total_messages | number }} messages{% endif %}
         {% endif %}
     </p>
@@ -261,6 +279,7 @@
         <strong>
             {%- if live and live.pause_reason == "budget" %}Paused — daily budget
             {%- elif live and live.pause_reason == "throttle" %}Paused — provider throttled
+            {%- elif live and live.pause_reason == "interrupted" %}Paused — interrupted by a restart
             {%- else %}Paused — retrying shortly
             {%- endif -%}
         </strong>
@@ -277,6 +296,7 @@
     <p>
         {%- if live and live.pause_reason == "budget" %}Today's sync budget is used up — the sync continues automatically.
         {%- elif live and live.pause_reason == "throttle" %}The provider asked us to slow down — the sync resumes with backoff.
+        {%- elif live and live.pause_reason == "interrupted" %}A restart interrupted the sync — it resumes on its own shortly.
         {%- else %}A connection hiccup paused the sync — it retries automatically.
         {%- endif -%}
         {%- if live and live.resume_rel %} Resumes {{ live.resume_rel }}.{% endif -%}
@@ -337,12 +357,14 @@
     </div>
 </div>
 <div class="hero-body">
-    <p>{{ status.detail }}
+    {# One line per fact: a stale mailbox's detail ("Last sync was N days
+       ago.") would repeat the Last sync line, so it shows only that line. #}
+    <p>{% if status.state.value != "stale" or not account.last_sync_at %}{{ status.detail }}{% endif %}
+    {% if account.last_sync_at %}
+    {% if status.state.value != "stale" %}<br>{% endif %}Last sync {{ account.last_sync_at | time_ago }} · {{ account.total_messages | number }} messages
+    {% endif %}
     {% if status.resumes_at %}
     <br>Paused — resumes {{ status.resumes_at | time_until }}
-    {% endif %}
-    {% if account.last_sync_at %}
-    <br>Last sync {{ account.last_sync_at | time_ago }} · {{ account.total_messages | number }} messages
     {% endif %}
     </p>
 </div>
@@ -352,7 +374,7 @@
 <div class="hero-header">
     <div class="hero-title">
         <i data-lucide="pause-circle" class="icon-lg"></i>
-        <strong>Paused</strong>
+        <strong>Suspended</strong>
     </div>
     <div class="hero-actions">
         <button class="icon-btn success"
@@ -360,7 +382,7 @@
             hx-on::after-request="location.reload()">
             <i data-lucide="play-circle" class="icon-md"></i> Resume sync
         </button>
-        <button class="icon-btn" title="Manual sync"
+        <button class="icon-btn" title="Sync now"
             hx-post="/api/sync/{{ account.id }}" hx-swap="none"
             hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
             <i data-lucide="refresh-cw" class="icon-md"></i> Sync now
@@ -368,7 +390,7 @@
     </div>
 </div>
 <div class="hero-body">
-    <p>Sync is paused. Existing mail stays readable.
+    <p>Syncing is suspended. Existing mail stays readable.
     {% if account.last_sync_at %}
     <br>Last sync {{ account.last_sync_at | time_ago }} · {{ account.total_messages | number }} messages
     {% endif %}

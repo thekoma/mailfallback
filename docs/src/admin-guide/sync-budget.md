@@ -90,7 +90,7 @@ A `needs_reauth` account is skipped by the scheduler's periodic path entirely (i
 
 ### Resuming after reconnect
 
-From the account detail page, the **Re-authenticate** button walks the account back through the OAuth2 consent flow. On a successful callback, MFB:
+From the account detail page, the **Reconnect** button (shown to owners and admins) walks the account back through the OAuth2 consent flow. On a successful callback, MFB:
 
 1. Clears `needs_reauth` (and any lingering `error` state left by the same failed token) back to `idle`.
 2. Immediately enqueues and submits a new sync job for the account, so the account starts syncing again without waiting for its regular schedule.

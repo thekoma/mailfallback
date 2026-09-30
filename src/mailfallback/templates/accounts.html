@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Accounts — MFB{% endblock %}
+{% block title %}Mailboxes — MFB{% endblock %}
 {% block body_class %}page-wide{% endblock %}
 {% block content %}
 <div class="flex-between">
-    <h2><i data-lucide="mail" class="icon-xl icon-inline"></i>Accounts</h2>
+    <h2><i data-lucide="mail" class="icon-xl icon-inline"></i>Mailboxes</h2>
     <div class="actions">
         {% if user.role.value == "admin" %}
         <label class="text-small">
@@ -12,19 +12,19 @@
             Show all users
         </label>
         {% endif %}
-        <button class="icon-btn" title="Sync All Accounts" id="sync-all-btn"
+        <button class="icon-btn" title="Sync all mailboxes now" id="sync-all-btn"
             hx-post="/api/sync/all" hx-swap="none"
             hx-on::after-request="startSyncPolling()">
-            <i data-lucide="refresh-cw" class="icon-md"></i> Sync All
+            <i data-lucide="refresh-cw" class="icon-md"></i> Sync all
         </button>
         <a href="/accounts/new" class="icon-btn primary">
-            <i data-lucide="plus-circle" class="icon-md"></i> New Account
+            <i data-lucide="plus-circle" class="icon-md"></i> New mailbox
         </a>
     </div>
 </div>
 
 {% if not accounts %}
-<p class="text-muted">No mailboxes yet. Click <strong>New Account</strong> to connect a mailbox and start your local backup.</p>
+<p class="text-muted">No mailboxes yet. <a href="/accounts/new">Connect a mailbox</a> to start your local backup.</p>
 {% else %}
 <div id="accounts-table-wrap"
      hx-get="/partials/accounts-table{% if show_all_users %}?show_all=1{% endif %}" hx-trigger="every 30s" hx-swap="innerHTML">

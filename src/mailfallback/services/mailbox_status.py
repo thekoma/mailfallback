@@ -115,7 +115,9 @@ class MailboxStatus:
     state: MailboxState
     tone: Tone
     label: str  # UI chip text
-    detail: str | None  # UI-only sentence; may contain last_error. NEVER sent to the agent API.
+    # UI-only sentence, MFB's own copy (an error is classified, never quoted
+    # raw). NEVER sent to the agent API.
+    detail: str | None
     action: NextAction | None
     needs_attention: bool  # True only for sign_in_needed, error, stale, initial_stalled
     # Independent of precedence: False iff not is_authenticated, or needs_reauth,
@@ -176,18 +178,75 @@ def _is(value, member) -> bool:
     return value is not None and str(getattr(value, "value", value)) == member.value
 
 
-def _sign_in_detail(account: Account, token_refresh: bool) -> str:
-    # token_refresh already implies sync_state == error (so not needs_reauth).
-    if token_refresh and account.is_authenticated:
-        return (
-            "Couldn't refresh the sign-in. It retries on the next sync; "
-            "reconnect if this keeps happening."
-        )
-    if account.provider == "google":
-        return "Reconnect your Google account to resume syncing."
-    if account.provider == "microsoft":
-        return "Reconnect your Microsoft account to resume syncing."
-    return "Reconnect this mailbox to resume syncing."
+_SIGN_IN_REFRESH = "Couldn't refresh the sign-in. It retries on the next sync; "
+# Sign-in needed, for a viewer who can see the mailbox but not reconnect it.
+SIGN_IN_ASK_OWNER = "Sign-in expired. Ask the mailbox owner or an admin to reconnect it."
+SIGN_IN_REFRESH_ASK_OWNER = (
+    _SIGN_IN_REFRESH + "if this keeps happening, ask the mailbox owner or an admin to reconnect it."
+)
+SIGN_IN_PENDING_ASK_OWNER = (
+    "Sign-in not completed. Ask the mailbox owner or an admin to connect it."
+)
+
+
+def _is_refresh_retry(account: Account) -> bool:
+    """The non-terminal token-refresh failure: sync_state error (not
+    needs_reauth) with credentials still in place. It self-heals, so no copy
+    may claim the sign-in "expired"."""
+    return (
+        _is(account.sync_state, SyncState.error)
+        and _is(account.auth_type, AuthType.oauth2)
+        and account.last_error == TOKEN_REFRESH_FAILED
+        and account.is_authenticated
+    )
+
+
+def sign_in_never_completed(account: Account) -> bool:
+    """An OAuth mailbox whose consent flow never finished: no credentials and
+    never synced (routers/auth.py keeps the stub account). Nothing "expired";
+    it was never connected."""
+    return not account.is_authenticated and account.last_sync_at is None
+
+
+def _signin_name(account: Account) -> str:
+    return {"google": "Google sign-in", "microsoft": "Microsoft sign-in"}.get(
+        account.provider or "", "Sign-in"
+    )
+
+
+def _sign_in_detail(account: Account) -> str:
+    # Written for someone who can reconnect; sign_in_message picks the copy
+    # for someone who can't (a group member).
+    if _is_refresh_retry(account):
+        return _SIGN_IN_REFRESH + "reconnect if this keeps happening."
+    if sign_in_never_completed(account):
+        return f"{_signin_name(account)} not completed. Connect to start syncing."
+    return f"{_signin_name(account)} expired. Reconnect to resume syncing."
+
+
+def sign_in_message(account: Account, *, can_modify: bool) -> str:
+    """The sign-in-needed sentence for this viewer: owners and admins are told
+    to reconnect, anyone else is told who can. The refresh case keeps saying
+    it retries on its own and never claims the sign-in "expired", and a
+    sign-in that never completed says so."""
+    if can_modify:
+        return _sign_in_detail(account)
+    if _is_refresh_retry(account):
+        return SIGN_IN_REFRESH_ASK_OWNER
+    if sign_in_never_completed(account):
+        return SIGN_IN_PENDING_ASK_OWNER
+    return SIGN_IN_ASK_OWNER
+
+
+def _error_detail(account: Account) -> str:
+    # The classified headline, never the raw last_error: that is mbsync or
+    # IMAP-server output ("AUTHENTICATIONFAILED Invalid credentials"), shown
+    # only in the detail hero's technical details and log.
+    from mailfallback.services.sync_progress import describe_error
+
+    return describe_error(
+        account.last_error, app_password=_is(account.auth_type, AuthType.app_password)
+    )
 
 
 def _is_credential_error(last_error: str | None) -> bool:
@@ -307,7 +366,7 @@ def resolve_mailbox_status(
             "badge-warning",
             "key-round",
             action=NextAction.reconnect,
-            detail=_sign_in_detail(account, token_refresh),
+            detail=_sign_in_detail(account),
             needs_attention=True,
         )
 
@@ -323,7 +382,7 @@ def resolve_mailbox_status(
                 spin=True,
                 detail=_INITIAL_DETAIL,
             )
-        return make(MailboxState.syncing, Tone.active, "syncing", "badge-syncing", "loader")
+        return make(MailboxState.syncing, Tone.active, "Syncing", "badge-syncing", "loader")
 
     # 6-7: how the last run ended.
     if is_error and stopped_job and not long_unsynced:
@@ -350,11 +409,11 @@ def resolve_mailbox_status(
         return make(
             MailboxState.error,
             Tone.error,
-            "error",
+            "Sync failed",
             "badge-error",
             "alert-circle",
             action=action,
-            detail=(account.last_error or "")[:200] or "The last sync failed.",
+            detail=_error_detail(account),
             needs_attention=True,
         )
 
@@ -420,7 +479,7 @@ def resolve_mailbox_status(
             "badge-disabled",
             "clock",
         )
-    return make(MailboxState.current, Tone.ok, "idle", "badge-idle", "check-circle")
+    return make(MailboxState.current, Tone.ok, "Up to date", "badge-idle", "check-circle")
 
 
 _PAUSE_KINDS = {

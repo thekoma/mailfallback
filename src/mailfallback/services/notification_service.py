@@ -20,10 +20,17 @@ logger = logging.getLogger(__name__)
 # therefore impossible to subscribe to — a new event that silently reaches
 # nobody is the same failure as no event at all.
 PROBLEM_EVENT_OPTIONS = (
-    ("needs_reauth", "Needs re-auth", "badge-warning", "Needs re-authentication"),
-    ("sync_error", "Sync error", "badge-error", "Sync error"),
-    ("sync_paused", "Paused", "badge-disabled", "Sync paused (budget / throttle)"),
-    ("stale", "Stale", "badge-warning", "Stale (no successful sync for a long time)"),
+    # Labels use the mailbox status vocabulary (services/mailbox_status.py), so
+    # a subscription reads the same as the chip it is about.
+    ("needs_reauth", "Sign-in needed", "badge-warning", "Sign-in needed (reconnect to resume)"),
+    ("sync_error", "Sync failed", "badge-error", "Sync failed"),
+    (
+        "sync_paused",
+        "Paused",
+        "badge-disabled",
+        "Sync paused (daily budget, provider throttling or a temporary error)",
+    ),
+    ("stale", "Out of date", "badge-warning", "Out of date (no successful sync for a long time)"),
     # Bare "Backup failed" is forbidden by LEXICON.md; the off-site push
     # produces a snapshot, so that is what fails. The event KEY stays
     # backup_failed — internal code is exempt, only what users read is governed.
@@ -36,10 +43,17 @@ PROBLEM_EVENT_OPTIONS = (
 )
 ACTIVITY_EVENT_OPTIONS = (
     ("sync_completed", "Sync done", "badge-idle", "Sync completed"),
-    ("initial_sync_completed", "First sync", "badge-idle", "Initial sync completed"),
+    ("initial_sync_completed", "Initial sync done", "badge-idle", "Initial sync completed"),
     ("restore_completed", "Restore done", "badge-idle", "Restore completed"),
-    ("backup_completed", "Backup done", "badge-idle", "Backup completed"),
-    ("account_added", "Account added", "badge-admin", "Account added"),
+    # Only config_backup_service emits it (the mailbox back-up worker does
+    # not), so the label promises exactly that.
+    (
+        "backup_completed",
+        "Snapshot done",
+        "badge-idle",
+        "Configuration snapshot completed",
+    ),
+    ("account_added", "Mailbox added", "badge-admin", "Mailbox added"),
 )
 
 PROBLEM_EVENT_KEYS = tuple(e[0] for e in PROBLEM_EVENT_OPTIONS)

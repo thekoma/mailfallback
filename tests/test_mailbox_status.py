@@ -106,7 +106,7 @@ def test_needs_reauth_is_sign_in_needed_with_reconnect(db_session, default_store
     assert s.needs_attention
     assert s.badge == "badge-warning" and s.icon == "key-round"
     assert not s.signed_in
-    assert s.detail == "Reconnect your Google account to resume syncing."
+    assert s.detail == "Google sign-in expired. Reconnect to resume syncing."
 
 
 def test_oauth_without_credentials_is_sign_in_needed(db_session, default_store):
@@ -115,7 +115,41 @@ def test_oauth_without_credentials_is_sign_in_needed(db_session, default_store):
     assert s.state == MailboxState.sign_in_needed
     assert s.action == NextAction.reconnect
     assert s.badge == "badge-warning"
-    assert s.detail == "Reconnect your Microsoft account to resume syncing."
+    # Never synced: the consent flow never finished, nothing "expired".
+    assert s.detail == "Microsoft sign-in not completed. Connect to start syncing."
+
+
+def test_sign_in_never_completed_copy_per_viewer(db_session, default_store):
+    from mailfallback.services.mailbox_status import sign_in_message
+
+    a = _acct(db_session, default_store, provider="google", auth_type=AuthType.oauth2)
+    assert sign_in_message(a, can_modify=True) == (
+        "Google sign-in not completed. Connect to start syncing."
+    )
+    assert sign_in_message(a, can_modify=False) == (
+        "Sign-in not completed. Ask the mailbox owner or an admin to connect it."
+    )
+    generic = _acct(db_session, default_store, provider="other", auth_type=AuthType.oauth2)
+    assert sign_in_message(generic, can_modify=True) == (
+        "Sign-in not completed. Connect to start syncing."
+    )
+
+
+def test_credentials_lost_after_syncing_reads_expired(db_session, default_store):
+    """No credentials but it synced before: that sign-in did expire."""
+    from mailfallback.services.mailbox_status import sign_in_message
+
+    a = _acct(
+        db_session,
+        default_store,
+        provider="google",
+        auth_type=AuthType.oauth2,
+        last_sync_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    assert _resolve(a).detail == "Google sign-in expired. Reconnect to resume syncing."
+    assert sign_in_message(a, can_modify=False) == (
+        "Sign-in expired. Ask the mailbox owner or an admin to reconnect it."
+    )
 
 
 def test_token_refresh_failure_error_is_sign_in_needed(db_session, default_store):
@@ -144,7 +178,9 @@ def test_plain_error_is_red_with_retry(db_session, default_store):
     assert s.action == NextAction.retry
     assert s.needs_attention
     assert s.badge == "badge-error" and s.icon == "alert-circle"
-    assert s.detail == "boom"
+    # Unclassified: MFB's own sentence, never the raw last_error.
+    assert s.detail == "The last sync failed."
+    assert "boom" not in s.detail
     assert s.signed_in
 
 
@@ -247,7 +283,7 @@ def test_running_after_initial_complete_is_syncing(db_session, default_store):
     s = _resolve(a)
     assert s.state == MailboxState.syncing
     assert s.badge == "badge-syncing" and s.icon == "loader" and not s.spin
-    assert s.label == "syncing"
+    assert s.label == "Syncing"
 
 
 def test_idle_initial_started_is_initial_sync_not_attention(db_session, default_store):
@@ -317,7 +353,7 @@ def test_current_is_ok_idle(db_session, default_store):
     s = _resolve(a)
     assert s.state == MailboxState.current
     assert s.tone == Tone.ok
-    assert s.label == "idle"
+    assert s.label == "Up to date"
     assert s.badge == "badge-idle" and s.icon == "check-circle"
     assert not s.needs_attention and s.action is None
     assert s.signed_in
@@ -671,7 +707,7 @@ def test_non_terminal_token_refresh_failure_detail(db_session, default_store):
         sync_state=SyncState.needs_reauth,
         **_done(),
     )
-    assert _resolve(b).detail == "Reconnect this mailbox to resume syncing."
+    assert _resolve(b).detail == "Sign-in expired. Reconnect to resume syncing."
 
 
 def test_signed_in_is_false_for_suspended_oauth_without_credentials(db_session, default_store):

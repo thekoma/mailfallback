@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
+from mailfallback.constants import TOKEN_REFRESH_FAILED
+
 
 @dataclass
 class FolderProgress:
@@ -28,7 +30,21 @@ class FolderProgress:
 @dataclass
 class ParsedError:
     at_line: int
-    category: Literal["auth", "network", "disk", "rate_limit", "tls", "config", "server", "unknown"]
+    category: Literal[
+        "runtime_cap",
+        "timeout",
+        "internal_host",
+        "unresolved_host",
+        "token_refresh",
+        "auth",
+        "network",
+        "disk",
+        "rate_limit",
+        "tls",
+        "config",
+        "server",
+        "unknown",
+    ]
     user_message: str
     technical_detail: str
     actionable: bool = False
@@ -98,7 +114,44 @@ _RE_SUMMARY = re.compile(
 _RE_WARNING = re.compile(r"^(?:Warning|Maildir error)[:\s]+(.*)", re.IGNORECASE)
 _RE_ERROR_LINE = re.compile(r"^(?:Error|IMAP error)[:\s]+(.*)", re.IGNORECASE)
 
+# Order matters: the first pattern that matches ANYWHERE in the text wins, so
+# a surface classifying the whole last_error and one classifying a single
+# line agree only when both go through describe_error / error_category.
 _ERROR_CATEGORIES: list[tuple[re.Pattern, str, str, str]] = [
+    # MFB's own messages first (services/sync_worker.py, imap_check.py,
+    # constants.TOKEN_REFRESH_FAILED): exact wording we control, each with the
+    # next step, so they never collapse into "The last sync failed.".
+    (
+        re.compile(r"exceeded the \S+ runtime cap", re.I),
+        "runtime_cap",
+        "The sync ran past its time limit and was stopped. "
+        "The next sync continues where it left off.",
+        "retry",
+    ),
+    (
+        re.compile(r"Sync timed out after", re.I),
+        "timeout",
+        "The sync took too long and was stopped. The next sync continues where it left off.",
+        "retry",
+    ),
+    (
+        re.compile(r"private/internal addresses are not allowed", re.I),
+        "internal_host",
+        "The IMAP host points to a private network address, which MFB refuses to connect to.",
+        "admin",
+    ),
+    (
+        re.compile(r"Host could not be resolved", re.I),
+        "unresolved_host",
+        "Couldn't find the IMAP host.",
+        "admin",
+    ),
+    (
+        re.compile(re.escape(TOKEN_REFRESH_FAILED)),
+        "token_refresh",
+        "Couldn't refresh the sign-in. It retries on the next sync.",
+        "reauth",
+    ),
     (
         re.compile(
             r"AUTHENTICATIONFAILED|LOGIN failed|Invalid credentials"
@@ -106,7 +159,7 @@ _ERROR_CATEGORIES: list[tuple[re.Pattern, str, str, str]] = [
             re.I,
         ),
         "auth",
-        "Sign-in needed",
+        "The server rejected the sign-in.",
         "reauth",
     ),
     (
@@ -116,13 +169,13 @@ _ERROR_CATEGORIES: list[tuple[re.Pattern, str, str, str]] = [
             re.I,
         ),
         "network",
-        "Server unreachable",
+        "Couldn't reach the mail server.",
         "retry",
     ),
     (
         re.compile(r"SSL|TLS error|certificate|handshake", re.I),
         "tls",
-        "Connection failed (encryption issue)",
+        "Couldn't set up an encrypted connection.",
         "retry",
     ),
     (
@@ -131,35 +184,68 @@ _ERROR_CATEGORIES: list[tuple[re.Pattern, str, str, str]] = [
             re.I,
         ),
         "disk",
-        "Storage error",
+        "Couldn't write to the mail store.",
         "admin",
     ),
     (
         re.compile(r"Too many connections|OVERQUOTA|throttl", re.I),
         "rate_limit",
-        "Rate limited",
+        "The server is limiting connections.",
         "retry",
     ),
     (
         re.compile(r"not configured|configuration|syntax error", re.I),
         "config",
-        "Configuration error",
+        "The sync configuration has an error.",
         "admin",
     ),
     (
         re.compile(r"protocol error|mailbox .* unavailable|BYE .* closing", re.I),
         "server",
-        "Server error",
+        "The mail server returned an error.",
         "admin",
     ),
 ]
+
+
+UNKNOWN_ERROR_MESSAGE = "The last sync failed."
+
+# category → headline, for describe_error.
+_CATEGORY_MESSAGES = {category: msg for _, category, msg, _ in _ERROR_CATEGORIES}
 
 
 def _classify_error(text: str) -> tuple[str, str, str]:
     for pattern, category, user_msg, action in _ERROR_CATEGORIES:
         if pattern.search(text):
             return category, user_msg, action
-    return "unknown", "Backup failed — unknown error", "none"
+    return "unknown", UNKNOWN_ERROR_MESSAGE, "none"
+
+
+def error_category(text: str | None) -> str:
+    """The category of a whole error text (``Account.last_error``).
+
+    The same classification describe_error uses, for surfaces that key extra
+    copy or buttons on it: they must not classify a different input (e.g. only
+    the first ``Error:`` line of a snapshot) and disagree with the headline.
+    """
+    return _classify_error(text)[0] if text else "unknown"
+
+
+def describe_error(text: str | None, *, app_password: bool = False) -> str:
+    """Headline for a failed sync's raw error text (``Account.last_error``).
+
+    It states the cause only: what to do depends on who is looking (an owner
+    edits the mailbox, a group member asks), so surfaces add that themselves.
+    Never returns the raw text: unclassified errors read "The last sync failed."
+    An auth failure on a password mailbox blames the password; an OAuth one
+    keeps the generic sign-in wording.
+    """
+    if not text:
+        return UNKNOWN_ERROR_MESSAGE
+    category = error_category(text)
+    if category == "auth" and app_password:
+        return "The server rejected the password."
+    return _CATEGORY_MESSAGES.get(category, UNKNOWN_ERROR_MESSAGE)
 
 
 def parse_mbsync_lines(
