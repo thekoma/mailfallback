@@ -215,12 +215,22 @@ _HERO_BY_STATE = {
 }
 
 
+def _job_caused_error(account, job) -> bool:
+    """Whether `job` is the one that wrote the account's current last_error.
+    Every real-error branch in sync_worker copies last_error into job.log
+    (the runtime-cap branch appends it, hence endswith)."""
+    if job is None or not account.last_error or not job.log:
+        return False
+    return job.log == account.last_error or job.log.endswith(account.last_error)
+
+
 def _compute_hero_state(account, db):
     """(hero_state, snap, last_job, status) — `last_job` is the latest
     FINISHED job, the same one every other surface resolves from, and
     `status` is the resolver's verdict for it. Callers use this `status`
     rather than resolving again, so the hero and the rest of the page can't
-    disagree."""
+    disagree. For the error hero, `last_job` is None unless it is the job
+    that produced the current last_error."""
     snap = None
     last_job = latest_finished_jobs_by_account(db, [account.id]).get(account.id)
     # {} (not None) when there is no job: already looked up, don't re-query.
@@ -230,6 +240,13 @@ def _compute_hero_state(account, db):
     hero_state = _HERO_BY_STATE.get(status.state)
     if hero_state is None:  # initial_sync, waiting: today's quiet panels
         hero_state = "empty" if account.last_sync_at is None else "idle"
+
+    if hero_state == "error" and not _job_caused_error(account, last_job):
+        # The current error came from a job that never started (the host
+        # re-validation guard fails it before started_at), so last_job is an
+        # OLDER failure: explaining the hero with it would show the wrong
+        # message, log tail and "Failed <time>". Fall back to last_error.
+        last_job = None
 
     if hero_state == "error" and last_job and last_job.parsed_summary:
         with contextlib.suppress(json.JSONDecodeError, TypeError):

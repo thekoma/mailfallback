@@ -216,6 +216,7 @@ def test_hero_ignores_pending_retry_after_error(db_session, default_store):
         account_id=a.id,
         status=JobStatus.failed,
         failure_kind="error",
+        log="mbsync exited 1",  # the worker's real-error branch: last_error = job.log
         started_at=now - timedelta(minutes=10),
         completed_at=now - timedelta(minutes=9),
         parsed_summary=json.dumps({"phase": "done"}),
@@ -229,3 +230,91 @@ def test_hero_ignores_pending_retry_after_error(db_session, default_store):
     assert before[0] == after[0] == "error"
     assert after[2].id == failed.id
     assert after[1] is not None and after[1] == before[1]
+
+
+def test_error_hero_ignores_older_job_when_host_guard_failed_unstarted(
+    client, db_session, default_store
+):
+    """The host re-validation guard fails a job BEFORE started_at is set, so
+    that job is never `last_job`; the latest started job is an OLDER failure.
+    The hero must explain the account's current last_error, not that older
+    job's message, log tail or "Failed <time>"."""
+    create_user(db_session, "hadmin", "pass", UserRole.admin, store_id=default_store.id)
+    old_error = "IMAP command 'LOGIN' returned NO - old failure A"
+    a = _app_password_box(db_session, default_store)
+    now = datetime.now(UTC)
+    db_session.add(
+        SyncJob(
+            account_id=a.id,
+            status=JobStatus.failed,
+            failure_kind="error",
+            log=old_error,
+            started_at=now - timedelta(days=3),
+            completed_at=now - timedelta(days=3),
+            parsed_summary=json.dumps(
+                {
+                    "phase": "error",
+                    "errors": [
+                        {
+                            "at_line": 1,
+                            "category": "auth",
+                            "user_message": "Old failure A headline",
+                            "technical_detail": "old technical detail A",
+                        }
+                    ],
+                    "raw_tail": ["old tail line A"],
+                }
+            ),
+        )
+    )
+    guard_error = "Sync blocked: host resolves to an internal address"
+    a.sync_state = SyncState.error
+    a.last_error = guard_error
+    db_session.add(
+        SyncJob(
+            account_id=a.id,
+            status=JobStatus.failed,
+            log=f"Sync blocked: {guard_error}",
+            completed_at=now - timedelta(minutes=1),
+        )
+    )
+    db_session.commit()
+
+    state, snap, _job, _status = _compute_hero_state(a, db_session)
+    assert state == "error"
+    assert snap is None
+
+    _login(client, "hadmin", "pass")
+    for html in (
+        client.get(f"/accounts/{a.id}").text,
+        client.get(f"/accounts/{a.id}/partials/sync-panel").text,
+    ):
+        assert _hero_class(html) == "error"
+        assert guard_error in html
+        for stale in ("Old failure A headline", "old technical detail A", "old tail line A"):
+            assert stale not in html
+        assert "Failed 3 days ago" not in html
+
+
+def test_error_hero_keeps_snap_for_runtime_cap_kill(db_session, default_store):
+    """The runtime-cap branch sets last_error to the cap message and APPENDS
+    it to job.log, so that job still explains the hero."""
+    cap = "Sync exceeded the 21600s runtime cap"
+    a = _app_password_box(db_session, default_store, sync_state=SyncState.error, last_error=cap)
+    now = datetime.now(UTC)
+    job = SyncJob(
+        account_id=a.id,
+        status=JobStatus.failed,
+        failure_kind="error",
+        signal="SIGTERM",
+        log=f"C: 1/2  B: 3/9\n{cap}",
+        started_at=now - timedelta(hours=6),
+        completed_at=now - timedelta(minutes=1),
+        parsed_summary=json.dumps({"phase": "syncing", "raw_tail": ["C: 1/2  B: 3/9"]}),
+    )
+    db_session.add(job)
+    db_session.commit()
+    state, snap, last_job, _status = _compute_hero_state(a, db_session)
+    assert state == "error"
+    assert last_job is not None and last_job.id == job.id
+    assert snap is not None and snap.raw_tail == ["C: 1/2  B: 3/9"]
