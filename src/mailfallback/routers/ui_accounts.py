@@ -18,9 +18,13 @@ from mailfallback.models import (
     RepositoryAttachment,
     StoreMigration,
     SyncJob,
-    SyncState,
 )
-from mailfallback.routers.ui import _get_session_user, templates
+from mailfallback.routers.ui import (
+    _get_session_user,
+    can_modify_account,
+    owned_account_ids,
+    templates,
+)
 from mailfallback.services.account_service import (
     assign_owner,
     create_account,
@@ -32,6 +36,13 @@ from mailfallback.services.account_service import (
 from mailfallback.services.audit_service import log_action
 from mailfallback.services.folder_reconcile import REMOVED_CONTAINER, original_folder_name
 from mailfallback.services.imap_check import check_imap_credentials, validate_host_not_internal
+from mailfallback.services.mailbox_status import (
+    TONE_DOT,
+    MailboxState,
+    latest_finished_jobs_by_account,
+    resolve_job_outcome,
+    resolve_many,
+)
 from mailfallback.services.migration_service import (
     execute_account_migration,
     initiate_account_migration,
@@ -44,7 +55,6 @@ from mailfallback.services.store_service import (
 )
 from mailfallback.services.sync_progress import parse_mbsync_lines
 from mailfallback.services.sync_service import list_jobs_for_account
-from mailfallback.services.sync_worker import TOKEN_REFRESH_FAILED
 from mailfallback.services.user_service import list_users
 
 router = APIRouter(tags=["ui"])
@@ -137,7 +147,7 @@ def account_sync_panel(account_id: str, request: Request, db: Session = Depends(
     if not account:
         return HTMLResponse("")
 
-    hero_state, snap, last_job = _compute_hero_state(account, db)
+    hero_state, snap, last_job, status = _compute_hero_state(account, db)
 
     polling = hero_state in ("syncing", "syncing-indeterminate", "first-sync")
 
@@ -179,6 +189,8 @@ def account_sync_panel(account_id: str, request: Request, db: Session = Depends(
             "migration": migration,
             "user": user,
             "live": account_live_status(account),
+            "status": status,
+            "can_modify": can_modify_account(user, account.id, owned_account_ids(db, user)),
         },
     )
     if not polling:
@@ -186,57 +198,49 @@ def account_sync_panel(account_id: str, request: Request, db: Session = Depends(
     return response
 
 
+# status.state → hero_state (the sync_panel.html branch). Everything the hero
+# shows about health comes from the resolver; this only picks the panel.
+_HERO_BY_STATE = {
+    MailboxState.migrating: "migrating",
+    MailboxState.suspended: "paused",
+    MailboxState.sign_in_needed: "sign-in-needed",
+    MailboxState.first_sync: "first-sync",
+    MailboxState.syncing: "syncing",
+    MailboxState.paused: "sync-paused",
+    MailboxState.stopped: "stopped",
+    MailboxState.error: "error",
+    MailboxState.initial_stalled: "out-of-date",
+    MailboxState.stale: "out-of-date",
+    MailboxState.current: "idle",
+}
+
+
 def _compute_hero_state(account, db):
+    """(hero_state, snap, last_job, status) — `last_job` is the latest
+    FINISHED job, the same one every other surface resolves from, and
+    `status` is the resolver's verdict for it. Callers use this `status`
+    rather than resolving again, so the hero and the rest of the page can't
+    disagree."""
     snap = None
-    last_job = (
-        db.query(SyncJob)
-        .filter(SyncJob.account_id == account.id)
-        .order_by(SyncJob.completed_at.desc())
-        .first()
-    )
+    last_job = latest_finished_jobs_by_account(db, [account.id]).get(account.id)
+    # {} (not None) when there is no job: already looked up, don't re-query.
+    jobs = {account.id: last_job} if last_job is not None else {}
+    status = resolve_many(db, [account], jobs=jobs)[account.id]
 
-    if account.migrating:
-        return "migrating", snap, last_job
-    if account.suspended:
-        return "paused", snap, last_job
-    if not account.is_authenticated:
-        return "sign-in-needed", snap, last_job
+    hero_state = _HERO_BY_STATE.get(status.state)
+    if hero_state is None:  # initial_sync, waiting: today's quiet panels
+        hero_state = "empty" if account.last_sync_at is None else "idle"
 
-    if account.sync_state == SyncState.needs_reauth:
-        return "sign-in-needed", snap, last_job
+    if hero_state == "error" and last_job and last_job.parsed_summary:
+        with contextlib.suppress(json.JSONDecodeError, TypeError):
+            import dataclasses
 
-    if account.sync_state.value == "syncing":
-        if account.last_sync_at is None:
-            return "first-sync", snap, last_job
-        return "syncing", snap, last_job
+            from mailfallback.services.sync_progress import ProgressSnapshot
 
-    # Self-recovering pause (budget/throttle/transient): its own hero state —
-    # never the red error panel. The worker guarantees error => no pause
-    # (review F2), and a paused account is idle, so this sits safely after
-    # the syncing check. The expiry tick clears stale rows within a minute.
-    if account.pause_reason and account.sync_paused_until is not None:
-        return "sync-paused", snap, last_job
-
-    if account.sync_state.value == "error":
-        # A rejected refresh token leaves credentials in place, so
-        # is_authenticated stays True — surface the reconnect flow anyway.
-        if account.auth_type.value == "oauth2" and account.last_error == TOKEN_REFRESH_FAILED:
-            return "sign-in-needed", snap, last_job
-        if last_job and last_job.parsed_summary:
-            with contextlib.suppress(json.JSONDecodeError, TypeError):
-                import dataclasses
-
-                from mailfallback.services.sync_progress import ProgressSnapshot
-
-                data = json.loads(last_job.parsed_summary)
-                fields = {f.name for f in dataclasses.fields(ProgressSnapshot)}
-                snap = ProgressSnapshot(**{k: v for k, v in data.items() if k in fields})
-        return "error", snap, last_job
-
-    if account.last_sync_at is None:
-        return "empty", snap, last_job
-
-    return "idle", snap, last_job
+            data = json.loads(last_job.parsed_summary)
+            fields = {f.name for f in dataclasses.fields(ProgressSnapshot)}
+            snap = ProgressSnapshot(**{k: v for k, v in data.items() if k in fields})
+    return hero_state, snap, last_job, status
 
 
 @router.get("/accounts/{account_id}/partials/history", response_class=HTMLResponse)
@@ -252,7 +256,11 @@ def account_history_partial(account_id: str, request: Request, db: Session = Dep
     return templates.TemplateResponse(
         request=request,
         name="partials/account_history.html",
-        context={"account": account, "jobs": jobs},
+        context={
+            "account": account,
+            "jobs": jobs,
+            "outcomes": {job.id: resolve_job_outcome(job) for job in jobs},
+        },
     )
 
 
@@ -515,7 +523,7 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
 
     flash_error = request.session.pop("flash_error", None)
 
-    hero_state, snap, last_job = _compute_hero_state(account, db)
+    hero_state, snap, last_job, status = _compute_hero_state(account, db)
 
     migration = None
     if hero_state == "migrating":
@@ -583,6 +591,10 @@ def account_detail(account_id: str, request: Request, db: Session = Depends(get_
             "hero_state": hero_state,
             "snap": snap,
             "last_job": last_job,
+            "status": status,
+            "dot_class": TONE_DOT,
+            "can_modify": can_modify_account(user, account.id, owned_account_ids(db, user)),
+            "outcomes": {job.id: resolve_job_outcome(job) for job in jobs},
             "migration": migration,
             "backup_config": backup_config,
             "backup_destinations": backup_destinations,

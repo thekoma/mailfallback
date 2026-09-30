@@ -1,6 +1,6 @@
 # src/mailfallback/routers/ui.py
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
@@ -18,9 +18,19 @@ from mailfallback.models import (
     SyncJob,
     User,
     UserRole,
+    account_owners,
 )
 from mailfallback.services import notification_service as _ns
 from mailfallback.services.account_service import get_accounts_for_user
+from mailfallback.services.mailbox_status import (
+    PAUSE_TOOLTIPS,
+    TONE_DOT,
+    MailboxState,
+    NextAction,
+    Tone,
+    resolve_job_outcome,
+    resolve_many,
+)
 from mailfallback.services.user_service import authenticate_user
 from mailfallback.version import __version__
 
@@ -158,6 +168,7 @@ def _number_format(value):
 templates.env.filters["filesizeformat"] = _filesizeformat
 templates.env.filters["cron_human"] = _cron_human
 templates.env.filters["time_ago"] = _time_ago
+templates.env.filters["time_until"] = _time_until
 templates.env.filters["duration_human"] = _duration_human
 templates.env.filters["time_ago_class"] = _time_ago_class
 templates.env.filters["number"] = _number_format
@@ -171,12 +182,23 @@ templates.env.globals["notification_problem_events"] = list(_ns.PROBLEM_EVENT_OP
 templates.env.globals["notification_activity_events"] = list(_ns.ACTIVITY_EVENT_OPTIONS)
 templates.env.globals["app_version"] = __version__
 
-# Honest copy per pause reason — chip tooltips + panel headlines.
-PAUSE_TOOLTIPS = {
-    "budget": "Daily sync budget reached",
-    "throttle": "Provider throttled",
-    "transient": "Connection lost — retrying",
-}
+# PAUSE_TOOLTIPS (honest copy per pause reason) lives in
+# services/mailbox_status.py; it stays importable from here via the import above.
+
+
+def owned_account_ids(db: Session, user: User) -> set[str]:
+    """Ids of the accounts this user directly owns — one query per request,
+    so `can_modify` never costs a lazy load per account."""
+    return {
+        row.account_id
+        for row in db.query(account_owners.c.account_id).filter(account_owners.c.user_id == user.id)
+    }
+
+
+def can_modify_account(user: User, account_id: str, owned_ids: set[str]) -> bool:
+    """Same rule as account_service.get_account_for_modify: admin or owner.
+    A group member sees the account but cannot edit or reconnect it."""
+    return user.role == UserRole.admin or account_id in owned_ids
 
 
 def account_live_status(account) -> dict:
@@ -340,14 +362,17 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     if not user:
         return RedirectResponse("/login")
     accounts = get_accounts_for_user(db, user)
+    # The one verdict per mailbox (services/mailbox_status.py). Every count,
+    # dot and attention item below reads it; none re-derives health.
+    now = datetime.now(UTC)
+    statuses = resolve_many(db, accounts, now=now)
+    owned_ids = owned_account_ids(db, user)
 
     total_messages = sum(a.total_messages for a in accounts)
     total_bytes = sum(a.maildir_size_bytes for a in accounts)
-    # Self-recovering pauses are NOT errors (sync-budget spec §8): the
-    # account-level pause_reason check is the adopted exclusion logic.
-    error_count = sum(
-        1 for a in accounts if a.sync_state.value == "error" and a.pause_reason is None
-    )
+    # Only the error tone is an error: self-recovering pauses, stops and
+    # sign-ins are not (sync-budget spec §8).
+    error_count = sum(1 for st in statuses.values() if st.tone == Tone.error)
 
     stats = {
         "accounts": len(accounts),
@@ -376,16 +401,19 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         else:
             stats["storage_total"] = None
 
-    stale_cutoff = datetime.now(UTC) - timedelta(days=7)
     attention = []
-    # NOTE: the loop below is an if/elif chain on SYNC state. Backup entries
-    # are appended separately, after it — folding them in as another elif
-    # would hide a broken backup behind a healthy sync.
+    # Mailbox entries come from the resolver's needs_attention verdict. Backup
+    # entries are appended separately, after it — a broken backup must not
+    # hide behind (or be hidden by) a healthy sync.
     for a in accounts:
-        if a.sync_state.value == "needs_reauth":
+        st = statuses[a.id]
+        if not st.needs_attention:
+            continue
+        can_modify = can_modify_account(user, a.id, owned_ids)
+        if st.state == MailboxState.sign_in_needed:
             # Revoked/expired OAuth token (e.g. provider password change) —
-            # only the user can fix it, so surface it prominently with a
-            # one-click reconnect, not buried in the account page.
+            # only an owner can fix it, so surface it with a one-click
+            # reconnect, not buried in the account page.
             attention.append(
                 {
                     "id": a.id,
@@ -393,27 +421,36 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
                     "type": "reauth",
                     "reason": "Sign-in expired — reconnect needed",
                     "provider": a.provider,
+                    "action": NextAction.reconnect.value if can_modify else None,
                 }
             )
-        elif a.sync_state.value == "error" and a.pause_reason is None:
-            reason = a.last_error[:80] if a.last_error else "Sync failed"
-            attention.append({"id": a.id, "name": a.name, "type": "error", "reason": reason})
-        elif a.initial_sync_completed_at is None and a.is_authenticated and not a.suspended:
-            # The first full sync in flight is an INFO state, never an error.
-            ls = account_live_status(a)
-            bits = ["initial sync"]
-            if ls["pct"] is not None:
-                bits[0] += f" {int(ls['pct'])}%"
-            if ls["eta_label"]:
-                bits.append(f"ETA {ls['eta_label']}")
-            if ls["resume_rel"]:
-                bits.append(f"resumes {ls['resume_rel']}")
+        elif st.state == MailboxState.error:
+            action = st.action.value if st.action else None
+            if st.action == NextAction.update_password and not can_modify:
+                action = None
             attention.append(
-                {"id": a.id, "name": a.name, "type": "info", "reason": " · ".join(bits)}
+                {
+                    "id": a.id,
+                    "name": a.name,
+                    "type": "error",
+                    # last_error can hold a whole mbsync log — keep it short.
+                    "reason": (a.last_error or "Sync failed")[:80],
+                    "action": action,
+                }
             )
-        elif a.last_sync_at and a.last_sync_at.replace(tzinfo=UTC) < stale_cutoff:
+        else:  # stale, initial_stalled
             attention.append(
-                {"id": a.id, "name": a.name, "type": "stale", "reason": "No sync in 7+ days"}
+                {
+                    "id": a.id,
+                    "name": a.name,
+                    "type": "stale",
+                    "reason": st.detail,
+                    "action": st.action.value if st.action else None,
+                    # `action` is agent-facing (None while paused, because the
+                    # agent trigger refuses); the UI trigger overrides a pause
+                    # with a warning, so the button follows the state.
+                    "sync_button": True,
+                }
             )
 
     account_ids = [a.id for a in accounts]
@@ -440,7 +477,6 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             .limit(5)
             .all()
         )
-        now = datetime.now(UTC)
         account_map = {a.id: a.name for a in accounts}
         for j in jobs:
             ts = j.completed_at or j.requested_at
@@ -456,32 +492,61 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
                     time_ago = f"{delta.days}d ago"
             else:
                 time_ago = "—"
+            outcome = resolve_job_outcome(j)
             recent_jobs.append(
                 {
                     "account_id": j.account_id,
                     "account_name": account_map.get(j.account_id, "?"),
                     "status": j.status.value,
                     "time_ago": time_ago,
+                    "outcome_badge": outcome.badge,
+                    "outcome_icon": outcome.icon,
+                    "outcome_spin": outcome.spin,
+                    "outcome_label": outcome.label,
                 }
             )
 
     from sqlalchemy import func
 
-    from mailfallback.models import Repository, SyncState
+    from mailfallback.models import Repository
 
     # Wave 4: chain summary feeds the dashboard hero card. Four stages:
     # Source (mailboxes connected) → Mirror (local sync health) →
     # Repository (configured + reachable) → Snapshot (cached counts).
-    mirrors_healthy = sum(1 for a in accounts if a.sync_state == SyncState.idle)
-    mirrors_error = sum(1 for a in accounts if a.sync_state == SyncState.error)
+    # Source and Local backup are counted from the resolver's verdicts.
+    tones = [st.tone for st in statuses.values()]
+    states = [st.state for st in statuses.values()]
+    mirrors_total = len(accounts)
+    mirrors_failing = tones.count(Tone.error)
+    mirrors_attention = tones.count(Tone.attention)
+    connected = sum(1 for st in statuses.values() if st.signed_in)
+    if not mirrors_total:
+        source_tone = Tone.muted.value
+    elif connected < mirrors_total:
+        source_tone = Tone.attention.value
+    else:
+        source_tone = Tone.ok.value
+    if mirrors_failing:
+        local_tone = Tone.error.value
+    elif mirrors_attention:
+        local_tone = Tone.attention.value
+    else:
+        local_tone = Tone.ok.value
     snapshots_total = (
         db.query(func.coalesce(func.sum(BackupPolicy.last_snapshot_count), 0)).scalar() or 0
     )
     chain_summary = {
         "mailboxes": len(accounts),
-        "mirrors_healthy": mirrors_healthy,
-        "mirrors_error": mirrors_error,
-        "mirrors_total": len(accounts),
+        "mirrors_total": mirrors_total,
+        "mirrors_failing": mirrors_failing,
+        "mirrors_attention": mirrors_attention,
+        "mirrors_ok": sum(1 for t in tones if t in (Tone.ok, Tone.active)),
+        "mirrors_suspended": states.count(MailboxState.suspended),
+        "mirrors_stopped": states.count(MailboxState.stopped),
+        "mirrors_waiting": states.count(MailboxState.waiting),
+        "connected": connected,
+        "source_tone": source_tone,
+        "local_tone": local_tone,
         "repositories": db.query(Repository).count(),
         "policies": db.query(BackupPolicy).count(),
         "policies_with_recent_success": db.query(BackupPolicy)
@@ -515,6 +580,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             "recent_jobs": recent_jobs,
             "setup_state": setup_state,
             "show_chain_explainer": show_chain_explainer,
+            "dot_class": TONE_DOT,
         },
     )
 
@@ -525,7 +591,7 @@ def system_status_partial(request: Request, db: Session = Depends(get_db)):
     if not user or user.role.value != "admin":
         return HTMLResponse("")
 
-    from mailfallback.models import BackupPolicy, BackupStatus, JobStatus, RestoreJob, SyncJob
+    from mailfallback.models import BackupPolicy, BackupStatus, JobStatus, RestoreJob
     from mailfallback.services.background_tasks import get_latest_task
     from mailfallback.services.dovecot_manager import get_cached_health
 
@@ -533,8 +599,25 @@ def system_status_partial(request: Request, db: Session = Depends(get_db)):
     fts = get_latest_task(db, "fts_reindex")
     resync = get_latest_task(db, "force_resync")
 
-    syncing_count = db.query(SyncJob).filter(SyncJob.status == JobStatus.running).count()
-    error_accounts = db.query(Account).filter(Account.sync_state == "error").all()
+    # Global and admin-only: every account, resolved once. Counts are
+    # ACCOUNTS (not jobs), from the same verdict every other surface uses.
+    # O(accounts) every 5 s per admin tab — fine at self-hosted scale.
+    all_accounts = db.query(Account).order_by(Account.name).all()
+    statuses = resolve_many(db, all_accounts)
+    syncing_count = sum(
+        1 for st in statuses.values() if st.state in (MailboxState.first_sync, MailboxState.syncing)
+    )
+
+    def _row(a):
+        st = statuses[a.id]
+        return {"id": a.id, "name": a.name, "label": st.label, "detail": st.detail}
+
+    error_accounts = [_row(a) for a in all_accounts if statuses[a.id].tone == Tone.error]
+    # Sign-in only: stale / stalled live on the dashboard, and a deliberately
+    # rare schedule must not keep the strip on forever.
+    attention_accounts = [
+        _row(a) for a in all_accounts if statuses[a.id].state == MailboxState.sign_in_needed
+    ]
 
     active_restores = (
         db.query(RestoreJob)
@@ -552,6 +635,7 @@ def system_status_partial(request: Request, db: Session = Depends(get_db)):
         or resync.get("status") == "running"
         or syncing_count > 0
         or error_accounts
+        or attention_accounts
         or active_restores
         or active_backups > 0
     )
@@ -567,6 +651,7 @@ def system_status_partial(request: Request, db: Session = Depends(get_db)):
             "resync": resync,
             "syncing_count": syncing_count,
             "error_accounts": error_accounts,
+            "attention_accounts": attention_accounts,
             "active_restores": active_restores,
             "active_backups": active_backups,
         },
@@ -599,6 +684,7 @@ def accounts_page(request: Request, show_all: str = "", db: Session = Depends(ge
             "accounts": accounts,
             "show_all_users": show_all_users,
             "live_status": {a.id: account_live_status(a) for a in accounts},
+            "statuses": resolve_many(db, accounts),
         },
     )
 
@@ -631,6 +717,7 @@ def accounts_table_partial(request: Request, show_all: str = "", db: Session = D
             "user": user,
             "accounts": accounts,
             "live_status": {a.id: account_live_status(a) for a in accounts},
+            "statuses": resolve_many(db, accounts),
         },
     )
     if not any_syncing:

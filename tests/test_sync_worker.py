@@ -879,6 +879,60 @@ def test_budget_stop_wins_over_signal(tmp_path, monkeypatch):
     assert resume.date() > job.completed_at.date()
 
 
+def test_runtime_cap_kill_is_an_error_not_a_user_stop(tmp_path, monkeypatch):
+    """The runtime cap stops mbsync through stop_sync_job, exactly like the
+    user Stop — it must still end as a real failure (failure_kind="error",
+    last_error naming the cap), never as a muted "Stopped"."""
+    from mailfallback.services.mailbox_status import (
+        MailboxState,
+        Tone,
+        latest_finished_jobs_by_account,
+        resolve_job_outcome,
+        resolve_mailbox_status,
+    )
+
+    session = make_session()
+    account, job = _mk_maildir_account_and_job(session, tmp_path, initial_sync_completed_at=DONE)
+    job.status = JobStatus.pending
+    session.commit()
+    # A cap already exceeded on the first check: the real deadline path fires.
+    monkeypatch.setattr(sync_worker.settings, "sync_job_max_runtime_s", -1)
+
+    from mailfallback.services import notification_service as ns
+
+    with (
+        patch(
+            "mailfallback.services.sync_worker.subprocess.Popen",
+            return_value=_proc(["C: 1/10  B: 3/40"], code=-15),
+        ),
+        PATCH_RC,
+        patch.object(ns, "notify_account_problem", autospec=True) as notify,
+    ):
+        execute_sync_job(session, job.id)
+
+    session.refresh(job)
+    session.refresh(account)
+    assert job.status == JobStatus.failed
+    assert job.signal == "SIGTERM"
+    assert job.failure_kind == "error"
+    assert "Sync exceeded the -1s runtime cap" in job.log
+    assert account.sync_state == SyncState.error
+    assert account.last_error == "Sync exceeded the -1s runtime cap"
+    assert job.id not in sync_worker._deadline_stops  # consumed
+    # A red failure notifies like every other error path.
+    sync_errors = [c for c in notify.call_args_list if c.args[2] == "sync_error"]
+    assert len(sync_errors) == 1
+    assert sync_errors[0].args[3] == f"{account.name}: sync failed"
+    assert sync_errors[0].args[4] == "Sync exceeded the -1s runtime cap"
+
+    last_job = latest_finished_jobs_by_account(session, [account.id])[account.id]
+    status = resolve_mailbox_status(account, last_job=last_job)
+    assert status.state == MailboxState.error
+    assert status.tone == Tone.error
+    outcome = resolve_job_outcome(last_job)
+    assert (outcome.label, outcome.badge) == ("failed", "badge-error")
+
+
 def test_user_stop_keeps_error_behavior_and_clears_stale_pause(tmp_path):
     """User stop: today's error behavior for job/state, but a PRE-EXISTING
     pause clears (review F2): an error state with a live pause would be

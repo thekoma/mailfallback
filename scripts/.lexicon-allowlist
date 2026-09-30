@@ -4,4 +4,4 @@
 # Comments start with #.
 
 src/mailfallback/templates/restore.html:146: placeholder is a legitimate example folder name (e.g. Backup/2024); not MFB lexicon
-src/mailfallback/templates/partials/system_status.html:27: 'backup' is a JS function argument selecting the status-detail panel id, not user-visible text
+src/mailfallback/templates/partials/system_status.html:29: 'backup' is a JS function argument selecting the status-detail panel id, not user-visible text

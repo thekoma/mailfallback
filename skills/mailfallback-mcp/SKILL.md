@@ -93,6 +93,44 @@ search, or when the user's phrasing implies one ("my work mail"). Its
 `indexed_messages` and `folders` describe **the search index right now**, not
 a live provider-side count.
 
+## Mailbox status
+
+Every mailbox from `list_mailboxes` (and `GET /api/v1/agent/mailboxes`)
+carries a `status` object — the same verdict the web UI shows:
+
+| field | meaning |
+|---|---|
+| `state` | `migrating`, `suspended`, `sign_in_needed`, `first_sync`, `syncing`, `paused`, `stopped`, `error`, `initial_sync`, `initial_stalled`, `waiting`, `stale`, `current` |
+| `tone` | `ok`, `active` (working or self-recovering), `attention` (the user must act), `error` (a real failure), `muted` (off, stopped or not started) |
+| `label` | English display text. Not a contract: don't match on it. |
+| `action` | `reconnect`, `update_password`, `retry`, `sync_now`, or `null` |
+| `needs_attention` | `true` when this is worth telling the user about |
+| `last_success_at` | last successful sync (ISO timestamp or `null`) |
+| `resumes_at` | when a pause lifts (ISO timestamp); `null` if not paused or the pause has already expired |
+
+Rules:
+
+- `state`, `tone` and `action` are plain strings, and the lists above can grow.
+  If you get a `state` you don't recognise, go by its `tone`.
+- Surface `needs_attention` mailboxes to the user. A `paused` or `first_sync`
+  mailbox is working as intended; don't report it as a problem.
+- There is no error text on purpose: it would be raw IMAP-server output.
+
+What to do with `action`:
+
+- `retry` or `sync_now`: call the `sync_now` tool. It needs the `sync:trigger`
+  scope, and it can still refuse with a conflict when the mailbox is paused,
+  suspended or its owner is migrating. Report that to the user; don't retry.
+- `reconnect` or `update_password`: only a person can do this. Tell the user
+  to reconnect the mailbox, or update its password, in the MailFallBack web
+  UI. If they don't own the mailbox (it is shared through a group), they need
+  to ask its owner or an admin. The API can't tell you who that is.
+- `null`: nothing to do. For a paused mailbox that is also out of date, wait
+  for `resumes_at`.
+- A `paused` or out-of-date (`stale`, `initial_stalled`) mailbox with
+  `action: null` and `resumes_at: null` is about to resume: try again later
+  rather than reporting a problem.
+
 To keep working in an existing IMAP client instead of downloading over HTTP,
 `imap_coords(account_id, message_ids)` turns Message-Ids into folder keys and
 UIDs you can `SELECT`/`FETCH` directly. Note it takes real **Message-Ids**,

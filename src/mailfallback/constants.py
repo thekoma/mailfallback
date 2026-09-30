@@ -19,3 +19,9 @@ the database exists, and must not pull in models or services to do it.
 # syntax separates the two, so the defence is a name a provider folder
 # realistically does not have.
 STAGING_MAILBOX = "MFB-Staging"
+
+# Sentinel error message: set on the account (and the job log) when the OAuth
+# refresh token is rejected. The sync worker writes it; the mailbox status
+# resolver and the reconnect flow match on it, so it lives here rather than in
+# the worker (services.sync_worker still re-exports it).
+TOKEN_REFRESH_FAILED = "Failed to refresh OAuth2 token"

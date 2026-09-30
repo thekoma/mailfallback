@@ -52,33 +52,10 @@
             </td>
             <td>
                 {% set ls = live_status.get(account.id) if live_status else none %}
-                {% if not account.is_authenticated %}
-                <span class="badge badge-error"><i data-lucide="key-round" class="icon-sm"></i> Unauthenticated</span>
-                {% elif account.migrating %}
-                <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm"></i> Migrating</span>
-                {% else %}
-                {% if not account.enabled %}
-                <span class="badge badge-disabled"><i data-lucide="eye-off" class="icon-sm"></i> Hidden</span>
-                {% endif %}
-                {% if account.suspended %}
-                <span class="badge badge-disabled"><i data-lucide="pause-circle" class="icon-sm"></i> Suspended</span>
-                {% elif account.sync_state.value == 'syncing' %}
-                {% if ls and ls.initial_sync %}
-                <span class="badge badge-info"><i data-lucide="loader" class="icon-sm spin"></i> Initial sync{% if ls.pct is not none %} {{ ls.pct | int }}%{% endif %}</span>
-                {% else %}
-                <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm"></i> syncing</span>
-                {% endif %}
-                {% elif account.sync_state.value == 'error' %}
-                <span class="badge badge-error"><i data-lucide="alert-circle" class="icon-sm"></i> error</span>
-                {% elif ls and ls.pause_reason %}
-                {# Self-recovering pause: info tone, never error-red. #}
-                <span class="badge badge-info" title="{{ ls.pause_tooltip }}"><i data-lucide="pause-circle" class="icon-sm"></i> Paused{% if ls.resume_rel %} · resumes {{ ls.resume_rel }}{% endif %}</span>
-                {% elif ls and ls.initial_sync and account.enabled %}
-                <span class="badge badge-info" title="First full sync incomplete"><i data-lucide="download" class="icon-sm"></i> Initial sync{% if ls.pct is not none %} {{ ls.pct | int }}%{% endif %}</span>
-                {% elif account.enabled %}
-                <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> idle</span>
-                {% endif %}
-                {% endif %}
+                {% set st = statuses[account.id] %}
+                {# One verdict per mailbox (services/mailbox_status.py). "Hidden" is orthogonal: hidden mailboxes still sync. #}
+                {% if not account.enabled %}<span class="badge badge-disabled"><i data-lucide="eye-off" class="icon-sm"></i> Hidden</span>{% endif %}
+                <span class="badge {{ st.badge }}"{% if st.detail and st.state.value in ('paused', 'initial_sync') %} title="{{ st.detail }}"{% endif %}><i data-lucide="{{ st.icon }}" class="icon-sm{% if st.spin %} spin{% endif %}"></i> {{ st.label }}{% if st.state.value in ('first_sync', 'initial_sync') and ls and ls.pct is not none %} {{ ls.pct | int }}%{% endif %}{% if st.state.value == 'paused' and ls and ls.resume_rel %} · resumes {{ ls.resume_rel }}{% endif %}</span>
             </td>
             <td>
                 <span class="{{ account.last_sync_at | time_ago_class }}" title="{{ account.last_sync_at.strftime('%Y-%m-%d %H:%M:%S') if account.last_sync_at else '' }}">

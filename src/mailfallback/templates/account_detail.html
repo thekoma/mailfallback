@@ -38,15 +38,7 @@
         <h3>Health</h3>
         <div class="health-rows">
             <div class="health-row">
-                {% if account.sync_state.value == 'syncing' %}
-                <span class="stats-dot stats-dot-syncing"></span>
-                {% elif account.sync_state.value == 'error' %}
-                <span class="stats-dot stats-dot-error"></span>
-                {% elif account.last_sync_at %}
-                <span class="stats-dot stats-dot-ok"></span>
-                {% else %}
-                <span class="stats-dot"></span>
-                {% endif %}
+                <span class="stats-dot {{ dot_class[status.tone.value] }}"></span>
                 <span class="health-label">Local sync</span>
                 <span class="health-value">{{ account.last_sync_at | time_ago if account.last_sync_at else '—' }}</span>
             </div>
@@ -72,10 +64,10 @@
                 </span>
             </div>
             <div class="health-row">
-                {% if account.is_authenticated %}
-                <span class="stats-dot stats-dot-ok"></span>
+                {% if not status.signed_in or status.action and status.action.value == "update_password" %}
+                <span class="stats-dot stats-dot-warning"></span>
                 {% else %}
-                <span class="stats-dot stats-dot-error"></span>
+                <span class="stats-dot stats-dot-ok"></span>
                 {% endif %}
                 <span class="health-label">Auth</span>
                 <span class="health-value">{% if account.auth_type.value == "oauth2" %}XOAUTH2{% else %}Password{% endif %}</span>

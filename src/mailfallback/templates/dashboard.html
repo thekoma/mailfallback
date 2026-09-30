@@ -83,8 +83,12 @@
                 <i data-lucide="inbox" class="icon-sm icon-inline"></i> Source
             </div>
             <div class="chain-stage-value">
-                <span class="stats-dot stats-dot-ok"></span>
+                <span class="stats-dot {{ dot_class[chain_summary.source_tone] }}"></span>
+                {% if chain_summary.connected == chain_summary.mirrors_total %}
                 {{ chain_summary.mailboxes }} mailbox{{ 'es' if chain_summary.mailboxes != 1 else '' }} connected
+                {% else %}
+                {{ chain_summary.connected }} of {{ chain_summary.mirrors_total }} connected
+                {% endif %}
             </div>
         </a>
         <div class="chain-arrow" aria-hidden="true">→</div>
@@ -93,12 +97,16 @@
                 <i data-lucide="hard-drive" class="icon-sm icon-inline"></i> Local backup
             </div>
             <div class="chain-stage-value">
-                {% if chain_summary.mirrors_error > 0 %}
-                <span class="stats-dot stats-dot-error"></span>
-                {{ chain_summary.mirrors_error }} of {{ chain_summary.mirrors_total }} failing
+                <span class="stats-dot {{ dot_class[chain_summary.local_tone] }}"></span>
+                {% if chain_summary.mirrors_failing > 0 %}
+                {{ chain_summary.mirrors_failing }} of {{ chain_summary.mirrors_total }} failing
+                {% elif chain_summary.mirrors_attention > 0 %}
+                {{ chain_summary.mirrors_attention }} of {{ chain_summary.mirrors_total }} need attention
                 {% else %}
-                <span class="stats-dot stats-dot-ok"></span>
-                {{ chain_summary.mirrors_healthy }} of {{ chain_summary.mirrors_total }} healthy
+                {{ chain_summary.mirrors_ok }} of {{ chain_summary.mirrors_total }} healthy
+                {%- if chain_summary.mirrors_suspended %} · {{ chain_summary.mirrors_suspended }} suspended{% endif %}
+                {%- if chain_summary.mirrors_stopped %} · {{ chain_summary.mirrors_stopped }} stopped{% endif %}
+                {%- if chain_summary.mirrors_waiting %} · {{ chain_summary.mirrors_waiting }} not started{% endif %}
                 {% endif %}
             </div>
         </a>
@@ -155,9 +163,9 @@
         {# Initial sync in progress / self-recovering pause — info, not error. #}
         <span class="badge badge-info"><i data-lucide="download" class="icon-sm"></i></span>
         {% elif item.type == 'reauth' %}
-        <span class="badge badge-error"><i data-lucide="log-in" class="icon-sm"></i></span>
+        <span class="badge badge-warning"><i data-lucide="log-in" class="icon-sm"></i></span>
         {% else %}
-        <span class="badge badge-syncing"><i data-lucide="clock" class="icon-sm"></i></span>
+        <span class="badge badge-warning"><i data-lucide="clock" class="icon-sm"></i></span>
         {% endif %}
         <div class="flex-1">
             <a href="{{ item.href or '/accounts/' ~ item.id }}"><strong>{{ item.name }}</strong></a>
@@ -175,14 +183,20 @@
                 <i data-lucide="cloud-upload" class="icon-sm"></i> Back up now
             </button>
         </form>
+        {% elif item.type == 'error' and item.action == 'update_password' %}
+        <a class="icon-btn primary" href="/accounts/{{ item.id }}#admin-edit"><i data-lucide="key-round" class="icon-sm"></i> Update password</a>
         {% elif item.type == 'error' %}
         <button class="icon-btn primary" hx-post="/api/sync/{{ item.id }}" hx-swap="none" hx-on::after-request="location.reload()">
             <i data-lucide="refresh-cw" class="icon-sm"></i> Retry
         </button>
-        {% elif item.type == 'reauth' %}
+        {% elif item.type == 'reauth' and item.action == 'reconnect' %}
         <a class="icon-btn primary" href="/auth/{{ item.provider }}/start?account_id={{ item.id }}">
             <i data-lucide="log-in" class="icon-sm"></i> Reconnect
         </a>
+        {% elif item.type == 'stale' and item.sync_button %}
+        <button class="icon-btn primary" hx-post="/api/sync/{{ item.id }}" hx-swap="none" hx-on::after-request="location.reload()">
+            <i data-lucide="refresh-cw" class="icon-sm"></i> Sync now
+        </button>
         {% endif %}
     </div>
     {% endfor %}
@@ -196,19 +210,11 @@
     <div class="mt-05">
     {% for job in recent_jobs %}
     <div class="attention-item">
-        {% if job.status == 'completed' %}
-        <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i></span>
-        {% elif job.status == 'failed' %}
-        <span class="badge badge-error"><i data-lucide="x-circle" class="icon-sm"></i></span>
-        {% elif job.status == 'running' %}
-        <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i></span>
-        {% else %}
-        <span class="badge badge-disabled"><i data-lucide="clock" class="icon-sm"></i></span>
-        {% endif %}
+        <span class="badge {{ job.outcome_badge }}"><i data-lucide="{{ job.outcome_icon }}" class="icon-sm{% if job.outcome_spin %} spin{% endif %}"></i></span>
         <div class="flex-1">
             <a href="/accounts/{{ job.account_id }}"><strong>{{ job.account_name }}</strong></a>
             <span class="text-small text-muted">—
-                {% if job.status == 'completed' %}synced{% elif job.status == 'failed' %}failed{% elif job.status == 'running' %}syncing{% else %}queued{% endif %}
+                {{ job.outcome_label }}
                 {{ job.time_ago }}</span>
         </div>
     </div>

@@ -51,6 +51,7 @@ from mailfallback.routers.agent import (
     AttachmentSearchResponseOut,
     ImapCoordsResponseOut,
     MailboxOut,
+    MailboxStatusOut,
     MessageOut,
     SearchResponseOut,
     SyncJobOut,
@@ -62,6 +63,7 @@ from mailfallback.services import (
     sync_service,
 )
 from mailfallback.services.audit_service import log_action
+from mailfallback.services.mailbox_status import resolve_many
 from mailfallback.services.sync_worker import submit_sync_job
 from mailfallback.version import __version__
 
@@ -363,6 +365,7 @@ def _register_tools(mcp: MCPServer) -> None:
                 .all()
             ):
                 folders.setdefault(account_id, []).append(folder)
+            statuses = resolve_many(db, accounts)
 
             return MailboxListOut.model_validate(
                 {
@@ -375,6 +378,9 @@ def _register_tools(mcp: MCPServer) -> None:
                             "last_sync_at": a.last_sync_at.isoformat() if a.last_sync_at else None,
                             "indexed_messages": counts.get(a.id, 0),
                             "folders": sorted(folders.get(a.id, [])),
+                            "status": MailboxStatusOut.from_status(statuses[a.id]).model_dump(
+                                mode="json"
+                            ),
                         }
                         for a in accounts
                     ]
