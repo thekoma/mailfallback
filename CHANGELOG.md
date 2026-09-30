@@ -1,3 +1,23 @@
+## [2026.09.3] - 2026-09-30
+
+### Fixes
+
+- Explain an error hero only with the job that caused it *(ui)*
+- Keep account facts in the error hero footer without a matching job *(ui)*
+- Rewrite status and error copy so it says what happened and who can act *(ui)*
+
+### Other
+
+- Merge pull request #262 from thekoma/fix/hero-error-snap
+
+fix(ui): explain an error hero only with the job that caused it
+- Merge pull request #264 from thekoma/design/clarify-status-copy
+
+fix(ui): rewrite status and error copy so it says what happened and who can act
+
+### Testing
+
+- Isolate the next_calver git fixture from inherited GIT_* env *(release)*
 ## [2026.09.2] - 2026-09-30
 
 ### Documentation
