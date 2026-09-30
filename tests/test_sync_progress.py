@@ -404,7 +404,7 @@ class TestErrorDetection:
         assert len(snap.errors) == 1
         err = snap.errors[0]
         assert err.category == "auth"
-        assert err.user_message == "Sign-in needed"
+        assert err.user_message == "The server rejected the sign-in."
         assert err.action == "reauth"
         assert err.actionable is True
 
@@ -443,7 +443,7 @@ class TestErrorDetection:
         lines = ["Error: something completely unexpected happened"]
         snap = parse_mbsync_lines(lines)
         assert snap.errors[0].category == "unknown"
-        assert snap.errors[0].user_message == "Backup failed — unknown error"
+        assert snap.errors[0].user_message == "The last sync failed."
         assert snap.errors[0].action == "none"
 
     def test_error_line_number(self):
@@ -565,3 +565,87 @@ class TestEdgeCases:
         snap = parse_mbsync_lines(lines)
         assert snap.auth_method == "LOGIN"
         assert snap.phase == "authenticating"
+
+
+class TestErrorHeadline:
+    """The one headline every status surface shows for a failed sync."""
+
+    def test_app_password_auth_failure_blames_the_password(self):
+        from mailfallback.services.sync_progress import describe_error
+
+        text = "IMAP error: AUTHENTICATIONFAILED Invalid credentials"
+        assert describe_error(text, app_password=True) == "The server rejected the password."
+        assert describe_error(text) == "The server rejected the sign-in."
+
+    def test_unclassified_and_empty_never_echo_raw_text(self):
+        from mailfallback.services.sync_progress import describe_error
+
+        assert describe_error("mbsync exited with code 1") == "The last sync failed."
+        assert describe_error(None) == "The last sync failed."
+        assert describe_error("") == "The last sync failed."
+
+    def test_headlines_state_the_cause_only(self):
+        """What to do depends on the viewer (owner vs group member vs admin),
+        so the shared headline never instructs; the hero adds that per viewer."""
+        from mailfallback.services.sync_progress import _ERROR_CATEGORIES
+
+        for _pattern, category, message, _action in _ERROR_CATEGORIES:
+            assert message.endswith("."), category
+            assert "Check" not in message and "Ask" not in message, category
+
+
+class TestMfbAuthoredErrors:
+    """Messages the worker writes itself stay actionable, never the generic line."""
+
+    def test_runtime_cap(self):
+        from mailfallback.services.sync_progress import describe_error, error_category
+
+        text = "Sync exceeded the 21600s runtime cap"
+        assert describe_error(text) == (
+            "The sync ran past its time limit and was stopped. "
+            "The next sync continues where it left off."
+        )
+        assert error_category(text) == "runtime_cap"
+
+    def test_timeout(self):
+        from mailfallback.services.sync_progress import describe_error
+
+        assert describe_error("Sync timed out after 3600 seconds") == (
+            "The sync took too long and was stopped. The next sync continues where it left off."
+        )
+
+    def test_internal_host(self):
+        from mailfallback.services.sync_progress import describe_error
+
+        text = "Connections to private/internal addresses are not allowed: 10.0.0.5"
+        assert describe_error(text) == (
+            "The IMAP host points to a private network address, which MFB refuses to connect to."
+        )
+
+    def test_unresolved_host(self):
+        from mailfallback.services.sync_progress import describe_error
+
+        assert describe_error("Host could not be resolved: imap.nowhere.invalid") == (
+            "Couldn't find the IMAP host."
+        )
+
+    def test_token_refresh(self):
+        from mailfallback.constants import TOKEN_REFRESH_FAILED
+        from mailfallback.services.sync_progress import describe_error
+
+        assert describe_error(TOKEN_REFRESH_FAILED) == (
+            "Couldn't refresh the sign-in. It retries on the next sync."
+        )
+
+    def test_none_of_them_is_the_generic_line(self):
+        from mailfallback.constants import TOKEN_REFRESH_FAILED
+        from mailfallback.services.sync_progress import UNKNOWN_ERROR_MESSAGE, describe_error
+
+        for text in (
+            "Sync exceeded the 60s runtime cap",
+            "Sync timed out after 3600 seconds",
+            "Connections to private/internal addresses are not allowed: x",
+            "Host could not be resolved: x",
+            TOKEN_REFRESH_FAILED,
+        ):
+            assert describe_error(text) != UNKNOWN_ERROR_MESSAGE, text

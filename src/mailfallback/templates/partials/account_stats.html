@@ -1,9 +1,9 @@
 {% if folder_stats %}
 <details id="stats-details">
     <summary>
-        <i data-lucide="bar-chart-3" class="icon-md icon-inline"></i><strong>Mailbox Statistics</strong>
+        <i data-lucide="bar-chart-3" class="icon-md icon-inline"></i><strong>Mailbox statistics</strong>
         <span id="stats-inline" class="text-muted text-small">
-            — {{ account.total_messages }} messages{% if account.unread_messages %} ({{ account.unread_messages }} unread){% endif %}, {{ account.maildir_size_bytes|filesizeformat }}
+            — {{ account.total_messages | number }} messages{% if account.unread_messages %} ({{ account.unread_messages | number }} unread){% endif %}, {{ account.maildir_size_bytes|filesizeformat }}
         </span>
     </summary>
     <div class="table-wrap">
@@ -15,7 +15,7 @@
             {% for folder in folder_stats %}
             <tr>
                 <td>{{ folder.name }}</td>
-                <td>{{ folder.messages }}</td>
+                <td>{{ folder.messages | number }}</td>
                 <td>{{ folder.unread if folder.unread else '—' }}</td>
                 <td>{{ folder.size_bytes|filesizeformat if folder.size_bytes else '—' }}</td>
             </tr>
@@ -24,7 +24,7 @@
         <tfoot>
             <tr>
                 <td><strong>Total</strong></td>
-                <td><strong>{{ account.total_messages }}</strong></td>
+                <td><strong>{{ account.total_messages | number }}</strong></td>
                 <td><strong>{{ account.unread_messages if account.unread_messages else '—' }}</strong></td>
                 <td><strong>{{ account.maildir_size_bytes|filesizeformat if account.maildir_size_bytes else '—' }}</strong></td>
             </tr>

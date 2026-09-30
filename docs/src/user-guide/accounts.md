@@ -2,31 +2,33 @@
 
 Accounts represent email mailboxes that MFB backs up. Each account connects to an upstream IMAP server and syncs mail to local Maildir storage.
 
-## Accounts List
+## Mailboxes list
 
-The accounts page shows all your email accounts in a table.
+The **Mailboxes** page (sidebar: Mailboxes) shows all your mailboxes in a table.
 
 ![Accounts list](../screenshots/03-accounts.png)
 
 | Column | Description |
 |--------|-------------|
-| **Account** | Display name and email address |
-| **Owner** | User(s) who own this account |
-| **Auth** | Authentication type - app password or OAuth2 |
+| **Mailbox** | Display name and email address |
+| **Owner** | User(s) who own this mailbox (admins only) |
+| **Sign-in** | Google sign-in, Microsoft sign-in, App password or Password |
 | **Stats** | Message count and storage size |
-| **Status** | Current sync state (idle, syncing, error) |
-| **Last Sync** | When the last sync completed |
+| **Status** | Current state, e.g. Up to date, Syncing, Initial sync, Paused, Sign-in needed, Out of date, Sync failed |
+| **Last sync** | When the last sync completed |
+| **Repository** | Last off-site back-up, if a backup policy is set |
 | **Actions** | Kebab menu with quick actions |
 
-The kebab dropdown on each row provides:
+**Sync all** syncs every mailbox you can see; **New mailbox** connects another one. The kebab dropdown on each row provides:
 
-- **Sync Now** - trigger an immediate sync
-- **View Details** - open the account detail page
-- **Disable/Enable** - toggle the account
+- **Sync now** - trigger an immediate sync
+- **Hide/Show** - hide the mailbox from webmail (it keeps syncing)
+- **Suspend/Resume** - stop or restart scheduled syncs
+- **Details** - open the mailbox page
 
 ## Adding an Account
 
-Click the "Add Account" button to create a new backup account.
+Click **New mailbox** to connect a mailbox.
 
 ![New account form](../screenshots/04-new-account.png)
 
@@ -97,7 +99,7 @@ Leave empty to disable automatic sync (manual sync only).
 
 ## Account Detail
 
-Click on an account name or select "View Details" from the kebab menu.
+Click on a mailbox name or select **Details** from the kebab menu.
 
 ![Account detail](../screenshots/05-account-detail.png)
 
@@ -132,7 +134,7 @@ A table of recent sync jobs with status, duration, message counts, and expandabl
 
 ## Triggering a Manual Sync
 
-Click "Sync Now" on any account to start an immediate sync. The sync runs in a background worker using mbsync. You can watch the progress on the account detail page, which updates via HTMX polling.
+Click "Sync now" on any mailbox to start an immediate sync. The sync runs in a background worker using mbsync. You can watch the progress on the account detail page, which updates via HTMX polling.
 
 ## Disabling an Account
 

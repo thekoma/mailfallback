@@ -57,7 +57,7 @@
                     {% if backup_config and backup_config.last_successful_run_at %}
                     {{ backup_config.last_successful_run_at | time_ago }}
                     {% elif backup_config %}
-                    no off-site backup yet
+                    no snapshot yet
                     {% else %}
                     not configured
                     {% endif %}
@@ -69,8 +69,8 @@
                 {% else %}
                 <span class="stats-dot stats-dot-ok"></span>
                 {% endif %}
-                <span class="health-label">Auth</span>
-                <span class="health-value">{% if account.auth_type.value == "oauth2" %}XOAUTH2{% else %}Password{% endif %}</span>
+                <span class="health-label">Sign-in</span>
+                <span class="health-value">{{ account | auth_label }}</span>
             </div>
         </div>
     </div>
@@ -144,7 +144,7 @@
         </div>
         <div class="kpi-sub">
             {% if backup_config.last_successful_run_at %}
-            Last clean: {{ backup_config.last_successful_run_at | time_ago }}
+            Last snapshot {{ backup_config.last_successful_run_at | time_ago }}
             {% elif backup_config.last_status.value == "failed" %}
             <span class="text-error-state">Last attempt failed</span>
             {% else %}
@@ -254,34 +254,34 @@
 {# ── Admin sections (one revealed at a time by JS) ── #}
 
 <div class="admin-section" id="admin-edit">
-    <h3 class="mt-0">Edit account</h3>
+    <h3 class="mt-0">Edit mailbox</h3>
     <form method="post" action="/accounts/{{ account.id }}/edit">
         <div class="grid-2">
             <div>
-                <label for="name">Account Name</label>
+                <label for="name">Mailbox name</label>
                 <input type="text" id="name" name="name" value="{{ account.name }}">
             </div>
             <div>
-                <label for="email_address">Email Address</label>
+                <label for="email_address">Email address</label>
                 <input type="email" id="email_address" name="email_address" value="{{ account.email_address }}">
             </div>
-            {% if account.provider in ("google", "microsoft", "yahoo", "icloud", "protonmail") %}
+            {% if account.provider in fixed_host_providers %}
             <div>
                 <label>Provider</label>
                 <input type="text" value="{{ account.provider|capitalize }}" disabled>
             </div>
             {% endif %}
-            {% if account.provider not in ("google", "microsoft", "yahoo", "icloud", "protonmail") %}
+            {% if account.provider not in fixed_host_providers %}
             <div>
-                <label for="imap_host">IMAP Host</label>
+                <label for="imap_host">IMAP host</label>
                 <input type="text" id="imap_host" name="imap_host" value="{{ account.imap_host }}">
             </div>
             <div>
-                <label for="imap_port">IMAP Port</label>
+                <label for="imap_port">IMAP port</label>
                 <input type="number" id="imap_port" name="imap_port" value="{{ account.imap_port }}">
             </div>
             <div>
-                <label for="tls_type">TLS Type</label>
+                <label for="tls_type">TLS type</label>
                 <select id="tls_type" name="tls_type">
                     <option value="IMAPS" {% if account.tls_type == "IMAPS" %}selected{% endif %}>IMAPS (SSL)</option>
                     <option value="STARTTLS" {% if account.tls_type == "STARTTLS" %}selected{% endif %}>STARTTLS</option>
@@ -302,14 +302,14 @@
             {% endif %}
             {% if account.auth_type.value != "oauth2" %}
             <div>
-                <label for="credentials">New Password (leave blank to keep)</label>
+                <label for="credentials">New {{ account | password_noun }} (leave blank to keep the current one)</label>
                 <input type="password" id="credentials" name="credentials">
             </div>
             {% else %}
             <div>
                 <p class="text-muted text-small mt-1">
                     <i data-lucide="info" class="icon-sm icon-inline"></i>
-                    Authentication is managed via OAuth. Use the Re-authenticate button in the hero panel.
+                    This mailbox uses {{ account | auth_label }}, so there is no password to change here. When the sign-in expires, reconnect from the status panel above.
                 </p>
             </div>
             {% endif %}
@@ -318,7 +318,7 @@
                 <input type="number" id="daily_sync_budget_mb" name="daily_sync_budget_mb" min="0"
                        value="{{ account.daily_sync_budget_mb if account.daily_sync_budget_mb is not none else '' }}"
                        placeholder="{{ budget_placeholder }}">
-                <small class="text-muted">0 = unlimited. Applies to all syncs for this account.</small>
+                <small class="text-muted">0 = unlimited. Applies to every sync of this mailbox.</small>
             </div>
         </div>
 
@@ -327,7 +327,7 @@
         {% endwith %}
 
         <button type="submit" class="mt-1">
-            <i data-lucide="save" class="icon-md icon-inline"></i> Save Changes
+            <i data-lucide="save" class="icon-md icon-inline"></i> Save changes
         </button>
     </form>
 </div>
@@ -531,11 +531,11 @@
 
 {% if user.role.value == "admin" %}
 <div class="admin-section" id="admin-delete">
-    <h3 class="mt-0 text-error-state">⚠ Delete this account</h3>
+    <h3 class="mt-0 text-error-state">⚠ Delete this mailbox</h3>
     <p>This action is irreversible. Type <strong>{{ account.email_address or account.name }}</strong> to confirm.</p>
     <label>
         <input type="checkbox" id="delete-files" value="1">
-        Also delete maildir folder (<code>{{ account.maildir_path }}</code>)
+        Also delete the local backup on disk (<code>{{ account.maildir_path }}</code>)
     </label>
     <input type="text" id="delete-confirm" placeholder="Type to confirm"
         data-expected="{{ account.email_address or account.name }}"
@@ -554,7 +554,7 @@
             lucide.createIcons();
         "
         hx-on::after-request="window.location='/'">
-        <i data-lucide="trash-2" class="icon-md"></i> Delete Account
+        <i data-lucide="trash-2" class="icon-md"></i> Delete mailbox
     </button>
 </div>
 {% endif %}

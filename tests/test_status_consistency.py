@@ -251,9 +251,9 @@ def test_every_surface_agrees(client, db_session, default_store, case):
     assert f'<span class="badge {status.badge}"' in table
     assert status.label in table
 
-    # Dashboard: in Needs Attention iff needs_attention; chain Local backup text.
+    # Dashboard: in Needs attention iff needs_attention; chain Local backup text.
     dash = client.get("/").text
-    attention = _block(dash, "Needs Attention")
+    attention = _block(dash, "Needs attention")
     assert (account.name in attention) == status.needs_attention
     local = re.search(r"</i> Local backup.*?</div>\s*</a>", dash, re.S).group(0)
     assert _text(local).endswith(_expected_local_text(status.tone, status.state))
@@ -282,13 +282,16 @@ def test_every_surface_agrees(client, db_session, default_store, case):
     assert mine["status"]["tone"] == status.tone.value
 
     # The account's last finished job carries the same outcome badge on the
-    # dashboard's Recent Activity and on the detail Sync History.
+    # dashboard's Recent activity and on the detail Sync history.
     if last_job is not None:
         outcome = resolve_job_outcome(last_job)
-        activity = _block(dash, "Recent Activity")
+        activity = _block(dash, "Recent activity")
         assert f'<span class="badge {outcome.badge}">' in activity
-        history = detail[detail.index("Sync History") :]
-        assert f'<span class="badge {outcome.badge}">{outcome.label}</span>' in history
+        history = detail[detail.index("Sync history") :]
+        # A standalone badge there, so sentence case (Recent activity keeps
+        # the lower-case phrase that follows the mailbox name).
+        assert f'<span class="badge {outcome.badge}">{outcome.label.capitalize()}</span>' in history
+        assert f"{outcome.label}\n" in activity
         if not (status.tone == Tone.error or last_job.failure_kind == "error"):
             assert "badge-error" not in activity
             assert "badge-error" not in history
@@ -296,6 +299,7 @@ def test_every_surface_agrees(client, db_session, default_store, case):
     if shared:
         # A group member can see the mailbox but cannot edit or reconnect it.
         assert "Update password" not in dash
+        assert "Update app password" not in dash
         assert f"/accounts/{account.id}#admin-edit" not in dash
         assert '<a class="icon-btn" href="#admin-edit">' not in detail
         assert "/auth/" not in attention

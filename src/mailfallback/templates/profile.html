@@ -15,7 +15,7 @@
 <table>
     <tr><td><i data-lucide="at-sign" class="icon-md icon-inline"></i>Username</td><td>{{ user.username }}</td></tr>
     <tr><td><i data-lucide="shield" class="icon-md icon-inline"></i>Role</td><td>{{ user.role.value }}</td></tr>
-    <tr><td><i data-lucide="mail" class="icon-md icon-inline"></i>Accounts</td><td>{{ user.accounts | length }}</td></tr>
+    <tr><td><i data-lucide="mail" class="icon-md icon-inline"></i>Mailboxes</td><td>{{ user.accounts | length }}</td></tr>
     <tr><td><i data-lucide="hard-drive" class="icon-md icon-inline"></i>Mail store</td><td>{{ store.name if store else '—' }}</td></tr>
     <tr>
         <td><i data-lucide="users" class="icon-md icon-inline"></i>Groups</td>
@@ -50,7 +50,7 @@
 
 <h3><i data-lucide="bell" class="icon-lg icon-inline"></i>Notification channels</h3>
 <p class="text-muted text-small">
-    Get alerted when an account needs attention — on ntfy, Telegram, Gotify, Discord and
+    Get alerted when a mailbox needs attention — on ntfy, Telegram, Gotify, Discord and
     <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noopener">80+ other services</a>
     via <a href="https://github.com/caronc/apprise" target="_blank" rel="noopener">Apprise</a>.
     Each channel is a single Apprise URL.
@@ -156,7 +156,7 @@
 <div class="notif-empty">
     <i data-lucide="bell-plus" class="icon-xl"></i>
     <p class="notif-empty-text">No notification channels yet.<br>
-        Add one below to get a ping the moment an account needs attention.</p>
+        Add one below to get a ping the moment a mailbox needs attention.</p>
 </div>
 {% endif %}
 
@@ -335,7 +335,7 @@
 
 <hr>
 
-<h3><i data-lucide="key-round" class="icon-lg icon-inline"></i>Change password</h3>
+<h3><i data-lucide="key-round" class="icon-lg icon-inline"></i>{% if user.password_hash %}Change password{% else %}Set a password{% endif %}</h3>
 
 {% if error %}
 <script>document.addEventListener('DOMContentLoaded', function() { showToast('{{ error }}', 'error'); });</script>
@@ -346,18 +346,18 @@
 
 <form method="post" action="/profile/password" class="container-narrow">
     {% if user.password_hash %}
-    <label for="current_password">Current Password</label>
+    <label for="current_password">Current password</label>
     <input type="password" id="current_password" name="current_password" required>
     {% endif %}
 
-    <label for="new_password">{% if user.password_hash %}New Password{% else %}Set Password{% endif %}</label>
+    <label for="new_password">{% if user.password_hash %}New password{% else %}Password{% endif %}</label>
     <input type="password" id="new_password" name="new_password" required minlength="8">
 
-    <label for="confirm_password">Confirm New Password</label>
+    <label for="confirm_password">Confirm {% if user.password_hash %}new {% endif %}password</label>
     <input type="password" id="confirm_password" name="confirm_password" required minlength="8">
 
     <button type="submit">
-        <i data-lucide="save" class="icon-md icon-inline"></i>Update Password
+        <i data-lucide="save" class="icon-md icon-inline"></i>{% if user.password_hash %}Change password{% else %}Set password{% endif %}
     </button>
 </form>
 {% endblock %}

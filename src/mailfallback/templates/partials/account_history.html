@@ -2,17 +2,17 @@
 <tr>
     <td>{{ job.requested_at.strftime('%Y-%m-%d %H:%M') if job.requested_at else '' }}</td>
     <td>{{ job.source }}</td>
-    <td>{% set o = outcomes[job.id] %}<span class="badge {{ o.badge }}">{{ o.label }}</span></td>
+    <td>{% set o = outcomes[job.id] %}<span class="badge {{ o.badge }}">{{ o.label | capitalize }}</span></td>
     <td>{{ job.exit_code if job.exit_code is not none else '—' }}</td>
     <td>{% if job.log %}<button class="icon-btn" onclick="showLogModal(this)" data-log="{{ job.log|e }}">View</button>{% endif %}</td>
 </tr>
 {% endmacro %}
 
-<h3><i data-lucide="history" class="icon-lg icon-inline"></i>Sync History</h3>
+<h3><i data-lucide="history" class="icon-lg icon-inline"></i>Sync history</h3>
 
 <table>
     <thead>
-        <tr><th>Time</th><th>Source</th><th>Status</th><th>Exit Code</th><th>Log</th></tr>
+        <tr><th>Time</th><th>Trigger</th><th>Status</th><th>Exit code</th><th>Log</th></tr>
     </thead>
     <tbody>
         {% for job in jobs[:3] %}
@@ -24,7 +24,7 @@
 <dialog id="log-modal" class="log-modal" onclick="if(event.target===this)this.close()">
     <div class="log-modal-content">
         <div class="flex-between mb-05">
-            <strong>Sync Log</strong>
+            <strong>Sync log</strong>
             <button class="icon-btn" onclick="document.getElementById('log-modal').close()">
                 <i data-lucide="x" class="icon-md"></i>
             </button>
@@ -35,7 +35,7 @@
 
 {% if jobs|length > 3 %}
 <details>
-    <summary class="text-muted text-small">Show {{ jobs|length - 3 }} older entries</summary>
+    <summary class="text-muted text-small">Show {{ jobs|length - 3 }} older {{ "entry" if jobs|length - 3 == 1 else "entries" }}</summary>
     <table>
         <tbody>
             {% for job in jobs[3:] %}

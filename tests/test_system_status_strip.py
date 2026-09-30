@@ -83,8 +83,12 @@ def test_strip_excludes_paused_from_errors(client, db_session, default_store):
 
     _box(db_session, default_store, name="Broken", sync_state=SyncState.error, last_error="boom")
     html = client.get(URL).text
-    assert _sync_pill(html) == "status-error | 0 syncing · 1 error"
-    assert "Broken</a> — error: boom" in html
+    assert _sync_pill(html) == "status-error | 0 syncing · 1 failed"
+    # The classified headline; the raw last_error is not the strip's message.
+    # Unclassified: the label alone, not "Sync failed: The last sync failed."
+    assert "Broken</a> — Sync failed\n" in html
+    assert "The last sync failed." not in html
+    assert "boom" not in html
     assert "Paused</a>" not in html
 
 
@@ -127,7 +131,7 @@ def test_strip_pluralises_counts(client, db_session, default_store):
         )
         _box(db_session, default_store, name=f"sync{i}", sync_state=SyncState.syncing)
     html = client.get(URL).text
-    assert _sync_pill(html) == "status-error | 2 syncing · 2 errors · 2 need sign-in"
+    assert _sync_pill(html) == "status-error | 2 syncing · 2 failed · 2 need sign-in"
     assert "2 mailboxes syncing" in html
 
 

@@ -146,23 +146,23 @@ TONE_DOT = {"ok": "stats-dot-ok", "active": "stats-dot-syncing", "attention": "s
 | 2 | `suspended` | suspended | muted | "Suspended" | badge-disabled | pause-circle | None | False |
 | 3 | `not is_authenticated` OR `sync_state == needs_reauth` OR (`sync_state == error` AND `auth_type == oauth2` AND `last_error == TOKEN_REFRESH_FAILED`) | sign_in_needed | attention | "Sign-in needed" | badge-warning | key-round | reconnect | True |
 | 4 | `sync_state == syncing` AND `initial_sync_completed_at is None` | first_sync | active | "Initial sync" | badge-info | loader (spin) | None | False |
-| 5 | `sync_state == syncing` | syncing | active | "syncing" | badge-syncing | loader | None | False |
+| 5 | `sync_state == syncing` | syncing | active | "Syncing" | badge-syncing | loader | None | False |
 | 6 | `sync_state == error` AND `last_job` is not None AND `last_job.status == failed` AND `last_job.signal` is set AND `last_job.failure_kind is None` AND NOT long unsynced | stopped | muted | "Stopped" | badge-disabled | circle-slash | None | False |
-| 7 | `sync_state == error` AND `pause_reason` is not set | error | error | "error" | badge-error | alert-circle | update_password if `auth_type == app_password` and `sync_progress._classify_error(last_error)[0] == "auth"`, else retry | True |
+| 7 | `sync_state == error` AND `pause_reason` is not set | error | error | "Sync failed" | badge-error | alert-circle | update_password if `auth_type == app_password` and `sync_progress._classify_error(last_error)[0] == "auth"`, else retry | True |
 | 8 | initial sync not completed AND long unsynced | initial_stalled | attention | "Initial sync stalled" if started, else "Never synced" | badge-warning | alert-triangle | sync_now, or None when `pause_reason` is set | True |
 | 9 | initial sync completed AND long unsynced | stale | attention | "Out of date" | badge-warning | clock | sync_now, or None when `pause_reason` is set (the agent/UI trigger refuses a paused mailbox; `resumes_at` tells when it lifts) | True |
 | 10 | `pause_reason` is set | paused | active | "Paused" | badge-info | pause-circle | None | False |
 | 11 | initial sync not completed AND started | initial_sync | active | "Initial sync" | badge-info | download | None | False |
 | 12 | initial sync not completed (not started) | waiting | muted | "Waiting for first sync" | badge-disabled | clock | None | False |
-| 13 | otherwise | current | ok | "idle" | badge-idle | check-circle | None | False |
+| 13 | otherwise | current | ok | "Up to date" | badge-idle | check-circle | None | False |
 
 Row ordering, in words: identity/permission problems first (1-3), then a sync in progress (4-5), then how the last run ended (6-7), then "has anything been copied lately?" (8-9) — which **beats a pause**, so a mailbox that is throttled or budget-paused every day and never finishes still surfaces after 7 days — then the self-recovering pause (10) — which also absorbs `error` + pause, since row 7 requires no pause — then the quiet states (11-13). A legacy row with `initial_sync_completed_at` set and `last_sync_at` None is not "long unsynced" (the definition reads `last_sync_at`) and falls to row 13.
 
 **Detail** (UI only):
-- sign_in_needed via `error` + `TOKEN_REFRESH_FAILED` (non-terminal refresh failure): "Couldn't refresh the sign-in. It retries on the next sync; reconnect if this keeps happening." Otherwise: "Reconnect your Google account to resume syncing." (`provider == "google"`), "...Microsoft account..." (`provider == "microsoft"`), else "Reconnect this mailbox to resume syncing." The codebase's provider values are `google`, `microsoft`, `yahoo`, `icloud`, `protonmail`, `other`.
+- sign_in_needed via `error` + `TOKEN_REFRESH_FAILED` (non-terminal refresh failure): "Couldn't refresh the sign-in. It retries on the next sync; reconnect if this keeps happening." Otherwise: "Google sign-in expired. Reconnect to resume syncing." (`provider == "google"`), "Microsoft sign-in expired. …" (`provider == "microsoft"`), else "Sign-in expired. Reconnect to resume syncing." A surface showing it to a viewer who cannot reconnect (a group member) uses `SIGN_IN_ASK_OWNER` instead: "Sign-in expired. Ask the mailbox owner or an admin to reconnect it." The codebase's provider values are `google`, `microsoft`, `yahoo`, `icloud`, `protonmail`, `other`.
 - paused: `PAUSE_TOOLTIPS[pause_reason]`, falling back to "Paused for now. It resumes on its own." for an unknown reason.
 - stopped: "The last sync was stopped. The next scheduled sync runs normally." — or, when manual only, "The last sync was stopped. Start a sync when you're ready."
-- error: `last_error[:200]`, or "The last sync failed." when empty.
+- error: `sync_progress.describe_error(last_error, app_password=...)` — the classified headline (auth on an app-password mailbox: "The server rejected the password."), "The last sync failed." when unclassified or empty. Never the raw `last_error`; that stays in the detail hero's technical details and log.
 - initial_stalled: "The initial sync has not progressed for over 7 days." if started, else "This mailbox has never synced (added {N} days ago)." (N = whole days since `created_at`, ≥ 7).
 - stale: "Last sync was {N} days ago." (N = whole days since `last_sync_at`, always ≥ 7, so always plural).
 - first_sync, initial_sync: "First full sync incomplete" (the existing tooltip).
@@ -255,8 +255,8 @@ Every router below computes statuses once per request: `jobs = latest_finished_j
 
 - `stats.errors` (ui.py:348-350) = count of `statuses` with `tone == error`.
 - **Needs Attention** (ui.py:380-417): replace the per-account if/elif with a loop over accounts whose status `needs_attention`. Item dict keys stay exactly what `dashboard.html:151-178` reads — `id`, `name`, `type`, `reason`, `provider`, `href` (href unset as today) — plus one new key `action` (the `NextAction` value or None):
-  - sign_in_needed → `type="reauth"`, `reason="Sign-in expired — reconnect needed"` (today's string), `provider=account.provider` (feeds `/auth/{{ item.provider }}/start`), `action="reconnect"` if `can_modify` else None.
-  - error → `type="error"`, `reason=(account.last_error or "Sync failed")[:80]` (today's `[:80]` truncation at `ui.py:398-399` is kept — `last_error` can hold a whole mbsync log), `action` = status.action, except `update_password` becomes None when not `can_modify`.
+  - sign_in_needed → `type="reauth"`, `reason=sign_in_message(account, can_modify=...)` (clarify pass: one sentence per viewer — owners/admins are told to reconnect, others to ask the mailbox owner or an admin; the self-healing token-refresh case says it retries instead of "expired", and a never-completed consent says "not completed"), `provider=account.provider` (feeds `/auth/{{ item.provider }}/start`), `action="reconnect"` if `can_modify` else None.
+  - error → `type="error"`, `reason=status.detail` (the classified headline, clarify pass; originally the raw `last_error[:80]`), `action` = status.action, except `update_password` becomes None when not `can_modify`.
   - stale → `type="stale"`, `reason` = today's stale string (ui.py:414-417, unchanged).
   - initial_stalled → `type="stale"`, `reason` = the status `detail` (see Detail).
   - Initial syncs (first_sync / initial_sync) are **no longer** attention items (the `info` branch at ui.py:401-413 is removed for mailboxes; the template's `info` branch stays for any other producer).

@@ -155,13 +155,13 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
         return templates.TemplateResponse(
             request=request,
             name="profile.html",
-            context=_profile_context(request, db, user, error="Current password is incorrect"),
+            context=_profile_context(request, db, user, error="The current password is incorrect."),
         )
     if new != confirm:
         return templates.TemplateResponse(
             request=request,
             name="profile.html",
-            context=_profile_context(request, db, user, error="New passwords do not match"),
+            context=_profile_context(request, db, user, error="The new passwords do not match."),
         )
     if len(new) < MIN_PASSWORD_LENGTH:
         return templates.TemplateResponse(
@@ -171,7 +171,7 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
                 request,
                 db,
                 user,
-                error=f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
+                error=f"The password must be at least {MIN_PASSWORD_LENGTH} characters.",
             ),
         )
 
@@ -197,7 +197,7 @@ async def profile_change_password(request: Request, db: Session = Depends(get_db
     return templates.TemplateResponse(
         request=request,
         name="profile.html",
-        context=_profile_context(request, db, user, success="Password updated successfully"),
+        context=_profile_context(request, db, user, success="Password changed."),
     )
 
 

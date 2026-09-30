@@ -24,7 +24,7 @@
 
 <div class="stat-cards">
     <div class="stat-card stat-hero span-5">
-        <div class="stat-value">{{ stats.messages | default(0) }}</div>
+        <div class="stat-value">{{ stats.messages | default(0) | number }}</div>
         <div class="stat-label"><i data-lucide="inbox" class="icon-sm icon-inline"></i> Messages</div>
     </div>
     <div class="stat-card span-4">
@@ -33,12 +33,12 @@
     </div>
     <a href="/accounts" class="stat-card span-3">
         <div class="stat-value">{{ stats.accounts }}</div>
-        <div class="stat-label"><i data-lucide="mail" class="icon-sm icon-inline"></i> Accounts</div>
+        <div class="stat-label"><i data-lucide="mail" class="icon-sm icon-inline"></i> Mailbox{{ "" if stats.accounts == 1 else "es" }}</div>
     </a>
     <div class="stat-meta span-12">
         <a href="/accounts" class="{% if stats.errors > 0 %}text-error-state{% else %}text-ok-state{% endif %}">
             <i data-lucide="alert-circle" class="icon-sm icon-inline"></i>
-            <strong>{{ stats.errors }}</strong> error{{ '' if stats.errors == 1 else 's' }}
+            <strong>{{ stats.errors }}</strong> failed
         </a>
         {% if user.role.value == "admin" %}
         <a href="/admin/users">
@@ -47,7 +47,7 @@
         </a>
         <a href="/admin/stores">
             <i data-lucide="database" class="icon-sm icon-inline"></i>
-            <strong>{{ stats.stores }}</strong> store{{ '' if stats.stores == 1 else 's' }}
+            <strong>{{ stats.stores }}</strong> mail store{{ '' if stats.stores == 1 else 's' }}
         </a>
         {% endif %}
     </div>
@@ -69,7 +69,7 @@
             <li><strong>Repository</strong> — an off-site, encrypted store you control.</li>
             <li><strong>Snapshot</strong> — a point-in-time capture inside a Repository.</li>
         </ul>
-        <p class="text-small text-muted mt-025">Click any stage's name below to manage it.</p>
+        <p class="text-small text-muted mt-025">Click a stage's name below to open it.</p>
         <form method="post" action="/profile/dismiss-chain-explainer" class="d-inline">
             <button type="submit" class="icon-btn">
                 <i data-lucide="check" class="icon-sm"></i> Got it — don't show again
@@ -153,7 +153,7 @@
 
 {% if attention %}
 <details open>
-    <summary><i data-lucide="alert-triangle" class="icon-md icon-inline"></i><strong>Needs Attention ({{ attention | length }})</strong></summary>
+    <summary><i data-lucide="alert-triangle" class="icon-md icon-inline"></i><strong>Needs attention ({{ attention | length }})</strong></summary>
     <div class="mt-05">
     {% for item in attention %}
     <div class="attention-item">
@@ -184,14 +184,14 @@
             </button>
         </form>
         {% elif item.type == 'error' and item.action == 'update_password' %}
-        <a class="icon-btn primary" href="/accounts/{{ item.id }}#admin-edit"><i data-lucide="key-round" class="icon-sm"></i> Update password</a>
+        <a class="icon-btn primary" href="/accounts/{{ item.id }}#admin-edit"><i data-lucide="key-round" class="icon-sm"></i> Update {{ item.password_noun }}</a>
         {% elif item.type == 'error' %}
         <button class="icon-btn primary" hx-post="/api/sync/{{ item.id }}" hx-swap="none" hx-on::after-request="location.reload()">
             <i data-lucide="refresh-cw" class="icon-sm"></i> Retry
         </button>
         {% elif item.type == 'reauth' and item.action == 'reconnect' %}
         <a class="icon-btn primary" href="/auth/{{ item.provider }}/start?account_id={{ item.id }}">
-            <i data-lucide="log-in" class="icon-sm"></i> Reconnect
+            <i data-lucide="log-in" class="icon-sm"></i> {% if item.never_connected %}Connect{% else %}Reconnect{% endif %}
         </a>
         {% elif item.type == 'stale' and item.sync_button %}
         <button class="icon-btn primary" hx-post="/api/sync/{{ item.id }}" hx-swap="none" hx-on::after-request="location.reload()">
@@ -206,7 +206,7 @@
 
 {% if recent_jobs %}
 <details open>
-    <summary><i data-lucide="activity" class="icon-md icon-inline"></i><strong>Recent Activity</strong></summary>
+    <summary><i data-lucide="activity" class="icon-md icon-inline"></i><strong>Recent activity</strong></summary>
     <div class="mt-05">
     {% for job in recent_jobs %}
     <div class="attention-item">
@@ -223,9 +223,6 @@
 </details>
 {% endif %}
 
-{% if not attention and not recent_jobs and stats.accounts == 0 %}
-<div class="text-center mt-1">
-    <p class="text-muted">No accounts yet. <a href="/accounts/new">Add your first email backup</a>.</p>
-</div>
-{% endif %}
+{# No bottom empty state: with no mailboxes the welcome hero above already
+   says what MFB does and carries the one "Connect a mailbox" action. #}
 {% endblock %}

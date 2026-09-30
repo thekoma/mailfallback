@@ -12,7 +12,7 @@ from mailfallback.models import Account, SyncState, UserRole
 from mailfallback.services import sync_worker
 from mailfallback.services.user_service import create_user
 
-BUDGET_HELP = "0 = unlimited. Applies to all syncs for this account."
+BUDGET_HELP = "0 = unlimited. Applies to every sync of this mailbox."
 
 
 def _login(client, db_session, default_store):
@@ -226,7 +226,7 @@ def test_accounts_table_hidden_account_shows_status_too(client, db_session, defa
     assert "Hidden" in resp.text
     assert (
         '<span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i>'
-        " idle</span>" in resp.text
+        " Up to date</span>" in resp.text
     )
 
 
@@ -408,7 +408,9 @@ def test_dashboard_true_error_still_counts(client, db_session, default_store):
     resp = client.get("/")
 
     assert "ReallyBroken" in resp.text
-    assert "AUTHENTICATIONFAILED" in resp.text
+    # Listed with the classified headline, not the raw IMAP response.
+    assert "The server rejected the password." in resp.text
+    assert "AUTHENTICATIONFAILED" not in resp.text
 
 
 # ---------------------------------------------------------------------------
