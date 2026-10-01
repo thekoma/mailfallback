@@ -1,105 +1,98 @@
-<div class="table-wrap">
-<table>
+{% import "partials/airmail.html" as mail %}
+<div class="table-wrap ledger-wrap">
+<table class="ledger ledger-accounts">
+    <caption class="sr-only">Mailboxes</caption>
     <thead>
         <tr>
-            <th class="cell-wrap">Mailbox</th>
-            {% if user and user.role.value == "admin" %}<th>Owner</th>{% endif %}
-            <th>Sign-in</th>
-            <th>Stats</th>
-            <th>Status</th>
-            <th>Last sync</th>
-            <th>Repository</th>
-            <th class="text-right">Actions</th>
+            <th scope="col" class="ledger-state">State</th>
+            <th scope="col" class="cell-wrap">Mailbox</th>
+            {% if user and user.role.value == "admin" %}<th scope="col">Owner</th>{% endif %}
+            <th scope="col">Sign-in</th>
+            <th scope="col">Stats</th>
+            <th scope="col">Last copied</th>
+            <th scope="col">Repository</th>
+            <th scope="col" class="text-right"><span class="sr-only">Actions</span></th>
         </tr>
     </thead>
     <tbody>
         {% for account in accounts %}
-        <tr>
-            <td class="cell-wrap">
-                <a href="/accounts/{{ account.id }}"><strong>{{ account.name }}</strong></a>
+        {% set ls = live_status.get(account.id) if live_status else none %}
+        {% set st = statuses[account.id] %}
+        <tr class="ledger-row" data-account-id="{{ account.id }}">
+            <td class="ledger-state">
+                {# One verdict per mailbox (services/mailbox_status.py). "Hidden" is orthogonal: hidden mailboxes still sync. #}
+                {%- set suffix -%}
+                {%- if st.state.value in ('first_sync', 'initial_sync') and ls and ls.pct is not none %} {{ ls.pct | int }}%{% endif -%}
+                {%- if st.state.value == 'paused' and ls and ls.resume_rel %} · resumes {{ ls.resume_rel }}{% endif -%}
+                {%- endset -%}
+                {{ mail.stamp(st, suffix=suffix, title=(st.detail if st.detail and st.state.value in ('paused', 'initial_sync') else none)) }}
+                {% if not account.enabled %}<span class="tag"><i data-lucide="eye-off" class="icon-sm"></i> Hidden</span>{% endif %}
+            </td>
+            <td class="cell-wrap ledger-mailbox">
+                <a class="ledger-name" href="/accounts/{{ account.id }}">{{ account.name }}</a>
                 {% if account.email_address %}
-                <br><span class="email-text">{{ account.email_address }}</span>
+                <span class="ledger-email">{{ account.email_address | email_wrap }}</span>
                 {% endif %}
             </td>
             {% if user and user.role.value == "admin" %}
-            <td>
-                {% for owner in account.owners %}
-                <span class="badge badge-user">{{ owner.username }}</span>
-                {% endfor %}
+            <td class="ledger-owner">
+                {% for owner in account.owners %}<span class="owner">{{ owner.username }}</span>{% endfor %}
             </td>
             {% endif %}
-            <td>
-                <span class="auth-badge">
-                    {% if account.auth_type.value == "oauth2" %}
-                    {% with provider=account.provider %}{% include "partials/provider_logo.html" %}{% endwith %}
-                    {% else %}
-                    <i data-lucide="key-round" class="icon-sm"></i>
-                    {% endif %}
+            <td class="ledger-signin">
+                <span class="auth-label">
+                    {% if account.auth_type.value == "oauth2" %}<i data-lucide="log-in" class="icon-sm"></i>{% else %}<i data-lucide="key-round" class="icon-sm"></i>{% endif %}
                     {{ account | auth_label }}
                 </span>
             </td>
-            <td class="cell-stats">
+            <td class="cell-stats{% if not account.folder_stats %} is-empty{% endif %}">
                 {% if account.folder_stats %}
-                <span class="text-small">
-                    <i data-lucide="mail" class="icon-sm icon-inline"></i>{{ account.total_messages | number }}{% if account.unread_messages %} <span class="text-muted">· {{ account.unread_messages | number }} unread</span>{% endif %}{% if account.maildir_size_bytes %} <span class="text-muted">· {{ account.maildir_size_bytes|filesizeformat }}</span>{% endif %}
-                </span>
+                <span class="num">{{ account.total_messages | number }}{% if account.unread_messages %} <span class="text-muted"><span class="stat-sep" aria-hidden="true">· </span>{{ account.unread_messages | number }} unread</span>{% endif %}{% if account.maildir_size_bytes %} <span class="text-muted"><span class="stat-sep" aria-hidden="true">· </span>{{ account.maildir_size_bytes|filesizeformat }}</span>{% endif %}</span>
                 {% else %}
                 <span class="text-muted">—</span>
                 {% endif %}
             </td>
-            <td>
-                {% set ls = live_status.get(account.id) if live_status else none %}
-                {% set st = statuses[account.id] %}
-                {# One verdict per mailbox (services/mailbox_status.py). "Hidden" is orthogonal: hidden mailboxes still sync. #}
-                {% if not account.enabled %}<span class="badge badge-disabled"><i data-lucide="eye-off" class="icon-sm"></i> Hidden</span>{% endif %}
-                <span class="badge {{ st.badge }}"{% if st.detail and st.state.value in ('paused', 'initial_sync') %} title="{{ st.detail }}"{% endif %}><i data-lucide="{{ st.icon }}" class="icon-sm{% if st.spin %} spin{% endif %}"></i> {{ st.label }}{% if st.state.value in ('first_sync', 'initial_sync') and ls and ls.pct is not none %} {{ ls.pct | int }}%{% endif %}{% if st.state.value == 'paused' and ls and ls.resume_rel %} · resumes {{ ls.resume_rel }}{% endif %}</span>
+            <td class="ledger-when" title="{{ account.last_sync_at | time_ago }}">
+                {{ mail.postmark_line(st.last_success_at) }}
             </td>
-            <td>
-                <span class="{{ account.last_sync_at | time_ago_class }}" title="{{ account.last_sync_at.strftime('%Y-%m-%d %H:%M:%S') if account.last_sync_at else '' }}">
-                    {{ account.last_sync_at | time_ago }}
-                </span>
-            </td>
-            <td>
+            <td class="ledger-repo{% if not account.backup_policies %} is-empty{% endif %}">
                 {% if account.backup_policies %}
                     {% set bc = account.backup_policies[0] %}
                     {% if bc.last_successful_run_at %}
-                    <span class="stats-pill" title="Last back-up to {{ bc.destination.name }}">
-                        <span class="stats-dot stats-dot-ok"></span>
-                        {{ bc.last_successful_run_at | time_ago }}
+                    <span class="repo-line" title="Last back-up to {{ bc.destination.name }}">
+                        {{ mail.mark("mark-ok") }} {{ bc.last_successful_run_at | time_ago }}
                     </span>
                     {% elif bc.last_status.value == "failed" %}
-                    <span class="stats-pill" title="Last attempt failed">
-                        <span class="stats-dot stats-dot-error"></span>
-                        Failed
+                    <span class="repo-line" title="Last attempt failed">
+                        {{ mail.mark("mark-error") }} Failed
                     </span>
                     {% else %}
-                    <span class="stats-pill" title="Off-site policy set, no successful back-up yet">
-                        <span class="stats-dot"></span>
-                        No back-up yet
+                    <span class="repo-line" title="Off-site policy set, no successful back-up yet">
+                        {{ mail.mark("mark-muted") }} No back-up yet
                     </span>
                     {% endif %}
                 {% else %}
-                    <span class="text-muted text-small">—</span>
+                    <span class="text-muted">—</span>
                 {% endif %}
             </td>
-            <td>
+            <td class="ledger-action">
                 <div class="actions flex-end">
                     <div class="dropdown-wrap">
-                        <button class="icon-btn" title="Mailbox actions" aria-label="Mailbox actions" onclick="toggleDropdown(this, event)">
+                        <button class="icon-btn" title="Mailbox actions" aria-label="Mailbox actions" data-click="toggleDropdown" data-args='["$el", "$event"]'>
                             <i data-lucide="more-vertical" class="icon-md"></i>
                         </button>
                         <div class="dropdown-menu hidden">
                             {% if account.sync_state.value == 'syncing' %}
                             <a class="dropdown-item dropdown-danger"
                                 hx-post="/api/sync/{{ account.id }}/stop" hx-swap="none"
-                                hx-on::after-request="startSyncPolling()">
+                                data-after-call="startSyncPolling">
                                 <i data-lucide="square" class="icon-sm"></i> Stop sync
                             </a>
                             {% else %}
                             <a class="dropdown-item {% if account.migrating or account.suspended or not account.is_authenticated %}dropdown-disabled{% endif %}"
                                 {% if not account.migrating and not account.suspended and account.is_authenticated %}
                                 hx-post="/api/sync/{{ account.id }}" hx-swap="none"
-                                hx-on::after-request="startSyncPolling()"
+                                data-after-call="startSyncPolling"
                                 {% endif %}>
                                 <i data-lucide="refresh-cw" class="icon-sm"></i> Sync now
                             </a>
@@ -108,26 +101,26 @@
                             {% if account.enabled %}
                             <a class="dropdown-item"
                                 hx-post="/accounts/{{ account.id }}/toggle-visible" hx-swap="none"
-                                hx-on::after-request="startSyncPolling()">
+                                data-after-call="startSyncPolling">
                                 <i data-lucide="eye-off" class="icon-sm"></i> Hide
                             </a>
                             {% else %}
                             <a class="dropdown-item"
                                 hx-post="/accounts/{{ account.id }}/toggle-visible" hx-swap="none"
-                                hx-on::after-request="startSyncPolling()">
+                                data-after-call="startSyncPolling">
                                 <i data-lucide="eye" class="icon-sm"></i> Show
                             </a>
                             {% endif %}
                             {% if account.suspended %}
                             <a class="dropdown-item"
                                 hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
-                                hx-on::after-request="startSyncPolling()">
+                                data-after-call="startSyncPolling">
                                 <i data-lucide="play-circle" class="icon-sm"></i> Resume
                             </a>
                             {% else %}
                             <a class="dropdown-item"
                                 hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
-                                hx-on::after-request="startSyncPolling()">
+                                data-after-call="startSyncPolling">
                                 <i data-lucide="pause-circle" class="icon-sm"></i> Suspend
                             </a>
                             {% endif %}
@@ -142,14 +135,25 @@
         </tr>
         {% for r in account.recoveries|sort(attribute='restored_at', reverse=True) %}
         <tr class="recovery-row">
+            <td class="ledger-state">
+                {% if r.status.value == "ready" %}
+                <span class="repo-line">{{ mail.mark("mark-ok") }} Ready</span>
+                {% elif r.status.value == "restoring" %}
+                <span class="repo-line">{{ mail.mark("mark-active") }} Restoring</span>
+                {% elif r.status.value == "deleting" %}
+                <span class="repo-line">{{ mail.mark("mark-active") }} Deleting</span>
+                {% elif r.status.value == "failed" %}
+                <span class="repo-line" title="{{ r.error or '' }}">{{ mail.mark("mark-error") }} Failed</span>
+                {% endif %}
+            </td>
             <td class="cell-wrap">
-                └ Recovery <code>{{ r.snapshot_id[:8] }}</code>
+                <i data-lucide="corner-down-right" class="icon-sm"></i> Recovery <code>{{ r.snapshot_id[:8] }}</code>
                 {% if r.snapshot_time %}
                 <br><span class="email-text">{{ r.snapshot_time.strftime('%Y-%m-%d %H:%M') }}</span>
                 {% endif %}
             </td>
-            {% if user and user.role.value == "admin" %}<td><span class="text-muted">—</span></td>{% endif %}
-            <td><span class="text-muted">—</span></td>
+            {% if user and user.role.value == "admin" %}<td class="is-empty"><span class="text-muted">—</span></td>{% endif %}
+            <td class="is-empty"><span class="text-muted">—</span></td>
             <td class="cell-stats">
                 {% if r.size_bytes %}
                 <span class="text-small text-muted">{{ r.size_bytes|filesizeformat }}</span>
@@ -158,25 +162,13 @@
                 {% endif %}
             </td>
             <td>
-                {% if r.status.value == "ready" %}
-                <span class="stats-pill"><span class="stats-dot stats-dot-ok"></span> Ready</span>
-                {% elif r.status.value == "restoring" %}
-                <span class="stats-pill"><span class="stats-dot stats-dot-syncing"></span> Restoring</span>
-                {% elif r.status.value == "deleting" %}
-                <span class="stats-pill"><span class="stats-dot stats-dot-syncing"></span> Deleting</span>
-                {% elif r.status.value == "failed" %}
-                <span class="stats-pill" title="{{ r.error or '' }}"><span class="stats-dot stats-dot-error"></span> Failed</span>
-                {% endif %}
-            </td>
-            <td>
                 <span class="text-muted text-small">restored {{ r.restored_at | time_ago }}</span>
             </td>
-            <td><span class="text-muted">—</span></td>
+            <td class="is-empty"><span class="text-muted">—</span></td>
             <td>
                 <div class="actions flex-end">
                     <form method="post" action="/accounts/{{ account.id }}/recoveries/{{ r.id }}/delete"
-                          data-confirm="Delete this recovery? The on-disk Maildir will be removed permanently."
-                          onsubmit="return confirm(this.dataset.confirm)" class="d-inline">
+                          data-confirm="Delete this recovery? The on-disk Maildir will be removed permanently." class="d-inline">
                         <button type="submit" class="icon-btn danger" title="Delete recovery"
                                 {% if r.status.value == "restoring" %}disabled{% endif %}>
                             <i data-lucide="trash-2" class="icon-sm"></i>

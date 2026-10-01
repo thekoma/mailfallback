@@ -1,140 +1,150 @@
-<div class="status-strip">
-    <span class="status-badge {% if dovecot.ok %}status-ok{% elif dovecot.ok is none %}status-neutral{% else %}status-error{% endif %}"
-          onclick="toggleStatusDetail('dovecot')">
-        <i data-lucide="{% if dovecot.ok %}check-circle{% elif dovecot.ok is none %}help-circle{% else %}x-circle{% endif %}" class="icon-sm"></i>
-        IMAP access {% if dovecot.ok %}OK{% elif dovecot.ok is none %}unknown{% else %}down{% endif %}
+{#- The one system-health indicator in the admin top bar: a button that opens
+    the detail panel. Re-rendered every 5 s (base.html); core.js keeps an open
+    panel open across the refresh. Rendered only when something is going on:
+    the quiet case is SYSTEM_CALM_HTML in routers/ui.py, base.html only holds
+    the "Checking status…" placeholder, and a failed poll becomes "Status
+    unavailable" in core.js. -#}
+{%- set sync_tone = "error" if error_accounts else ("attention" if attention_accounts else ("active" if syncing_count > 0 else "muted")) -%}
+{%- set imap_tone = "ok" if dovecot.ok else ("muted" if dovecot.ok is none else "error") -%}
+{%- set fts_tone = "active" if fts.status == "running" else ("error" if fts.status == "failed" else "muted") -%}
+{%- set restore_tone = "active" if active_restores else "muted" -%}
+{%- set offsite_tone = "active" if active_backups > 0 else "muted" -%}
+{%- if imap_tone == "error" or fts_tone == "error" or sync_tone == "error" -%}
+{%- set overall = "error" -%}
+{%- elif sync_tone == "attention" -%}
+{%- set overall = "attention" -%}
+{%- elif sync_tone == "active" or fts_tone == "active" or restore_tone == "active" or offsite_tone == "active" -%}
+{%- set overall = "active" -%}
+{%- else -%}
+{%- set overall = "muted" -%}
+{%- endif -%}
+{%- set sync_text -%}
+{{ syncing_count }} syncing
+{%- if error_accounts %} · {{ error_accounts|length }} failed{% endif %}
+{%- if attention_accounts %} · {{ attention_accounts|length }} need{{ 's' if attention_accounts|length == 1 else '' }} sign-in{% endif %}
+{%- endset -%}
+<button type="button" id="health-toggle" class="health-toggle health-{{ overall }}" aria-expanded="false" aria-controls="health-panel">
+    <span class="mark mark-{{ overall }}" aria-hidden="true"></span>
+    <span class="health-toggle-text">
+        {%- if imap_tone == "error" %}IMAP access down
+        {%- elif error_accounts %}{{ error_accounts|length }} failed
+        {%- elif attention_accounts %}{{ attention_accounts|length }} need{{ 's' if attention_accounts|length == 1 else '' }} sign-in
+        {%- elif fts_tone == "error" %}Search index failed
+        {%- elif syncing_count > 0 %}{{ syncing_count }} syncing
+        {%- elif fts_tone == "active" %}Indexing
+        {%- elif active_restores %}{{ active_restores|length }} restore{{ 's' if active_restores|length != 1 else '' }}
+        {%- elif active_backups > 0 %}{{ active_backups }} off-site backup{{ 's' if active_backups != 1 else '' }}
+        {%- else %}System status{% endif -%}
     </span>
-
-    <span class="status-badge {% if fts.status == 'running' %}status-active{% elif fts.status == 'failed' %}status-error{% else %}status-neutral{% endif %}"
-          onclick="toggleStatusDetail('fts')">
-        <i data-lucide="search" class="icon-sm {% if fts.status == 'running' %}spin{% endif %}"></i>
-        {% if fts.status == 'running' %}Indexing {{ fts.progress_current }}/{{ fts.progress_total }}{% elif fts.status == 'failed' %}Search index failed{% else %}Search index idle{% endif %}
+    {#- The same verdict in a few characters, for the phone top bar. -#}
+    <span class="health-toggle-short" aria-hidden="true">
+        {%- if imap_tone == "error" %}IMAP down
+        {%- elif error_accounts %}{{ error_accounts|length }} failed
+        {%- elif attention_accounts %}{{ attention_accounts|length }} sign-in
+        {%- elif fts_tone == "error" %}Search down
+        {%- elif syncing_count > 0 %}{{ syncing_count }} syncing
+        {%- elif fts_tone == "active" %}Indexing
+        {%- elif active_restores %}{{ active_restores|length }} restoring
+        {%- elif active_backups > 0 %}{{ active_backups }} backing up
+        {%- else %}Status{% endif -%}
     </span>
+    <i data-lucide="chevron-down" class="icon-sm health-chevron" aria-hidden="true"></i>
+</button>
 
-    <span class="status-badge {% if error_accounts %}status-error{% elif attention_accounts %}status-warning{% elif syncing_count > 0 %}status-active{% else %}status-neutral{% endif %}"
-          onclick="toggleStatusDetail('sync')">
-        <i data-lucide="refresh-cw" class="icon-sm {% if syncing_count > 0 %}spin{% endif %}"></i>
-        {{ syncing_count }} syncing
-        {%- if error_accounts %} · {{ error_accounts|length }} failed{% endif %}
-        {%- if attention_accounts %} · {{ attention_accounts|length }} need{{ 's' if attention_accounts|length == 1 else '' }} sign-in{% endif %}
-    </span>
+<div id="health-panel" class="health-panel" hidden>
+    <h2 class="health-panel-title">System status</h2>
+    <ul class="health-lines">
+        <li class="health-line health-{{ imap_tone }}" data-health="imap">
+            <span class="mark mark-{{ imap_tone }}" aria-hidden="true"></span>
+            <span class="health-line-name">IMAP access</span>
+            <span class="health-line-value">{% if dovecot.ok %}OK{% elif dovecot.ok is none %}unknown{% else %}down{% endif %}</span>
+            <div class="health-line-detail">
+                {% if dovecot.ok %}Dovecot (IMAP and its admin API) is responding normally.
+                {% elif dovecot.ok is none %}Not checked yet.
+                {% else %}<span class="text-error-state">{{ dovecot.error }}</span>{% endif %}
+            </div>
+        </li>
 
-    <span class="status-badge {% if active_restores %}status-active{% else %}status-neutral{% endif %}"
-          onclick="toggleStatusDetail('restore')">
-        <i data-lucide="archive-restore" class="icon-sm"></i>
-        {{ active_restores|length }} restore{{ 's' if active_restores|length != 1 else '' }}
-    </span>
+        <li class="health-line health-{{ fts_tone }}" data-health="fts">
+            <span class="mark mark-{{ fts_tone }}" aria-hidden="true"></span>
+            <span class="health-line-name">Search index</span>
+            <span class="health-line-value num">{% if fts.status == 'running' %}Indexing {{ fts.progress_current }}/{{ fts.progress_total }}{% elif fts.status == 'failed' %}failed{% else %}idle{% endif %}</span>
+            <div class="health-line-detail">
+                {% if fts.status == 'running' %}
+                Search reindex{% if fts.started_at %}, started {{ fts.started_at|time_ago }}{% endif %}
+                <progress value="{{ fts.progress_current }}" max="{{ fts.progress_total if fts.progress_total > 0 else 1 }}"></progress>
+                {% if fts.user_statuses %}
+                <ul class="health-users">
+                    {% for us in fts.user_statuses %}
+                    <li>{% if us.status == 'ok' %}<i data-lucide="check" class="icon-sm" aria-hidden="true"></i>{% else %}<i data-lucide="x" class="icon-sm" aria-hidden="true"></i>{% endif %} {{ us.username }}{% if us.status != 'ok' %} (failed){% endif %}</li>
+                    {% endfor %}
+                    {% if fts.current_user %}<li><i data-lucide="loader" class="icon-sm spin" aria-hidden="true"></i> {{ fts.current_user }}</li>{% endif %}
+                </ul>
+                {% endif %}
+                {% elif fts.status == 'completed' %}
+                Last search reindex {{ fts.completed_at|time_ago }}{% if fts.details %} · {{ fts.details.users_processed }} user{{ '' if fts.details.users_processed == 1 else 's' }}{% endif %}
+                {% elif fts.status == 'failed' %}
+                <span class="text-error-state">Search reindex failed{% if fts.details and fts.details.errors %}: {{ fts.details.errors[0] }}{% else %}.{% endif %}</span>
+                {% else %}
+                No recent search reindex.
+                {% endif %}
+                {% if resync.status == 'running' %}
+                <span class="d-block mt-05">Force resync <span class="num">{{ resync.progress_current }}/{{ resync.progress_total }}</span></span>
+                <progress value="{{ resync.progress_current }}" max="{{ resync.progress_total if resync.progress_total > 0 else 1 }}"></progress>
+                {% endif %}
+            </div>
+        </li>
 
-    <span class="status-badge {% if active_backups > 0 %}status-active{% else %}status-neutral{% endif %}"
-          onclick="toggleStatusDetail('backup')">
-        <i data-lucide="cloud-upload" class="icon-sm {% if active_backups > 0 %}spin{% endif %}"></i>
-        {{ active_backups }} off-site backup{{ 's' if active_backups != 1 else '' }}
-    </span>
+        <li class="health-line health-{{ sync_tone }}" data-health="sync">
+            <span class="mark mark-{{ sync_tone }}" aria-hidden="true"></span>
+            <span class="health-line-name">Mailboxes</span>
+            <span class="health-line-value num">{{ sync_text }}</span>
+            <div class="health-line-detail">
+                {% if syncing_count == 0 and not error_accounts and not attention_accounts %}
+                No mailbox is syncing.
+                {% else %}
+                {% if syncing_count > 0 %}
+                <span class="d-block">{{ syncing_count }} mailbox{{ 'es' if syncing_count != 1 else '' }} syncing</span>
+                {% endif %}
+                <ul class="health-accounts">
+                    {% for acct in error_accounts %}
+                    <li class="health-account health-account-error" data-account-id="{{ acct.id }}"><i data-lucide="alert-circle" class="icon-sm" aria-hidden="true"></i> <a href="/accounts/{{ acct.id }}">{{ acct.name }}</a> — {{ acct.label }}{% if acct.detail %}: {{ acct.detail }}{% endif %}
+                    </li>
+                    {% endfor %}
+                    {% for acct in attention_accounts %}
+                    <li class="health-account health-account-attention" data-account-id="{{ acct.id }}"><i data-lucide="key-round" class="icon-sm" aria-hidden="true"></i> <a href="/accounts/{{ acct.id }}">{{ acct.name }}</a> — {{ acct.label }}{% if acct.detail %}: {{ acct.detail }}{% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+            </div>
+        </li>
+
+        <li class="health-line health-{{ restore_tone }}" data-health="restore">
+            <span class="mark mark-{{ restore_tone }}" aria-hidden="true"></span>
+            <span class="health-line-name">Restores</span>
+            <span class="health-line-value num">{{ active_restores|length }} restore{{ 's' if active_restores|length != 1 else '' }}</span>
+            <div class="health-line-detail">
+                {% if not active_restores %}
+                No restore running.
+                {% else %}
+                {% for job in active_restores %}
+                <span class="d-block">{{ job.source_account.name }} to {{ job.target_account.name }} <span class="num">{{ job.restored_messages }}/{{ job.total_messages }}</span></span>
+                {% if job.total_messages > 0 %}
+                <progress value="{{ job.restored_messages }}" max="{{ job.total_messages }}"></progress>
+                {% endif %}
+                {% endfor %}
+                {% endif %}
+            </div>
+        </li>
+
+        <li class="health-line health-{{ offsite_tone }}" data-health="offsite">
+            <span class="mark mark-{{ offsite_tone }}" aria-hidden="true"></span>
+            <span class="health-line-name">Off-site</span>
+            <span class="health-line-value num">{{ active_backups }} off-site backup{{ 's' if active_backups != 1 else '' }}</span>
+            <div class="health-line-detail">
+                {% if active_backups == 0 %}No off-site backup running.{% else %}{{ active_backups }} off-site backup{{ 's' if active_backups != 1 else '' }} running{% endif %}
+            </div>
+        </li>
+    </ul>
 </div>
-
-<div id="status-detail-dovecot" class="status-detail" style="display:none;">
-    {% if dovecot.ok %}
-    <span class="text-small text-muted">Dovecot (IMAP and its admin API) is responding normally.</span>
-    {% elif dovecot.ok is none %}
-    <span class="text-small text-muted">Not checked yet.</span>
-    {% else %}
-    <span class="text-small text-error-state">{{ dovecot.error }}</span>
-    {% endif %}
-</div>
-
-<div id="status-detail-fts" class="status-detail" style="display:none;">
-    {% if fts.status == 'running' %}
-    <div class="status-detail-header">
-        <strong>Search reindex</strong>
-        <span class="text-small text-muted">{% if fts.started_at %}started {{ fts.started_at|time_ago }}{% endif %}</span>
-    </div>
-    <div class="progress-bar-wrap">
-        {% set pct = (fts.progress_current * 100 // fts.progress_total) if fts.progress_total > 0 else 0 %}
-        <div class="progress-bar" style="width:{{ pct }}%"></div>
-    </div>
-    {% if fts.user_statuses %}
-    <div class="text-small mt-025">
-        {% for us in fts.user_statuses %}
-        {% if us.status == 'ok' %}<span class="text-ok-state">&#10003; {{ us.username }}</span>{% else %}<span class="text-error-state">&#10007; {{ us.username }}</span>{% endif %}
-        {% if not loop.last %} · {% endif %}
-        {% endfor %}
-        {% if fts.current_user %} · <span class="text-warn-state">&#9203; {{ fts.current_user }}</span>{% endif %}
-    </div>
-    {% endif %}
-    {% elif fts.status == 'completed' %}
-    <span class="text-small text-muted">Last search reindex {{ fts.completed_at|time_ago }}{% if fts.details %} · {{ fts.details.users_processed }} user{{ '' if fts.details.users_processed == 1 else 's' }}{% endif %}</span>
-    {% elif fts.status == 'failed' %}
-    <span class="text-small text-error-state">Search reindex failed{% if fts.details and fts.details.errors %}: {{ fts.details.errors[0] }}{% else %}.{% endif %}</span>
-    {% else %}
-    <span class="text-small text-muted">No recent search reindex.</span>
-    {% endif %}
-
-    {% if resync.status == 'running' %}
-    <div class="status-detail-header mt-05">
-        <strong>Force resync</strong>
-        <span class="text-small text-muted">{{ resync.progress_current }}/{{ resync.progress_total }}</span>
-    </div>
-    <div class="progress-bar-wrap">
-        {% set rpct = (resync.progress_current * 100 // resync.progress_total) if resync.progress_total > 0 else 0 %}
-        <div class="progress-bar" style="width:{{ rpct }}%"></div>
-    </div>
-    {% endif %}
-</div>
-
-<div id="status-detail-sync" class="status-detail" style="display:none;">
-    {% if syncing_count == 0 and not error_accounts and not attention_accounts %}
-    <span class="text-small text-muted">No mailbox is syncing.</span>
-    {% else %}
-    {% if syncing_count > 0 %}
-    <span class="text-small">{{ syncing_count }} mailbox{{ 'es' if syncing_count != 1 else '' }} syncing</span><br>
-    {% endif %}
-    {% for acct in error_accounts %}
-    <div class="text-small text-error-state">
-        &#10007; <a href="/accounts/{{ acct.id }}">{{ acct.name }}</a> — {{ acct.label }}{% if acct.detail %}: {{ acct.detail }}{% endif %}
-    </div>
-    {% endfor %}
-    {% for acct in attention_accounts %}
-    <div class="text-small text-warn-state">
-        &#9888; <a href="/accounts/{{ acct.id }}">{{ acct.name }}</a> — {{ acct.label }}{% if acct.detail %}: {{ acct.detail }}{% endif %}
-    </div>
-    {% endfor %}
-    {% endif %}
-</div>
-
-<div id="status-detail-restore" class="status-detail" style="display:none;">
-    {% if not active_restores %}
-    <span class="text-small text-muted">No restore running.</span>
-    {% else %}
-    {% for job in active_restores %}
-    <div class="mb-05">
-        <div class="status-detail-header">
-            <strong>{{ job.source_account.name }} → {{ job.target_account.name }}</strong>
-            <span class="text-small text-muted">{{ job.restored_messages }}/{{ job.total_messages }}</span>
-        </div>
-        {% if job.total_messages > 0 %}
-        <div class="progress-bar-wrap">
-            <div class="progress-bar" style="width:{{ (job.restored_messages * 100 // job.total_messages) }}%"></div>
-        </div>
-        {% endif %}
-    </div>
-    {% endfor %}
-    {% endif %}
-</div>
-
-<div id="status-detail-backup" class="status-detail" style="display:none;">
-    {% if active_backups == 0 %}
-    <span class="text-small text-muted">No off-site backup running.</span>
-    {% else %}
-    <span class="text-small">{{ active_backups }} off-site backup{{ 's' if active_backups != 1 else '' }} running</span>
-    {% endif %}
-</div>
-
-<script>
-function toggleStatusDetail(id) {
-    var el = document.getElementById('status-detail-' + id);
-    if (!el) return;
-    var visible = el.style.display !== 'none';
-    document.querySelectorAll('.status-detail').forEach(function(d) { d.style.display = 'none'; });
-    if (!visible) el.style.display = 'block';
-}
-</script>

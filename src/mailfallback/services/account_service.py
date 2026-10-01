@@ -68,11 +68,28 @@ def remove_owner(db: Session, account_id: str, user_id: str) -> None:
 
 
 def get_accounts_for_user(db: Session, user: User) -> list[Account]:
-    # Eager-load backup_policies + recoveries so the /accounts list page can
-    # render the Repository pill and nested recovery rows without N+1.
-    eager = (selectinload(Account.backup_policies), selectinload(Account.recoveries))
+    # Eager-load backup_policies + recoveries + owners so the /accounts list
+    # and the dashboard ledger render the Repository line, nested recovery
+    # rows and the Owner column without N+1.
+    eager = (
+        selectinload(Account.backup_policies),
+        selectinload(Account.recoveries),
+        selectinload(Account.owners),
+    )
     if user.role == UserRole.admin:
         return db.query(Account).options(*eager).all()
+    return get_own_accounts(db, user)
+
+
+def get_own_accounts(db: Session, user: User) -> list[Account]:
+    """The mailboxes this user owns or shares through a group — whatever the
+    role. A non-admin's whole list; for an admin, "my mailboxes" (/mine),
+    never everyone's."""
+    eager = (
+        selectinload(Account.backup_policies),
+        selectinload(Account.recoveries),
+        selectinload(Account.owners),
+    )
     owned = {a.id for a in user.accounts}
     via_groups = (
         db.query(Account.id)

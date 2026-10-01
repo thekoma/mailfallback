@@ -1,22 +1,35 @@
+{% import "partials/airmail.html" as mail %}
 <div id="restore-history">
     {% if jobs %}
-    <table class="compact">
-        <thead><tr><th>Date</th>{% if show_all_users %}<th>User</th>{% endif %}<th>Source → Destination</th><th>Status</th><th>Total</th><th>Restored</th><th>Skipped</th><th>Failed</th></tr></thead>
+    <div class="table-wrap ledger-wrap">
+    <table class="ledger ledger-compact">
+        <thead><tr><th scope="col">Date</th>{% if show_all_users %}<th scope="col">User</th>{% endif %}<th scope="col" class="cell-wrap">Source → Destination</th><th scope="col" class="ledger-state">Status</th><th scope="col" class="ledger-num">Total</th><th scope="col" class="ledger-num">Restored</th><th scope="col" class="ledger-num">Skipped</th><th scope="col" class="ledger-num">Failed</th></tr></thead>
         <tbody>
         {% for job in jobs %}
-        <tr>
+        {%- set _partial = job.status.value == 'completed' and job.failed_messages > 0 -%}
+        {%- if job.status.value == 'completed' and job.failed_messages == 0 -%}
+        {%- set _st = {"badge": "stamp-ok", "icon": "check-circle", "spin": false, "label": job.status.value} -%}
+        {%- elif job.status.value in ('completed', 'cancelled') -%}
+        {%- set _st = {"badge": "stamp-attention", "icon": "alert-triangle", "spin": false, "label": 'partial' if _partial else job.status.value} -%}
+        {%- elif job.status.value == 'failed' -%}
+        {%- set _st = {"badge": "stamp-error", "icon": "x-circle", "spin": false, "label": job.status.value} -%}
+        {%- else -%}
+        {%- set _st = {"badge": "stamp-active", "icon": "loader", "spin": false, "label": job.status.value} -%}
+        {%- endif %}
+        <tr class="ledger-row">
             <td>{{ job.requested_at|time_ago }}</td>
             {% if show_all_users %}<td>{{ job.requester.username }}</td>{% endif %}
-            <td>{{ job.source_account.name }} → {{ job.target_account.name }}</td>
-            <td><span class="badge badge-{{ 'idle' if job.status.value == 'completed' and job.failed_messages == 0 else 'warning' if job.status.value in ('completed', 'cancelled') else 'error' if job.status.value == 'failed' else 'syncing' }}">{{ 'partial' if job.status.value == 'completed' and job.failed_messages > 0 else job.status.value }}</span></td>
-            <td>{{ job.total_messages }}</td>
-            <td>{{ job.restored_messages }}</td>
-            <td>{{ job.skipped_messages }}</td>
-            <td>{{ job.failed_messages }}</td>
+            <td class="cell-wrap ledger-mailbox">{{ job.source_account.name }} → {{ job.target_account.name }}</td>
+            <td class="ledger-state">{{ mail.stamp(_st) }}</td>
+            <td class="ledger-num">{{ job.total_messages }}</td>
+            <td class="ledger-num">{{ job.restored_messages }}</td>
+            <td class="ledger-num">{{ job.skipped_messages }}</td>
+            <td class="ledger-num">{{ job.failed_messages }}</td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
+    </div>
     {% else %}
     <p class="text-muted">No restore jobs yet.</p>
     {% endif %}

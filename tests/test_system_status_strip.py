@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from mailfallback.models import Account, AuthType, JobStatus, SyncJob, SyncState, UserRole
+from mailfallback.routers.ui import SYSTEM_CALM_HTML
 from mailfallback.services.user_service import create_user
 
 URL = "/partials/system-status"
@@ -44,15 +45,21 @@ def _box(db_session, default_store, **kw):
     return account
 
 
+# The panel's line tone → the old strip's chip tone, so the expectations
+# below still read as before.
+_TONE = {"error": "status-error", "attention": "status-warning", "active": "status-active"}
+
+
 def _sync_pill(html: str) -> str:
     m = re.search(
-        r'<span class="status-badge ([a-z-]+)"\s+'
-        r"onclick=\"toggleStatusDetail\('sync'\)\">(.*?)</span>",
+        r'<li class="health-line health-([a-z]+)" data-health="sync">.*?'
+        r'<span class="health-line-value num">(.*?)</span>',
         html,
         re.S,
     )
     assert m, html
-    return m.group(1) + " | " + " ".join(re.sub(r"<[^>]+>", " ", m.group(2)).split())
+    tone = _TONE.get(m.group(1), "status-neutral")
+    return tone + " | " + " ".join(re.sub(r"<[^>]+>", " ", m.group(2)).split())
 
 
 def test_strip_counts_accounts_not_jobs(client, db_session, default_store):
@@ -65,6 +72,10 @@ def test_strip_counts_accounts_not_jobs(client, db_session, default_store):
     html = client.get(URL).text
     assert _sync_pill(html) == "status-active | 1 syncing"
     assert "1 mailbox syncing" in html
+    # One indicator: a real button that owns the panel it opens.
+    assert '<button type="button" id="health-toggle"' in html
+    assert 'aria-expanded="false" aria-controls="health-panel"' in html
+    assert '<div id="health-panel" class="health-panel" hidden>' in html
 
 
 def test_strip_excludes_paused_from_errors(client, db_session, default_store):
@@ -78,8 +89,9 @@ def test_strip_excludes_paused_from_errors(client, db_session, default_store):
         pause_reason="throttle",
         sync_paused_until=datetime.now(UTC) + timedelta(hours=1),
     )
-    # A paused, otherwise-quiet system has nothing to report.
-    assert client.get(URL).text == ""
+    # A paused, otherwise-quiet system has nothing to report: the explicit
+    # calm markup, never an empty body.
+    assert client.get(URL).text == SYSTEM_CALM_HTML
 
     _box(db_session, default_store, name="Broken", sync_state=SyncState.error, last_error="boom")
     html = client.get(URL).text
@@ -105,7 +117,7 @@ def test_strip_shows_reauth_as_needs_sign_in_warning(client, db_session, default
     )
     html = client.get(URL).text
     assert _sync_pill(html) == "status-warning | 0 syncing · 1 needs sign-in"
-    assert 'class="text-small text-warn-state"' in html
+    assert 'class="health-account health-account-attention"' in html
     assert "Outlook</a> — Sign-in needed" in html
 
 
@@ -114,7 +126,7 @@ def test_strip_ignores_stale(client, db_session, default_store):
     _box(
         db_session, default_store, name="Stale", last_sync_at=datetime.now(UTC) - timedelta(days=30)
     )
-    assert client.get(URL).text == ""
+    assert client.get(URL).text == SYSTEM_CALM_HTML
 
 
 def test_strip_pluralises_counts(client, db_session, default_store):
@@ -139,7 +151,22 @@ def test_strip_is_admin_only(client, db_session, default_store):
     create_user(db_session, "plain", "pass", UserRole.user, store_id=default_store.id)
     _box(db_session, default_store, name="Broken", sync_state=SyncState.error, last_error="x")
     client.post("/api/auth/login", json={"username": "plain", "password": "pass"})
-    assert client.get(URL).text == ""
+    resp = client.get(URL)
+    # Non-2xx with no content: an empty 200 would swap an empty bar in; a 401
+    # makes the page show "Status unavailable" instead.
+    assert resp.status_code == 401 and resp.text == ""
     client.post("/api/auth/logout")
     client.cookies.clear()
-    assert client.get(URL).text == ""
+    resp = client.get(URL)
+    assert resp.status_code == 401 and resp.text == ""
+
+
+def test_calm_system_answers_with_explicit_calm_markup(client, db_session, default_store):
+    """Nothing happening is an answer, not an empty response: an empty bar
+    would read as calm before the first poll and after a failed one."""
+    _admin(client, db_session, default_store)
+    _box(db_session, default_store, name="Quiet")
+    body = client.get(URL).text
+    assert body == SYSTEM_CALM_HTML
+    assert 'data-health="calm"' in body
+    assert "System normal" in body

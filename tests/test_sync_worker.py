@@ -930,7 +930,7 @@ def test_runtime_cap_kill_is_an_error_not_a_user_stop(tmp_path, monkeypatch):
     assert status.state == MailboxState.error
     assert status.tone == Tone.error
     outcome = resolve_job_outcome(last_job)
-    assert (outcome.label, outcome.badge) == ("failed", "badge-error")
+    assert (outcome.label, outcome.badge) == ("failed", "stamp-error")
 
 
 def test_user_stop_keeps_error_behavior_and_clears_stale_pause(tmp_path):

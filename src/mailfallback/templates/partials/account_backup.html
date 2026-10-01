@@ -1,3 +1,4 @@
+{% import "partials/airmail.html" as mail %}
 {% macro retention_options(selected_value=None) %}
     {% set presets = [
         ("light", "Light (7d / 4w)"),
@@ -47,29 +48,29 @@
 {% endif %}
 
 {% else %}
-<div class="flex gap-05 flex-wrap items-center mb-05" role="status" aria-live="polite">
+<p class="backup-line" role="status" aria-live="polite">
     {# Current state FIRST. Testing last_successful_run_at first made the
        running and failed branches unreachable for any mailbox that had ever
        backed up successfully — during the 2026-08-01 incident this pill read
        "Last back-up 1 day ago" while the policy had been running for 18h. #}
     {% if backup_config.last_status.value == "running" %}
-    <span class="stats-pill"><span class="stats-dot stats-dot-syncing"></span> Back-up running</span>
+    <span class="backup-line-state">{{ mail.mark("mark-active") }} Back-up running</span>
     {% elif backup_config.last_status.value == "failed" %}
-    <span class="stats-pill"><span class="stats-dot stats-dot-error"></span> Last back-up failed</span>
+    <span class="backup-line-state">{{ mail.mark("mark-error") }} Last back-up failed</span>
     {% elif backup_config.last_successful_run_at %}
-    <span class="stats-pill"><span class="stats-dot stats-dot-ok"></span>
+    <span class="backup-line-state">{{ mail.mark("mark-ok") }}
         Last back-up {{ backup_config.last_successful_run_at | time_ago }}
     </span>
     {% else %}
-    <span class="stats-pill"><span class="stats-dot"></span> Off-site policy set — no successful back-up yet</span>
+    <span class="backup-line-state">{{ mail.mark("mark-muted") }} Off-site policy set — no successful back-up yet</span>
     {% endif %}
-    <span class="stats-sep">·</span>
-    <span class="stats-pill">{{ backup_config.destination.name }}</span>
-    <span class="stats-sep">·</span>
-    <span class="stats-pill"><code>{{ backup_config.schedule | cron_human }}</code></span>
-    <span class="stats-sep">·</span>
-    <span class="stats-pill">{{ backup_config.retention_preset.value | capitalize }}</span>
-</div>
+    <span class="sep" aria-hidden="true">·</span>
+    <span>{{ backup_config.destination.name }}</span>
+    <span class="sep" aria-hidden="true">·</span>
+    <span><code>{{ backup_config.schedule | cron_human }}</code></span>
+    <span class="sep" aria-hidden="true">·</span>
+    <span>{{ backup_config.retention_preset.value | capitalize }}</span>
+</p>
 
 <p class="text-small text-muted">
     Destination: <strong>{{ backup_config.destination.name }}</strong> →
@@ -77,7 +78,7 @@
 </p>
 
 {% if backup_config.last_error %}
-<p class="text-small sync-error">{{ backup_config.last_error }}</p>
+<div class="notice notice-error"><i data-lucide="alert-circle" class="icon-sm"></i><p>{{ backup_config.last_error }}</p></div>
 {% endif %}
 
 <div class="flex gap-05 mb-05">
@@ -120,7 +121,7 @@
 {% endif %}
 
 {% if backup_config or has_attachments %}
-<h4 class="mt-1 mb-025">Snapshots</h4>
+<h4 class="fold-title backup-snap-title">Snapshots</h4>
 <div id="backup-snapshots"
     hx-get="/accounts/{{ account.id }}/backup/snapshots"
     hx-trigger="revealed"

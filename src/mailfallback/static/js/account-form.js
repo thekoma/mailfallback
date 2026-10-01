@@ -1,5 +1,13 @@
 /* MFB — Account form scripts (account_form.html) */
 
+/* Which OAuth providers are configured: a JSON data island in the page
+   (data, not code — the templates carry no inline script). */
+(function () {
+    var island = document.getElementById('oauth-available-data');
+    if (!island) return;
+    try { window._oauthAvailable = JSON.parse(island.textContent); } catch (e) { /* malformed: no OAuth */ }
+})();
+
 var _discoverAbort = null;
 
 function _setAuthMode(mode) {
@@ -18,7 +26,7 @@ function _setAuthMode(mode) {
         if (oauthSwitch) oauthSwitch.classList.add('hidden');
         if (authType) authType.value = 'app_password';
         if (credField) credField.required = true;
-        if (submitText) submitText.textContent = 'Add Account';
+        if (submitText) submitText.textContent = 'Add account';
     } else {
         if (passwordSection) passwordSection.classList.add('hidden');
         if (oauthSwitch) oauthSwitch.classList.remove('hidden');
@@ -203,7 +211,14 @@ function _classifyError(data) {
         var a = document.createElement('a');
         a.href = 'https://support.google.com/accounts/answer/185833';
         a.target = '_blank';
-        a.textContent = 'How to create an app password →';
+        a.rel = 'noopener';
+        a.className = 'link-arrow';
+        a.textContent = 'How to create an app password ';
+        var ic = document.createElement('i');
+        ic.setAttribute('data-lucide', 'external-link');
+        ic.className = 'icon-sm';
+        a.appendChild(ic);
+        setTimeout(function () { if (typeof lucide !== 'undefined') lucide.createIcons(); }, 0);
         return [
             document.createTextNode('We couldn’t sign in to '), b1,
             document.createTextNode('. Many providers — including Gmail, iCloud, Yahoo, and Outlook — require an '),
@@ -242,7 +257,7 @@ function _createAccountAndRedirect(payload, oauthProvider) {
             _renderFormError('Couldn\'t create the account. ' +
                 (resp.data.detail || 'Please try again.'));
             btn.disabled = false;
-            btnText.textContent = 'Add Account';
+            btnText.textContent = 'Add account';
             return;
         }
         if (oauthProvider) {
@@ -281,7 +296,7 @@ function handleAccountSubmit(e) {
         _createAccountAndRedirect(basePayload, authMode).catch(function(err) {
             _renderFormError('Something went wrong: ' + err.message);
             btn.disabled = false;
-            btnText.textContent = 'Add Account';
+            btnText.textContent = 'Add account';
         });
         return false;
     }
@@ -304,7 +319,7 @@ function handleAccountSubmit(e) {
         if (!data.ok || data.login_ok === false) {
             _renderFormError(_classifyError(data));
             btn.disabled = false;
-            btnText.textContent = 'Add Account';
+            btnText.textContent = 'Add account';
             return;
         }
         btnText.textContent = 'Creating account…';
@@ -312,7 +327,7 @@ function handleAccountSubmit(e) {
     }).catch(function(err) {
         _renderFormError('Something went wrong: ' + err.message);
         btn.disabled = false;
-        btnText.textContent = 'Add Account';
+        btnText.textContent = 'Add account';
     });
 
     return false;

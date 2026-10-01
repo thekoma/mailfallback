@@ -1,66 +1,79 @@
 {% extends "base.html" %}
+{% import "partials/airmail.html" as mail %}
 {% block title %}Repositories — MFB{% endblock %}
-{% block body_class %}page-wide{% endblock %}
+{% block body_class %}page-wide page-ledger{% endblock %}
 {% block content %}
-<h2><i data-lucide="cloud-upload" class="icon-xl icon-inline"></i>Repositories</h2>
+<header class="page-head">
+    <div class="page-head-text">
+        <h1 class="page-title">Repositories</h1>
+        <p class="page-summary num">{{ destinations | length }} repositor{{ 'y' if destinations | length == 1 else 'ies' }}</p>
+    </div>
+    <div class="page-actions">
+        <a href="#repo-wizard-details" class="icon-btn"><i data-lucide="plus-circle" class="icon-sm"></i> Add repository</a>
+    </div>
+</header>
 
-<p class="text-muted">Off-site repositories where mailbox snapshots are stored. Each Repository is an encrypted restic repository backed by S3 or a local path. Mailboxes pick a Repository in their backup policy.</p>
+<p class="page-lede">Off-site repositories where mailbox snapshots are stored. Each Repository is an encrypted restic repository backed by S3 or a local path. Mailboxes pick a Repository in their backup policy.</p>
 
-<p class="text-small text-muted">
+<p class="page-note">
     <i data-lucide="info" class="icon-sm icon-inline"></i>
     Enable <strong>configuration snapshots</strong> on a repository to store an encrypted export of users, mailboxes, and settings alongside your mail snapshots — together they make a repository fully restorable on a fresh installation. See
     <a href="https://thekoma.github.io/mailfallback/admin-guide/disaster-recovery/" target="_blank" rel="noopener">disaster recovery</a>.
 </p>
 
-<div class="table-wrap">
-<table>
+<div class="table-wrap ledger-wrap">
+<table class="ledger ledger-admin">
+    <caption class="sr-only">Repositories</caption>
     <thead>
         <tr>
-            <th>Name</th>
-            <th>Type</th>
-            <th>Mailboxes</th>
-            <th>Snapshots</th>
-            <th>Last back-up</th>
-            <th>Health</th>
-            <th class="text-right">Actions</th>
+            <th scope="col" class="cell-wrap">Name</th>
+            <th scope="col">Type</th>
+            <th scope="col" class="ledger-num">Mailboxes</th>
+            <th scope="col" class="ledger-num">Snapshots</th>
+            <th scope="col">Last back-up</th>
+            <th scope="col" class="cell-wrap">Health</th>
+            <th scope="col" class="ledger-action"><span class="sr-only">Actions</span></th>
         </tr>
     </thead>
     <tbody>
         {% for dest in destinations %}
-        <tr>
-            <td>{{ dest.name }}</td>
+        <tr class="ledger-row">
+            <td class="cell-wrap ledger-mailbox"><span class="ledger-name">{{ dest.name }}</span></td>
             <td>
                 {% if dest.backend_type.value == "s3" %}
-                <span class="badge badge-admin">S3</span>
+                <span class="tag"><i data-lucide="cloud" class="icon-sm"></i> S3</span>
                 {% else %}
-                <span class="badge">Local</span>
+                <span class="tag"><i data-lucide="hard-drive" class="icon-sm"></i> Local</span>
                 {% endif %}
             </td>
-            <td>{{ dest_account_counts.get(dest.id, 0) }}</td>
-            <td>{{ dest_stats[dest.id].snapshots }}</td>
-            <td>
+            <td class="ledger-num" data-label="Mailboxes">{{ dest_account_counts.get(dest.id, 0) }}</td>
+            <td class="ledger-num" data-label="Snapshots">{{ dest_stats[dest.id].snapshots }}</td>
+            <td class="ledger-when">
                 {% if dest_stats[dest.id].last_success %}
                 {{ dest_stats[dest.id].last_success | time_ago }}
                 {% else %}
                 <span class="text-muted">—</span>
                 {% endif %}
             </td>
-            <td>
+            <td class="cell-wrap">
                 {% set h = dest_stats[dest.id].health %}
                 {% if h == "ok" %}
-                <span class="stats-pill"><span class="stats-dot stats-dot-ok"></span> Healthy</span>
+                <span class="mark-label">{{ mail.mark("mark-ok") }} Healthy</span>
                 {% elif h == "stale" %}
-                <span class="stats-pill"><span class="stats-dot stats-dot-error"></span> Stale</span>
+                <span class="mark-label">{{ mail.mark("mark-error") }} Stale</span>
                 {% elif h == "no-backup" %}
-                <span class="stats-pill"><span class="stats-dot"></span> No back-up yet</span>
+                <span class="mark-label">{{ mail.mark("mark-muted") }} No back-up yet</span>
                 {% else %}
-                <span class="stats-pill"><span class="stats-dot"></span> Empty</span>
+                <span class="mark-label">{{ mail.mark("mark-muted") }} Empty</span>
+                {% endif %}
+                {% if dest.config_backup_enabled and dest.last_config_backup_status == 'failed' %}
+                <span class="ledger-reason">{{ mail.stamp({"badge": "stamp-error", "icon": "alert-circle", "spin": false, "label": "Configuration snapshot failed"}, title=dest.last_config_backup_error) }}</span>
                 {% endif %}
             </td>
-            <td>
+            <td class="ledger-action">
                 <div class="actions flex-end">
                     <span id="repo-test-result-{{ dest.id }}" class="text-small"></span>
-                    <button class="icon-btn" title="Edit" onclick="toggleRow('edit-{{ dest.id }}')">
+                    <button class="icon-btn" title="Edit" data-click="toggleRow" data-args='["edit-{{ dest.id }}"]'>
                         <i data-lucide="pencil" class="icon-md"></i>
                     </button>
                     <button class="icon-btn" title="Test connection"
@@ -86,74 +99,61 @@
                             <i data-lucide="file-lock" class="icon-md"></i>
                         </button>
                     </form>
-                    {% if dest.last_config_backup_status == 'failed' %}
-                    <span class="badge badge-error" title="{{ dest.last_config_backup_error }}">
-                        <i data-lucide="alert-circle" class="icon-sm"></i> Configuration snapshot failed
-                    </span>
                     {% endif %}
-                    {% endif %}
-                    <form method="post" action="/admin/backup/{{ dest.id }}/delete" class="inline-form"
-                        data-confirm="Delete Repository {{ dest.name }}?"
-                        onsubmit="return confirm(this.dataset.confirm)">
-                        <button type="submit" class="icon-btn danger"
-                            {% if dest_account_counts.get(dest.id, 0) > 0 %}disabled title="Cannot delete: mailbox backup policies still reference this Repository"{% else %}title="Delete Repository"{% endif %}>
-                            <i data-lucide="trash-2" class="icon-md"></i>
-                        </button>
-                    </form>
                 </div>
             </td>
         </tr>
-        <tr id="edit-{{ dest.id }}" class="hidden expand-row">
+        <tr id="edit-{{ dest.id }}" class="expand-row hidden">
             <td colspan="7">
                 <form method="post" action="/admin/backup/{{ dest.id }}/edit">
-                    <div class="grid-2">
+                    <div class="form-grid">
                         <div>
-                            <label>Name</label>
-                            <input type="text" name="name" value="{{ dest.name }}" required>
+                            <label for="ed-name-{{ dest.id }}">Name</label>
+                            <input type="text" id="ed-name-{{ dest.id }}" name="name" value="{{ dest.name }}" required>
                         </div>
                         {% if dest.backend_type.value == "s3" %}
                         <div>
-                            <label>S3 Endpoint</label>
-                            <input type="text" name="s3_endpoint" placeholder="Leave blank to keep current">
+                            <label for="ed-s3_endpoint-{{ dest.id }}">S3 Endpoint</label>
+                            <input id="ed-s3_endpoint-{{ dest.id }}" type="text" name="s3_endpoint" placeholder="Leave blank to keep current">
                         </div>
                         <div>
-                            <label>S3 Bucket</label>
-                            <input type="text" name="s3_bucket" placeholder="Leave blank to keep current">
+                            <label for="ed-s3_bucket-{{ dest.id }}">S3 Bucket</label>
+                            <input id="ed-s3_bucket-{{ dest.id }}" type="text" name="s3_bucket" placeholder="Leave blank to keep current">
                         </div>
                         <div>
-                            <label>Access Key</label>
-                            <input type="password" name="s3_access_key" placeholder="Leave blank to keep current">
+                            <label for="ed-s3_access_key-{{ dest.id }}">Access key</label>
+                            <input id="ed-s3_access_key-{{ dest.id }}" type="password" name="s3_access_key" placeholder="Leave blank to keep current">
                         </div>
                         <div>
-                            <label>Secret Key</label>
-                            <input type="password" name="s3_secret_key" placeholder="Leave blank to keep current">
+                            <label for="ed-s3_secret_key-{{ dest.id }}">Secret key</label>
+                            <input id="ed-s3_secret_key-{{ dest.id }}" type="password" name="s3_secret_key" placeholder="Leave blank to keep current">
                         </div>
                         {% else %}
                         <div>
-                            <label>Local Path</label>
-                            <input type="text" name="local_path" placeholder="Leave blank to keep current">
+                            <label for="ed-local_path-{{ dest.id }}">Local path</label>
+                            <input id="ed-local_path-{{ dest.id }}" type="text" name="local_path" placeholder="Leave blank to keep current">
                         </div>
                         {% endif %}
                         <div>
-                            <label>Restic Password</label>
-                            <input type="password" name="restic_password" placeholder="Leave blank to keep current" autocomplete="new-password">
+                            <label for="ed-restic_password-{{ dest.id }}">Restic password</label>
+                            <input id="ed-restic_password-{{ dest.id }}" type="password" name="restic_password" placeholder="Leave blank to keep current" autocomplete="new-password">
                         </div>
                     </div>
-                    <div class="mt-05">
+                    <div class="check-row">
                         <label>
                             <input type="checkbox" name="insecure_tls" value="1"
                                    {% if dest.insecure_tls %}checked{% endif %}
-                                   onchange="this.closest('form').querySelector('.tls-warning').hidden = !this.checked">
+                                   data-reveal=".tls-warning">
                             <strong>Skip TLS certificate verification</strong>
                             <small class="text-muted">— self-signed CA only. Production deployments must use a trusted certificate.</small>
                         </label>
-                        <div class="alert-error tls-warning mt-025" role="alert"
+                        <div class="notice notice-error tls-warning" role="alert"
                              {% if not dest.insecure_tls %}hidden{% endif %}>
-                            <i data-lucide="shield-alert" class="icon-md icon-inline"></i>
-                            <strong>Warning:</strong> certificate verification is disabled. The connection is encrypted but the server's identity is NOT verified.
+                            <i data-lucide="shield-alert" class="icon-md"></i>
+                            <p><strong>Warning:</strong> certificate verification is disabled. The connection is encrypted but the server's identity is NOT verified.</p>
                         </div>
                     </div>
-                    <div class="mt-05">
+                    <div class="check-row">
                         <label>
                             <input type="checkbox" name="config_backup_enabled" value="1"
                                    {% if dest.config_backup_enabled %}checked{% endif %}
@@ -162,8 +162,8 @@
                             <small class="text-muted">— nightly encrypted export of users, mailboxes, and settings for disaster recovery.</small>
                         </label>
                         <div class="config-passphrase-block mt-05" {% if not dest.config_backup_enabled %}hidden{% endif %}>
-                            <label>Passphrase</label>
-                            <input type="password" name="config_backup_passphrase"
+                            <label for="ed-cbp-{{ dest.id }}">Passphrase</label>
+                            <input type="password" id="ed-cbp-{{ dest.id }}" name="config_backup_passphrase"
                                    placeholder="Leave blank to keep current" autocomplete="new-password">
                             <small class="text-muted">Separate from the Restic password. Needed to restore the configuration on a new installation — store it safely.</small>
                         </div>
@@ -172,10 +172,21 @@
                         <i data-lucide="save" class="icon-md"></i> Save
                     </button>
                 </form>
+                <div class="danger-zone danger-zone-inline">
+                    <p class="danger-title"><i data-lucide="trash-2" class="icon-md"></i>Delete repository</p>
+                    <form method="post" action="/admin/backup/{{ dest.id }}/delete" class="inline-form"
+                        data-confirm="Delete repository {{ dest.name }}?">
+                        <button type="submit" class="icon-btn danger"
+                            {% if dest_account_counts.get(dest.id, 0) > 0 %}disabled title="Cannot delete: mailbox backup policies still reference this Repository"{% else %}title="Delete repository"{% endif %}>
+                            <i data-lucide="trash-2" class="icon-md"></i> Delete repository
+                        </button>
+                    </form>
+                    {% if dest_account_counts.get(dest.id, 0) > 0 %}<p class="text-small">Cannot delete: mailbox backup policies still reference this Repository</p>{% endif %}
+                </div>
             </td>
         </tr>
-        <tr id="contents-{{ dest.id }}" class="hidden expand-row">
-            <td colspan="7"><div id="repo-contents-{{ dest.id }}"></div></td>
+        <tr id="contents-{{ dest.id }}" class="expand-row hidden">
+            <td colspan="7"><div id="repo-contents-{{ dest.id }}"><p class="text-muted text-small">Loading repository contents…</p></div></td>
         </tr>
         {% endfor %}
         {% if not destinations %}
@@ -189,13 +200,11 @@
 </table>
 </div>
 
-<hr>
+{# ── Add repository — 3-step wizard ── #}
+<details id="repo-wizard-details" class="sheet sheet-disclosure">
+    <summary><span class="sheet-title"><i data-lucide="plus-circle" class="icon-md"></i>Add repository</span></summary>
 
-{# ── Add Repository — 3-step wizard ── #}
-<details id="repo-wizard-details" class="mt-1">
-    <summary><i data-lucide="plus-circle" class="icon-lg icon-inline"></i><strong>Add Repository</strong></summary>
-
-    <ol class="wizard-steps mt-1" aria-label="Add Repository wizard">
+    <ol class="wizard-steps" aria-label="Add repository wizard">
         <li class="wizard-step active" data-step="1"><span class="wizard-step-num">1</span>Backend</li>
         <li class="wizard-step" data-step="2"><span class="wizard-step-num">2</span>Connection</li>
         <li class="wizard-step" data-step="3"><span class="wizard-step-num">3</span>Encryption</li>
@@ -206,16 +215,16 @@
 
         {# ── Step 1: Backend type ── #}
         <section class="wizard-pane active" id="repo-pane-1">
-            <h3 class="mt-1">Where will snapshots live?</h3>
+            <h2 class="fold-title">Where will snapshots live?</h2>
             <p class="text-muted text-small">A Repository is an off-site, encrypted store. Pick the backend that matches the storage you have.</p>
-            <div class="provider-grid mt-1">
-                <button type="button" class="provider-card" data-backend="s3" onclick="repoWizardPickBackend(this)">
-                    <i data-lucide="cloud" class="icon-lg"></i>
+            <div class="provider-grid">
+                <button type="button" class="provider-card" data-backend="s3" data-click="repoWizardPickBackend">
+                    <span class="card-glyph" aria-hidden="true"><i data-lucide="cloud" class="icon-lg"></i></span>
                     <strong>S3-compatible</strong>
                     <small class="text-muted">AWS S3, MinIO, Backblaze B2, RustFS, etc.</small>
                 </button>
-                <button type="button" class="provider-card" data-backend="local" onclick="repoWizardPickBackend(this)">
-                    <i data-lucide="hard-drive" class="icon-lg"></i>
+                <button type="button" class="provider-card" data-backend="local" data-click="repoWizardPickBackend">
+                    <span class="card-glyph" aria-hidden="true"><i data-lucide="hard-drive" class="icon-lg"></i></span>
                     <strong>Local path</strong>
                     <small class="text-muted">A filesystem path on this host (typically a mounted volume).</small>
                 </button>
@@ -224,10 +233,10 @@
 
         {# ── Step 2: Connection ── #}
         <section class="wizard-pane" id="repo-pane-2">
-            <h3 class="mt-1" id="repo-step2-title">Connection</h3>
+            <h2 class="fold-title" id="repo-step2-title">Connection</h2>
 
             <div id="repo-s3-block">
-                <div class="grid-2 mt-1">
+                <div class="form-grid">
                     <div>
                         <label for="s3_endpoint">S3 Endpoint</label>
                         <input type="text" id="s3_endpoint" name="s3_endpoint" placeholder="https://s3.amazonaws.com">
@@ -237,11 +246,11 @@
                         <input type="text" id="s3_bucket" name="s3_bucket" placeholder="mailfallback-snapshots">
                     </div>
                     <div>
-                        <label for="s3_access_key">Access Key</label>
+                        <label for="s3_access_key">Access key</label>
                         <input type="password" id="s3_access_key" name="s3_access_key" placeholder="AKIA...">
                     </div>
                     <div>
-                        <label for="s3_secret_key">Secret Key</label>
+                        <label for="s3_secret_key">Secret key</label>
                         <input type="password" id="s3_secret_key" name="s3_secret_key" placeholder="secret">
                     </div>
                 </div>
@@ -251,16 +260,16 @@
             </div>
 
             <div id="repo-local-block" class="hidden">
-                <div class="mt-1">
-                    <label for="local_path">Local path</label>
-                    <input type="text" id="local_path" name="local_path" placeholder="/backups/restic">
+                <div class="form-grid">
+                    <div><label for="local_path">Local path</label>
+                    <input type="text" id="local_path" name="local_path" placeholder="/backups/restic"></div>
                 </div>
                 <p class="text-muted text-small mt-05">
                     Must exist and be writable inside the MailFallBack container. Typically a mounted volume.
                 </p>
             </div>
 
-            <div class="mt-1">
+            <div class="test-row">
                 <button type="button" class="icon-btn"
                         hx-post="/admin/backup/test-connection"
                         hx-include="#repo-wizard-form"
@@ -268,24 +277,24 @@
                         hx-swap="innerHTML">
                     <i data-lucide="plug-zap" class="icon-md"></i> Test connection
                 </button>
-                <span id="wizard-test-result" class="text-small"></span>
+                <span id="wizard-test-result" class="text-small" aria-live="polite"></span>
             </div>
 
-            <div class="wizard-nav mt-1">
-                <button type="button" class="icon-btn" onclick="repoWizardGoTo(1)">← Back</button>
-                <button type="button" class="icon-btn primary" onclick="repoWizardStep2Next()">Continue →</button>
+            <div class="wizard-nav">
+                <button type="button" class="icon-btn" data-click="repoWizardGoTo" data-args='[1]'><i data-lucide="arrow-left" class="icon-sm"></i> Back</button>
+                <button type="button" class="icon-btn primary" data-click="repoWizardStep2Next" data-args='[]'>Continue <i data-lucide="arrow-right" class="icon-sm"></i></button>
             </div>
         </section>
 
         {# ── Step 3: Encryption + name ── #}
         <section class="wizard-pane" id="repo-pane-3">
-            <h3 class="mt-1">Encrypt and name</h3>
+            <h2 class="fold-title">Encrypt and name</h2>
             <p class="text-muted text-small">
                 The Restic password encrypts the entire Repository. <strong>Treat it as a master key</strong> — losing it means snapshots are unrecoverable. See
                 <a href="/docs/admin-guide/disaster-recovery/" target="_blank" rel="noopener">disaster recovery</a>.
             </p>
 
-            <div class="grid-2 mt-1">
+            <div class="form-grid">
                 <div>
                     <label for="dest_name">Name</label>
                     <input type="text" id="dest_name" name="name" placeholder="My Repository" required>
@@ -296,20 +305,20 @@
                 </div>
             </div>
 
-            <div class="mt-1">
+            <div class="check-row">
                 <label>
                     <input type="checkbox" name="insecure_tls" value="1"
-                           onchange="this.closest('form').querySelector('.tls-warning').hidden = !this.checked">
+                           data-reveal=".tls-warning">
                     <strong>Skip TLS certificate verification</strong>
                     <small class="text-muted">— self-signed CA only. Production deployments must use a trusted certificate.</small>
                 </label>
-                <div class="alert-error tls-warning mt-025" role="alert" hidden>
-                    <i data-lucide="shield-alert" class="icon-md icon-inline"></i>
-                    <strong>Warning:</strong> certificate verification is disabled. The connection is encrypted but the server's identity is NOT verified.
+                <div class="notice notice-error tls-warning" role="alert" hidden>
+                    <i data-lucide="shield-alert" class="icon-md"></i>
+                    <p><strong>Warning:</strong> certificate verification is disabled. The connection is encrypted but the server's identity is NOT verified.</p>
                 </div>
             </div>
 
-            <div class="mt-1">
+            <div class="check-row">
                 <label>
                     <input type="checkbox" name="config_backup_enabled" value="1"
                            data-toggle-target=".config-passphrase-block">
@@ -324,13 +333,13 @@
                 </div>
             </div>
 
-            <div class="confirm-summary mt-1">
+            <div class="confirm-summary">
                 <strong>Backend:</strong> <span id="repo-summary-backend">—</span><br>
                 <strong>Target:</strong> <span id="repo-summary-target">—</span>
             </div>
 
-            <div class="wizard-nav mt-1">
-                <button type="button" class="icon-btn" onclick="repoWizardGoTo(2)">← Back</button>
+            <div class="wizard-nav">
+                <button type="button" class="icon-btn" data-click="repoWizardGoTo" data-args='[2]'><i data-lucide="arrow-left" class="icon-sm"></i> Back</button>
                 <button type="submit" class="icon-btn primary">
                     <i data-lucide="plus-circle" class="icon-md"></i> Create Repository
                 </button>
@@ -342,5 +351,5 @@
     </form>
 </details>
 
-<script src="/static/js/repository-wizard.js"></script>
 {% endblock %}
+{% block scripts %}<script src="/static/js/repository-wizard.js"></script>{% endblock %}

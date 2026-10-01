@@ -1,50 +1,42 @@
 {% extends "base.html" %}
 {% block title %}Mailboxes — MFB{% endblock %}
-{% block body_class %}page-wide{% endblock %}
+{% block body_class %}page-wide page-ledger{% endblock %}
 {% block content %}
-<div class="flex-between">
-    <h2><i data-lucide="mail" class="icon-xl icon-inline"></i>Mailboxes</h2>
-    <div class="actions">
+<header class="page-head">
+    <div class="page-head-text">
+        <h1 class="page-title">Mailboxes</h1>
+        <p class="page-summary num">{{ accounts | length }} mailbox{{ "" if accounts | length == 1 else "es" }}{% if show_all_users %} across all users{% endif %}</p>
+    </div>
+    <div class="page-actions">
         {% if user.role.value == "admin" %}
-        <label class="text-small">
+        <label class="switch-label">
             <input type="checkbox" role="switch" {% if show_all_users %}checked{% endif %}
-                   onchange="window.location.href='/accounts' + (this.checked ? '?show_all=1' : '')">
+                   data-switch-href="/accounts" data-switch-href-on="/accounts?show_all=1">
             Show all users
         </label>
         {% endif %}
         <button class="icon-btn" title="Sync all mailboxes now" id="sync-all-btn"
             hx-post="/api/sync/all" hx-swap="none"
-            hx-on::after-request="startSyncPolling()">
-            <i data-lucide="refresh-cw" class="icon-md"></i> Sync all
+            data-after-call="startSyncPolling">
+            <i data-lucide="refresh-cw" class="icon-sm"></i> Sync all
         </button>
         <a href="/accounts/new" class="icon-btn primary">
-            <i data-lucide="plus-circle" class="icon-md"></i> New mailbox
+            <i data-lucide="plus" class="icon-sm"></i> New mailbox
         </a>
     </div>
-</div>
+</header>
 
 {% if not accounts %}
-<p class="text-muted">No mailboxes yet. <a href="/accounts/new">Connect a mailbox</a> to start your local backup.</p>
+<article class="envelope envelope-lead envelope-first-run">
+    <div class="envelope-address">
+        <h2 class="verdict">No mailboxes yet.</h2>
+        <p class="addressee"><a href="/accounts/new">Connect a mailbox</a> to start your local backup.</p>
+    </div>
+</article>
 {% else %}
 <div id="accounts-table-wrap"
      hx-get="/partials/accounts-table{% if show_all_users %}?show_all=1{% endif %}" hx-trigger="every 30s" hx-swap="innerHTML">
     {% include "partials/accounts_table.html" %}
 </div>
 {% endif %}
-
-<script>
-function startSyncPolling() {
-    var wrap = document.getElementById('accounts-table-wrap');
-    if (!wrap) return;
-    wrap.setAttribute('hx-trigger', 'every 2s');
-    htmx.process(wrap);
-    wrap.addEventListener('htmx:afterSettle', function handler(e) {
-        if (e.detail.xhr && e.detail.xhr.getResponseHeader('HX-Trigger') === 'sync-idle') {
-            wrap.setAttribute('hx-trigger', 'every 30s');
-            htmx.process(wrap);
-            wrap.removeEventListener('htmx:afterSettle', handler);
-        }
-    });
-}
-</script>
 {% endblock %}

@@ -87,7 +87,16 @@ function updateSearchScope() {
 }
 
 function toggleSubFields(id) {
-    document.getElementById(id).classList.toggle('hidden');
+    var panel = document.getElementById(id);
+    var open = panel.classList.toggle('hidden') === false;
+    document.querySelectorAll('[aria-controls="' + id + '"]').forEach(function(b) {
+        b.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+}
+
+// The restore form never submits natively: the buttons drive it from JS.
+function restoreFormNoSubmit() {
+    return false;
 }
 
 function toggleEntireMessage(cb) {
@@ -218,7 +227,7 @@ function toggleColumn(cb) {
     var colClass = cb.dataset.col;
     var cells = document.querySelectorAll('#results-table .' + colClass);
     cells.forEach(function(cell) {
-        cell.style.display = cb.checked ? '' : 'none';
+        cell.hidden = !cb.checked;
     });
 }
 
@@ -231,7 +240,7 @@ function initResizableColumns() {
     var headers = table.querySelectorAll('thead th');
     headers.forEach(function(th) {
         if (th.classList.contains('col-check')) return;
-        if (th.style.display === 'none') return;
+        if (th.hidden) return;
         var handle = document.createElement('div');
         handle.className = 'resize-handle';
         th.appendChild(handle);
@@ -278,7 +287,7 @@ function executeRestore() {
         body: JSON.stringify(payload)
     }).then(function(r) { return r.json(); }).then(function(data) {
         btn.disabled = false;
-        btn.innerHTML = '<i data-lucide="play" class="icon-sm icon-inline"></i> Start Restore';
+        btn.innerHTML = '<i data-lucide="play" class="icon-sm icon-inline"></i> Start restore';
         lucide.createIcons();
         if (data.job_id) {
             htmx.ajax('GET', '/restore/partials/progress?job_id=' + data.job_id, {
@@ -290,7 +299,7 @@ function executeRestore() {
         }
     }).catch(function(e) {
         btn.disabled = false;
-        btn.innerHTML = '<i data-lucide="play" class="icon-sm icon-inline"></i> Start Restore';
+        btn.innerHTML = '<i data-lucide="play" class="icon-sm icon-inline"></i> Start restore';
         lucide.createIcons();
         alert('Error: ' + e.message);
     });

@@ -90,9 +90,10 @@ def _render_pill(policy) -> str:
     from mailfallback.routers.ui import templates
 
     source = templates.env.loader.get_source(templates.env, "partials/account_backup.html")[0]
-    start = source.index('<div class="flex gap-05 flex-wrap items-center mb-05"')
-    end = source.index("</div>", start) + len("</div>")
-    return templates.env.from_string(source[start:end]).render(backup_config=policy)
+    start = source.index('<p class="backup-line"')
+    end = source.index("</p>", start) + len("</p>")
+    block = '{% import "partials/airmail.html" as mail %}' + source[start:end]
+    return templates.env.from_string(block).render(backup_config=policy)
 
 
 def test_pill_shows_running_even_when_a_past_success_exists():

@@ -90,9 +90,9 @@ class TestBackupFailedIsASubscribableProblem:
         }
         assert offered == set(ns.EVENT_KEYS)
 
-    def test_every_option_carries_a_label_and_a_badge_class(self):
-        for value, badge, css, label in ns.PROBLEM_EVENT_OPTIONS + ns.ACTIVITY_EVENT_OPTIONS:
-            assert value and badge and css and label
+    def test_every_option_carries_a_tag_and_a_checkbox_label(self):
+        for value, tag, label in ns.PROBLEM_EVENT_OPTIONS + ns.ACTIVITY_EVENT_OPTIONS:
+            assert value and tag and label
 
 
 @pytest.fixture

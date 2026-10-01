@@ -1,12 +1,14 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="{{ get_theme(request) }}">
+{% set _theme = get_theme(request) %}
+<html lang="en"{% if _theme %} data-theme="{{ _theme }}"{% endif %}{% if user %} data-auth{% endif %}>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}MailFallBack{% endblock %}</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-    <link rel="preload" href="/static/vendor/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="preload" href="/static/vendor/fonts/GeistMono-Variable.woff2" as="font" type="font/woff2" crossorigin>
+    {# Blocking and tiny on purpose: it settles light/dark before first paint. #}
+    <script src="/static/js/theme-init.js"></script>
+    <link rel="preload" href="/static/fonts/AtkinsonHyperlegibleNext-Medium.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/static/vendor/pico.min.css">
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="/static/vendor/htmx.min.js"></script>
@@ -15,63 +17,74 @@
 </head>
 {% set _flash_success = get_flash(request, "success") %}
 {% set _flash_error = get_flash(request, "error") %}
+{% set _is_admin = user and user.role.value == "admin" %}
 <body class="{% block body_class %}{% endblock %}{% if not user %} login-page{% endif %}"{% if _flash_success %} data-flash-success="{{ _flash_success }}"{% endif %}{% if _flash_error %} data-flash-error="{{ _flash_error }}"{% endif %}>
+    <div class="frame-edge" aria-hidden="true"></div>
+    {% if user %}
+    <a class="skip-link" href="#main">Skip to content</a>
     <header class="topbar" id="topbar">
-        <button id="menu-toggle" aria-label="Menu">
-            <i data-lucide="menu" class="icon-xl"></i>
+        <button type="button" id="menu-toggle" class="topbar-btn" aria-label="Menu" aria-controls="sidebar" aria-expanded="false">
+            <i data-lucide="menu" class="icon-lg"></i>
         </button>
-        <a href="/" class="no-underline"><strong class="brand-short">MFB</strong></a>
+        <a href="/" class="topbar-brand no-underline">MailFallBack</a>
+        <div class="topbar-spacer"></div>
+        {% if _is_admin %}
+        <div class="health" id="health">
+            {# Until the first poll answers it says so; the server always
+               answers with markup (calm or not), and a failed poll turns it
+               into "Status unavailable" (core.js) — never a false calm. #}
+            <div id="global-status-bar"
+                 hx-get="/partials/system-status" hx-trigger="load, every 5s" hx-swap="innerHTML">
+                <span class="health-calm" data-health="pending"><span class="mark mark-muted" aria-hidden="true"></span> Checking status…</span>
+            </div>
+        </div>
+        {% endif %}
+        <button type="button" class="topbar-btn theme-toggle" id="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
+            <i data-lucide="moon" class="icon-md theme-icon-light"></i>
+            <i data-lucide="sun" class="icon-md theme-icon-dark"></i>
+        </button>
     </header>
 
-    <aside class="sidebar" id="sidebar">
-        <div class="sidebar-brand">
-            <a href="/" class="no-underline">
-                <i data-lucide="mail-check" class="icon-inline"></i>
-                <strong class="brand-short">MailFallBack</strong>
-            </a>
-            <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle dark mode" title="Toggle dark mode">
-                <i data-lucide="moon" class="icon-sm theme-icon-light"></i>
-                <i data-lucide="sun" class="icon-sm theme-icon-dark"></i>
-            </button>
-        </div>
-        {% if user %}
+    <aside class="sidebar" id="sidebar" aria-label="Main">
+        <a href="/" class="sidebar-brand no-underline">
+            <span class="brand-mark" aria-hidden="true"><i data-lucide="mail-check" class="icon-md"></i></span>
+            <span class="brand-name">MailFallBack</span>
+        </a>
         <nav class="sidebar-nav">
-            <a href="/" {% if request.url.path == "/" %}class="active"{% endif %}><i data-lucide="home" class="icon-nav"></i>Dashboard</a>
-            <a href="/accounts" {% if request.url.path.startswith("/accounts") %}class="active"{% endif %}><i data-lucide="mail" class="icon-nav"></i>Mailboxes</a>
-            <a href="/restore" {% if request.url.path.startswith("/restore") %}class="active"{% endif %}><i data-lucide="archive-restore" class="icon-nav"></i>Restore</a>
+            <a href="/" {% if request.url.path == "/" or (not _is_admin and request.url.path == "/mine") %}class="active" aria-current="page"{% endif %}><i data-lucide="home" class="icon-nav"></i>Dashboard</a>
+            {% if _is_admin %}
+            <a href="/mine" {% if request.url.path == "/mine" %}class="active" aria-current="page"{% endif %}><i data-lucide="mailbox" class="icon-nav"></i>My mailboxes</a>
+            {% endif %}
+            <a href="/accounts" {% if request.url.path.startswith("/accounts") %}class="active" aria-current="page"{% endif %}><i data-lucide="mail" class="icon-nav"></i>Mailboxes</a>
+            <a href="/restore" {% if request.url.path.startswith("/restore") %}class="active" aria-current="page"{% endif %}><i data-lucide="archive-restore" class="icon-nav"></i>Restore</a>
             {% if webmail_enabled and webmail_url %}
             <a href="{{ webmail_url }}" target="_blank" rel="noopener"><i data-lucide="globe" class="icon-nav"></i>Webmail</a>
             {% endif %}
-            {% if user.role.value == "admin" %}
+            {% if _is_admin %}
             <div class="sidebar-label">Admin</div>
-            <a href="/admin/users" {% if request.url.path.startswith("/admin/users") %}class="active"{% endif %}><i data-lucide="user-circle" class="icon-nav"></i>Users</a>
-            <a href="/admin/stores" {% if request.url.path.startswith("/admin/stores") %}class="active"{% endif %}><i data-lucide="database" class="icon-nav"></i>Mail stores</a>
-            <a href="/admin/backup" {% if request.url.path.startswith("/admin/backup") %}class="active"{% endif %}><i data-lucide="cloud-upload" class="icon-nav"></i>Repositories</a>
-            <a href="/admin/groups" {% if request.url.path.startswith("/admin/groups") %}class="active"{% endif %}><i data-lucide="users-round" class="icon-nav"></i>Groups</a>
-            <a href="/settings" {% if request.url.path == "/settings" %}class="active"{% endif %}><i data-lucide="sliders" class="icon-nav"></i>System</a>
-            <a href="/admin/audit" {% if request.url.path.startswith("/admin/audit") %}class="active"{% endif %}><i data-lucide="scroll-text" class="icon-nav"></i>Audit log</a>
+            <a href="/admin/users" {% if request.url.path.startswith("/admin/users") %}class="active" aria-current="page"{% endif %}><i data-lucide="user-circle" class="icon-nav"></i>Users</a>
+            <a href="/admin/stores" {% if request.url.path.startswith("/admin/stores") %}class="active" aria-current="page"{% endif %}><i data-lucide="database" class="icon-nav"></i>Mail stores</a>
+            <a href="/admin/backup" {% if request.url.path.startswith("/admin/backup") %}class="active" aria-current="page"{% endif %}><i data-lucide="cloud-upload" class="icon-nav"></i>Repositories</a>
+            <a href="/admin/groups" {% if request.url.path.startswith("/admin/groups") %}class="active" aria-current="page"{% endif %}><i data-lucide="users-round" class="icon-nav"></i>Groups</a>
+            <a href="/settings" {% if request.url.path == "/settings" %}class="active" aria-current="page"{% endif %}><i data-lucide="sliders" class="icon-nav"></i>System</a>
+            <a href="/admin/audit" {% if request.url.path.startswith("/admin/audit") %}class="active" aria-current="page"{% endif %}><i data-lucide="scroll-text" class="icon-nav"></i>Audit log</a>
             {% endif %}
             <hr>
-            <a href="/profile" {% if request.url.path == "/profile" %}class="active"{% endif %}><i data-lucide="circle-user-round" class="icon-nav"></i>{{ user.username }}</a>
+            <a href="/profile" {% if request.url.path == "/profile" %}class="active" aria-current="page"{% endif %}><i data-lucide="circle-user-round" class="icon-nav"></i>{{ user.username }}</a>
             <a href="#" hx-post="/api/auth/logout" hx-target="body"><i data-lucide="log-out" class="icon-nav"></i>Log out</a>
         </nav>
-        <div class="sidebar-version">MFB {{ app_version }}</div>
-        {% endif %}
+        <div class="sidebar-version">MFB <span class="num">{{ app_version }}</span></div>
     </aside>
 
     <div class="sidebar-overlay" id="sidebar-overlay"></div>
-
-    {% if user and user.role.value == "admin" %}
-    <div id="global-status-bar"
-         hx-get="/partials/system-status" hx-trigger="load, every 5s" hx-swap="innerHTML">
-    </div>
     {% endif %}
 
-    <main class="content">
+    <main class="content" id="main">
         {% block content %}{% endblock %}
     </main>
-    <div id="toast-container"></div>
+    <div id="toast-container" aria-live="polite"></div>
     <script src="/static/js/core.js"></script>
+    <script src="/static/js/postmark.js"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

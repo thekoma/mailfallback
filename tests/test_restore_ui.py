@@ -17,6 +17,17 @@ def test_restore_page_renders(client, db_session, default_store):
     assert "Restore" in resp.text
 
 
+def test_restore_workspace_init_runs_once(client, db_session, default_store):
+    """Alpine 3 calls a component's init() itself; an extra x-init="init()"
+    ran it twice, so a ?q= hand-off from the home search fired two searches."""
+    create_user(db_session, "uitest", "pass", UserRole.admin, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "uitest", "password": "pass"})
+    resp = client.get("/restore?q=invoice")
+    assert resp.status_code == 200
+    assert 'x-data="restoreWorkspace()"' in resp.text
+    assert 'x-init="init()"' not in resp.text
+
+
 def test_restore_mailbox_select_lists_accounts_without_backup_policy(
     client, db_session, default_store
 ):
@@ -810,3 +821,37 @@ def test_separator_warning_connection_error(client, db_session, default_store):
     assert resp.status_code == 200
     assert "Could not connect" in resp.text
     assert "info-box" in resp.text
+
+
+def test_restore_search_input_is_labelled_and_presets_are_toggle_buttons(
+    client, db_session, default_store
+):
+    """The query input carries a real <label for=…> (placeholders are not
+    labels), the preset choice is a group of aria-pressed buttons rather than
+    a bare role=tablist without tabs/panels, and the panel is not a second
+    <main> nested inside the shell's."""
+    create_user(db_session, "labelui", "pass", UserRole.user, store_id=default_store.id)
+    client.post("/api/auth/login", json={"username": "labelui", "password": "pass"})
+
+    text = client.get("/restore").text
+
+    assert '<label class="ws-query-label" for="ws-query"' in text
+    assert 'id="ws-query" x-model="query"' in text
+    assert 'role="tablist"' not in text
+    assert 'role="group" aria-labelledby="ws-presets-label"' in text
+    assert ":aria-pressed=\"preset === p.id ? 'true' : 'false'\"" in text
+    assert text.count("<main") == 1
+    # One page heading; the preview pane heading sits one level below it.
+    assert '<h1 class="page-title">Restore</h1>' in text
+    assert "<h4" not in text
+    assert '<h2 class="ws-preview-title">Preview</h2>' in text
+
+
+def test_restore_loading_states_are_still(client):
+    """Loading is an honest, still state: no infinite shimmer/pulse on the
+    workspace skeletons or the snapshot-calendar dots."""
+    css = client.get("/static/css/style.css").text
+    for gone in ("ws-shimmer", "snap-shimmer", "snap-pulse", "health-breathe", "health-alert"):
+        assert gone not in css
+    skel = css[css.index(".ws-skeleton-line {") :]
+    assert "animation" not in skel[: skel.index("}")]

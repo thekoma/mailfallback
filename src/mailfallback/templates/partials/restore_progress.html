@@ -5,9 +5,9 @@
     hx-swap="outerHTML"
     {% endif %}>
     {% if job %}
-    <article>
-        <header>
-            <strong>
+    <article class="sheet restore-job">
+        <header class="restore-job-head">
+            <strong class="restore-job-title">
                 {% if finished %}
                     {% if job.status.value == "cancelled" %}
                     <i data-lucide="ban" class="icon-sm icon-inline"></i> Restore cancelled
@@ -24,18 +24,18 @@
             </strong>
         </header>
         <progress value="{{ job.restored_messages + job.skipped_messages + job.failed_messages }}" max="{{ job.total_messages }}"></progress>
-        <small>
+        <small class="num">
             {{ job.restored_messages }} restored
             {% if job.skipped_messages %} · {{ job.skipped_messages }} skipped{% endif %}
             {% if job.failed_messages %} · {{ job.failed_messages }} failed{% endif %}
             / {{ job.total_messages }} total
         </small>
         {% if job.error %}
-        <p class="error-text">{{ job.error }}</p>
+        <p class="error-text notice notice-error"><i data-lucide="alert-circle" class="icon-sm"></i> {{ job.error }}</p>
         {% endif %}
         {% if not finished %}
-        <footer>
-            <button type="button" class="outline secondary"
+        <footer class="restore-job-foot">
+            <button type="button" class="icon-btn"
                     hx-post="/api/restore/{{ job.id }}/cancel"
                     hx-swap="none">Cancel</button>
         </footer>

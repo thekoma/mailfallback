@@ -1,23 +1,24 @@
-<p class="text-muted text-xs mt-05">{{ total }} entries</p>
-<div class="table-wrap">
-<table>
+<p class="ledger-count num">{{ total }} entries</p>
+<div class="table-wrap ledger-wrap">
+<table class="ledger ledger-compact ledger-audit">
+    <caption class="sr-only">Audit log entries</caption>
     <thead>
         <tr>
-            <th>Timestamp</th>
-            <th>User</th>
-            <th>Action</th>
-            <th>Resource</th>
-            <th>IP</th>
+            <th scope="col">Timestamp</th>
+            <th scope="col">User</th>
+            <th scope="col" class="cell-wrap">Action</th>
+            <th scope="col" class="cell-wrap">Resource</th>
+            <th scope="col">IP</th>
         </tr>
     </thead>
     <tbody>
         {% for e in entries %}
-        <tr>
-            <td class="text-xs">{{ e.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-            <td>{{ e.username }}</td>
-            <td>{{ get_action_label(e.action) }}</td>
-            <td>{% if e.resource_name %}{{ e.resource_name }}{% elif e.resource_id %}<code class="text-xs">{{ e.resource_id[:8] }}</code>{% else %}—{% endif %}</td>
-            <td class="text-xs text-muted">{{ e.ip_address or '—' }}</td>
+        <tr class="ledger-row">
+            <td class="ledger-when"><time class="postmark-line" datetime="{{ e.timestamp.strftime('%Y-%m-%dT%H:%M:%S') }}"><span class="postmark-date">{{ e.timestamp.strftime('%Y-%m-%d') }}</span> <span class="postmark-sep" aria-hidden="true">·</span> <span class="postmark-time">{{ e.timestamp.strftime('%H:%M:%S') }}</span></time></td>
+            <td><span class="owner">{{ e.username }}</span></td>
+            <td class="cell-wrap ledger-mailbox"><span class="audit-action" title="{{ e.action }}">{{ get_action_label(e.action) }}</span></td>
+            <td class="cell-wrap">{% if e.resource_name %}{{ e.resource_name }}{% elif e.resource_id %}<code>{{ e.resource_id[:8] }}</code>{% else %}—{% endif %}</td>
+            <td class="num text-muted">{{ e.ip_address or '—' }}</td>
         </tr>
         {% endfor %}
         {% if not entries %}
@@ -32,13 +33,13 @@
 </div>
 
 {% if total_pages > 1 %}
-<nav class="flex gap-05 items-center mt-05">
+<nav class="pager" aria-label="Audit log pages">
     {% if page > 1 %}
-    <a href="?page={{ page - 1 }}{% for k, v in filters.items() %}&{{ k }}={{ v }}{% endfor %}" class="icon-btn"><i data-lucide="chevron-left" class="icon-sm"></i></a>
+    <a href="?page={{ page - 1 }}{% for k, v in filters.items() %}&{{ k }}={{ v }}{% endfor %}" class="icon-btn" aria-label="Previous page"><i data-lucide="chevron-left" class="icon-sm"></i></a>
     {% endif %}
-    <span class="text-xs text-muted">Page {{ page }} of {{ total_pages }}</span>
+    <span class="pager-label num">Page {{ page }} of {{ total_pages }}</span>
     {% if page < total_pages %}
-    <a href="?page={{ page + 1 }}{% for k, v in filters.items() %}&{{ k }}={{ v }}{% endfor %}" class="icon-btn"><i data-lucide="chevron-right" class="icon-sm"></i></a>
+    <a href="?page={{ page + 1 }}{% for k, v in filters.items() %}&{{ k }}={{ v }}{% endfor %}" class="icon-btn" aria-label="Next page"><i data-lucide="chevron-right" class="icon-sm"></i></a>
     {% endif %}
 </nav>
 {% endif %}

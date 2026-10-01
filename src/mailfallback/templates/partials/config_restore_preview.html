@@ -1,14 +1,17 @@
 {% if error %}
-<div class="alert-error" role="alert">
-    <i data-lucide="alert-triangle" class="icon-md icon-inline"></i> {{ error }}
+<div class="notice notice-error" role="alert">
+    <i data-lucide="alert-triangle" class="icon-md"></i> <p>{{ error }}</p>
 </div>
 {% else %}
-<div class="confirm-summary">
+<div class="notice notice-ok">
+    <i data-lucide="file-check" class="icon-md"></i>
+    <div>
     <strong>Snapshot found.</strong> It contains:
     <ul>
         {% for name, n in counts.items() %}{% if n %}<li>{{ n }} {{ name | replace("_", " ") }}</li>{% endif %}{% endfor %}
     </ul>
     <p class="text-small text-muted">Existing rows (matching ID, username, store path, or maildir path) are skipped, never overwritten.</p>
+    </div>
 </div>
 <form method="post" action="{{ confirm_action | default('/admin/system/config-restore/confirm') }}" class="mt-05">
     {% for key, value in form.items() %}

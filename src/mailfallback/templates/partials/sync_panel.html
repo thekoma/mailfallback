@@ -1,24 +1,27 @@
+{% import "partials/airmail.html" as mail %}
 {% set polling = hero_state in ("syncing", "syncing-indeterminate", "first-sync") %}
+{#- The mailbox envelope's live half: hand stamp + postmark + what to do.
+    Re-rendered every 2 s while a sync runs; when the re-render carries a
+    newer copy time, static/js/postmark.js stamps the postmark down once. -#}
 <div id="hero-panel"
     class="hero-panel hero-{{ hero_state }}"
+    data-postmark-key="{{ account.id }}"
     {% if polling %}
     hx-get="/accounts/{{ account.id }}/partials/sync-panel"
     hx-trigger="every 2s"
     hx-target="#hero-panel"
     hx-swap="outerHTML"
     {% endif %}>
+<div class="hero-postmark">{{ mail.postmark(status.last_success_at if status else account.last_sync_at, size="lg") }}</div>
 
 {% if hero_state == "idle" %}
 {# ── STATE: IDLE (sync OK) ── #}
 <div class="hero-header">
-    <div class="hero-title">
-        <i data-lucide="check-circle" class="icon-lg"></i>
-        <strong>Up to date</strong>
-    </div>
+    <h2 class="hero-title">{% if status %}{{ mail.stamp(status) }}{% endif %}</h2>
     <div class="hero-actions">
         <button class="icon-btn primary" title="Sync now"
             hx-post="/api/sync/{{ account.id }}" hx-swap="none"
-            hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
+            data-after-require-json data-after-refresh-panel="/accounts/{{ account.id }}/partials/sync-panel">
             <i data-lucide="refresh-cw" class="icon-md"></i> Sync now
         </button>
     </div>
@@ -32,14 +35,11 @@
 {% elif hero_state == "empty" %}
 {# ── STATE: EMPTY (never synced) ── #}
 <div class="hero-header">
-    <div class="hero-title">
-        <i data-lucide="circle" class="icon-lg"></i>
-        <strong>Not yet synced</strong>
-    </div>
+    <h2 class="hero-title">{% if status %}{{ mail.stamp(status) }}{% endif %}<span class="hero-headline">Not yet synced</span></h2>
     <div class="hero-actions">
         <button class="icon-btn primary" title="Start first sync"
             hx-post="/api/sync/{{ account.id }}" hx-swap="none"
-            hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
+            data-after-require-json data-after-refresh-panel="/accounts/{{ account.id }}/partials/sync-panel">
             <i data-lucide="refresh-cw" class="icon-md"></i> Start first sync
         </button>
     </div>
@@ -51,14 +51,11 @@
 {% elif hero_state in ("syncing", "syncing-indeterminate", "first-sync") %}
 {# ── STATE: SYNCING ── #}
 <div class="hero-header">
-    <div class="hero-title">
-        <span class="pulse-dot"></span>
-        <strong>{% if hero_state == "first-sync" %}First sync in progress…{% else %}Syncing…{% endif %}</strong>
-    </div>
+    <h2 class="hero-title">{% if status %}{{ mail.stamp(status) }}{% endif %}{% if hero_state == "first-sync" %}<span class="hero-headline">First sync in progress…</span>{% endif %}</h2>
     <div class="hero-actions">
         <button class="icon-btn danger" title="Stop"
             hx-post="/api/sync/{{ account.id }}/stop" hx-swap="none"
-            hx-on::after-request="htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})">
+            data-after-refresh-panel="/accounts/{{ account.id }}/partials/sync-panel">
             <i data-lucide="square" class="icon-md"></i> Stop
         </button>
     </div>
@@ -141,14 +138,11 @@
 {% elif hero_state == "error" %}
 {# ── STATE: ERROR ── #}
 <div class="hero-header">
-    <div class="hero-title">
-        <i data-lucide="x-circle" class="icon-lg"></i>
-        <strong>Sync failed</strong>
-    </div>
+    <h2 class="hero-title">{% if status %}{{ mail.stamp(status) }}{% endif %}</h2>
     <div class="hero-actions">
         <button class="icon-btn primary" title="Try again"
             hx-post="/api/sync/{{ account.id }}" hx-swap="none"
-            hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
+            data-after-require-json data-after-refresh-panel="/accounts/{{ account.id }}/partials/sync-panel">
             <i data-lucide="refresh-cw" class="icon-md"></i> Try again
         </button>
         {% if status and status.action and status.action.value == "update_password" and can_modify %}
@@ -159,7 +153,7 @@
            resolver's status.detail, the sub-text and buttons key on this. #}
         {% if error_category(account.last_error) in ("network", "tls", "unresolved_host") %}
         <button class="icon-btn" title="Test connection"
-            onclick="testConnectionFromHero('{{ account.imap_host }}', {{ account.imap_port }}, '{{ account.tls_type }}')">
+            data-click="testConnectionFromHero" data-args='{{ [account.imap_host, account.imap_port, account.tls_type] | tojson }}'>
             <i data-lucide="plug" class="icon-md"></i> Test connection
         </button>
         {% endif %}
@@ -184,7 +178,7 @@
     </p>
     {% if account.auth_type.value == "oauth2" and can_modify %}
     <a href="/auth/{{ account.provider }}/start?account_id={{ account.id }}" class="icon-btn primary mt-025">
-        {% with provider=account.provider %}{% include "partials/provider_logo.html" %}{% endwith %}
+        <i data-lucide="log-in" class="icon-md"></i>
         Reconnect
     </a>
     {% endif %}
@@ -247,16 +241,13 @@
 {% elif hero_state == "sign-in-needed" %}
 {# ── STATE: SIGN-IN NEEDED (OAuth expired) ── #}
 <div class="hero-header">
-    <div class="hero-title">
-        <i data-lucide="alert-triangle" class="icon-lg"></i>
-        <strong>Sign-in needed</strong>
-    </div>
+    <h2 class="hero-title">{% if status %}{{ mail.stamp(status) }}{% endif %}</h2>
 </div>
 <div class="hero-body">
     {% set provider_name = {"google": "Google", "microsoft": "Microsoft"}.get(account.provider) %}
     {% if can_modify %}
     <a href="/auth/{{ account.provider }}/start?account_id={{ account.id }}" class="icon-btn primary">
-        {% with provider=account.provider %}{% include "partials/provider_logo.html" %}{% endwith %}
+        <i data-lucide="log-in" class="icon-md"></i>
         {% if sign_in_never_completed(account) %}Connect{% else %}Reconnect{% endif %}{% if provider_name %} with {{ provider_name }}{% endif %}
     </a>
     {% endif %}
@@ -274,20 +265,17 @@
 {% elif hero_state == "sync-paused" %}
 {# ── STATE: SELF-RECOVERING PAUSE (budget / throttle / transient) ── #}
 <div class="hero-header">
-    <div class="hero-title">
-        <i data-lucide="pause-circle" class="icon-lg"></i>
-        <strong>
+    <h2 class="hero-title">{% if status %}{{ mail.stamp(status) }}{% endif %}<span class="hero-headline">
             {%- if live and live.pause_reason == "budget" %}Paused — daily budget
             {%- elif live and live.pause_reason == "throttle" %}Paused — provider throttled
             {%- elif live and live.pause_reason == "interrupted" %}Paused — interrupted by a restart
             {%- else %}Paused — retrying shortly
             {%- endif -%}
-        </strong>
-    </div>
+        </span></h2>
     <div class="hero-actions">
         <button class="icon-btn" title="Override the pause and sync now"
             hx-post="/api/sync/{{ account.id }}" hx-swap="none"
-            hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);if(d.warning){showToast(d.warning,'error')}htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
+            data-after-require-json data-after-warning-toast data-after-refresh-panel="/accounts/{{ account.id }}/partials/sync-panel">
             <i data-lucide="refresh-cw" class="icon-md"></i> Sync now
         </button>
     </div>
@@ -321,14 +309,11 @@
 {% elif hero_state == "stopped" %}
 {# ── STATE: STOPPED (a user stopped the last sync — not a failure) ── #}
 <div class="hero-header">
-    <div class="hero-title">
-        <i data-lucide="circle-slash" class="icon-lg"></i>
-        <strong>Sync stopped</strong>
-    </div>
+    <h2 class="hero-title">{% if status %}{{ mail.stamp(status) }}{% endif %}<span class="hero-headline">Sync stopped</span></h2>
     <div class="hero-actions">
         <button class="icon-btn" title="Sync now"
             hx-post="/api/sync/{{ account.id }}" hx-swap="none"
-            hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);if(d.warning){showToast(d.warning,'error')}htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
+            data-after-require-json data-after-warning-toast data-after-refresh-panel="/accounts/{{ account.id }}/partials/sync-panel">
             <i data-lucide="refresh-cw" class="icon-md"></i> Sync now
         </button>
     </div>
@@ -344,14 +329,11 @@
 {% elif hero_state == "out-of-date" %}
 {# ── STATE: OUT OF DATE (nothing copied for longer than the schedule allows) ── #}
 <div class="hero-header">
-    <div class="hero-title">
-        <i data-lucide="alert-triangle" class="icon-lg"></i>
-        <strong>{{ status.label }}</strong>
-    </div>
+    <h2 class="hero-title">{% if status %}{{ mail.stamp(status) }}{% endif %}</h2>
     <div class="hero-actions">
         <button class="icon-btn" title="Sync now"
             hx-post="/api/sync/{{ account.id }}" hx-swap="none"
-            hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);if(d.warning){showToast(d.warning,'error')}htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
+            data-after-require-json data-after-warning-toast data-after-refresh-panel="/accounts/{{ account.id }}/partials/sync-panel">
             <i data-lucide="refresh-cw" class="icon-md"></i> Sync now
         </button>
     </div>
@@ -372,19 +354,16 @@
 {% elif hero_state == "paused" %}
 {# ── STATE: PAUSED (suspended) ── #}
 <div class="hero-header">
-    <div class="hero-title">
-        <i data-lucide="pause-circle" class="icon-lg"></i>
-        <strong>Suspended</strong>
-    </div>
+    <h2 class="hero-title">{% if status %}{{ mail.stamp(status) }}{% endif %}</h2>
     <div class="hero-actions">
         <button class="icon-btn success"
             hx-post="/accounts/{{ account.id }}/toggle-suspend" hx-swap="none"
-            hx-on::after-request="location.reload()">
+            data-after-reload>
             <i data-lucide="play-circle" class="icon-md"></i> Resume sync
         </button>
         <button class="icon-btn" title="Sync now"
             hx-post="/api/sync/{{ account.id }}" hx-swap="none"
-            hx-on::after-request="try{var d=JSON.parse(event.detail.xhr.responseText);htmx.ajax('GET','/accounts/{{ account.id }}/partials/sync-panel',{target:'#hero-panel',swap:'outerHTML'})}catch(e){}">
+            data-after-require-json data-after-refresh-panel="/accounts/{{ account.id }}/partials/sync-panel">
             <i data-lucide="refresh-cw" class="icon-md"></i> Sync now
         </button>
     </div>
@@ -400,10 +379,7 @@
 {% elif hero_state == "migrating" %}
 {# ── STATE: MIGRATING ── #}
 <div class="hero-header">
-    <div class="hero-title">
-        <i data-lucide="truck" class="icon-lg"></i>
-        <strong>Moving your mail</strong>
-    </div>
+    <h2 class="hero-title">{% if status %}{{ mail.stamp(status) }}{% endif %}<span class="hero-headline">Moving your mail</span></h2>
 </div>
 <div class="hero-body">
     <p>Moving to a new location. Sync resumes when done.</p>

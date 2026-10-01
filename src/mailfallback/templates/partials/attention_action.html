@@ -1,0 +1,29 @@
+{#- The one next action for a Needs attention item (routers/ui.py builds the
+    items; the resolver decides which action applies). Needs: item. -#}
+{% if item.type == 'error' and item.config_backup %}
+<form method="post" action="/admin/backup/{{ item.id }}/config-backup" class="d-inline">
+    <button type="submit" class="icon-btn primary">
+        <i data-lucide="file-lock" class="icon-sm"></i> Store snapshot now
+    </button>
+</form>
+{% elif item.type == 'error' and item.backup %}
+<form method="post" action="/accounts/{{ item.id }}/backup/now" class="d-inline">
+    <button type="submit" class="icon-btn primary">
+        <i data-lucide="cloud-upload" class="icon-sm"></i> Back up now
+    </button>
+</form>
+{% elif item.type == 'error' and item.action == 'update_password' %}
+<a class="icon-btn primary" href="/accounts/{{ item.id }}#admin-edit"><i data-lucide="key-round" class="icon-sm"></i> Update {{ item.password_noun }}</a>
+{% elif item.type == 'error' %}
+<button class="icon-btn primary" hx-post="/api/sync/{{ item.id }}" hx-swap="none" data-after-reload>
+    <i data-lucide="refresh-cw" class="icon-sm"></i> Retry
+</button>
+{% elif item.type == 'reauth' and item.action == 'reconnect' %}
+<a class="icon-btn primary" href="/auth/{{ item.provider }}/start?account_id={{ item.id }}">
+    <i data-lucide="log-in" class="icon-sm"></i> {% if item.never_connected %}Connect{% else %}Reconnect{% endif %}
+</a>
+{% elif item.type == 'stale' and item.sync_button %}
+<button class="icon-btn primary" hx-post="/api/sync/{{ item.id }}" hx-swap="none" data-after-reload>
+    <i data-lucide="refresh-cw" class="icon-sm"></i> Sync now
+</button>
+{% endif %}

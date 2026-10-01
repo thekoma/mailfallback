@@ -6,7 +6,7 @@
    measured dock vars, which are 0px while their bar is hidden. #}
 <div class="ws-preview" x-show="previewOpen" x-transition>
   <div class="ws-preview-head">
-    <h4 class="ws-field-label">Preview</h4>
+    <h2 class="ws-preview-title">Preview</h2>
     <button type="button" class="ws-preview-close" @click="closePreview()"
             title="Close preview" aria-label="Close preview">
       <i data-lucide="x" class="icon-sm"></i>
@@ -19,19 +19,20 @@
     <i data-lucide="paperclip" class="icon-sm icon-inline"></i>
     <span x-text="previewRef ? (previewRef.filename || '(unnamed)') : ''"></span><span class="text-muted" x-text="previewRef && previewRef.size_bytes != null ? ' · ' + fmtSize(previewRef.size_bytes) : ''"></span>
   </p>
-  <template x-if="previewLoading"><p class="text-muted text-small">Loading…</p></template>
+  <template x-if="previewLoading"><p class="ws-loading" role="status">Loading…</p></template>
   <template x-if="!previewLoading && preview">
     <div>
       <div class="ws-preview-subject" x-text="preview.subject || '(no subject)'"></div>
-      <p class="ws-preview-kv">
-        <strong>From</strong> <span x-text="preview.from_addr || '?'"></span>
-        <strong>To</strong> <span x-text="(preview.to_addrs || []).join(', ') || '—'"></span><br>
-        <template x-if="(preview.cc_addrs || []).length"><span><strong>Cc</strong> <span x-text="preview.cc_addrs.join(', ')"></span><br></span></template>
-        <template x-if="(preview.bcc_addrs || []).length"><span><strong>Bcc</strong> <span x-text="preview.bcc_addrs.join(', ')"></span><br></span></template>
-        <strong>Date</strong> <span x-text="preview.date_sent ? preview.date_sent.slice(0,16).replace('T',' ') : '—'"></span>
-        <strong>Folder</strong> <span x-text="preview.folder_path"></span>
-        <strong>Source</strong> <span x-text="preview.source"></span>
-      </p>
+      {# The opened letter's header: one ruled line per field. #}
+      <dl class="ws-preview-kv">
+        <div><dt>From</dt><dd x-text="preview.from_addr || '?'"></dd></div>
+        <div><dt>To</dt><dd x-text="(preview.to_addrs || []).join(', ') || '—'"></dd></div>
+        <template x-if="(preview.cc_addrs || []).length"><div><dt>Cc</dt><dd x-text="preview.cc_addrs.join(', ')"></dd></div></template>
+        <template x-if="(preview.bcc_addrs || []).length"><div><dt>Bcc</dt><dd x-text="preview.bcc_addrs.join(', ')"></dd></div></template>
+        <div><dt>Date</dt><dd class="num" x-text="preview.date_sent ? preview.date_sent.slice(0,16).replace('T',' ') : '—'"></dd></div>
+        <div><dt>Folder</dt><dd x-text="preview.folder_path"></dd></div>
+        <div><dt>Source</dt><dd x-text="preview.source"></dd></div>
+      </dl>
       <div class="ws-preview-body" x-text="preview.body_snippet || '(no text)'"></div>
       <div class="ws-preview-atts" x-show="preview.attachments && preview.attachments.length">
         <span class="ws-field-label">Attachments</span>

@@ -1,150 +1,141 @@
 {% extends "base.html" %}
+{% import "partials/airmail.html" as mail %}
 {% block title %}System — MFB{% endblock %}
 {% block content %}
-<h2><i data-lucide="sliders" class="icon-xl icon-inline"></i>System</h2>
+<header class="page-head">
+    <div class="page-head-text">
+        <h1 class="page-title">System</h1>
+        <p class="page-summary num"><span>MFB {{ app_version }}</span> <span class="sep" aria-hidden="true">·</span> <span>{{ total_accounts }} accounts</span> <span class="sep" aria-hidden="true">·</span> <span>{{ total_users }} users</span> <span class="sep" aria-hidden="true">·</span> <span>{{ total_stores }} mail stores</span></p>
+    </div>
+</header>
 
-<h3>System info</h3>
-<table>
-    <tr><td><i data-lucide="tag" class="icon-sm icon-inline"></i>Version</td><td>MFB {{ app_version }}</td></tr>
-    <tr><td><i data-lucide="mail" class="icon-sm icon-inline"></i>Accounts</td><td>{{ total_accounts }}</td></tr>
-    <tr><td><i data-lucide="user-circle" class="icon-sm icon-inline"></i>Users</td><td>{{ total_users }}</td></tr>
-    <tr><td><i data-lucide="database" class="icon-sm icon-inline"></i>Mail stores</td><td>{{ total_stores }}</td></tr>
-    <tr><td><i data-lucide="key-round" class="icon-sm icon-inline"></i>OIDC</td><td>{{ 'Enabled' if oidc_enabled else 'Disabled' }}</td></tr>
-</table>
+<section class="sheet" aria-labelledby="sys-info">
+    <div class="sheet-head"><h2 class="sheet-title" id="sys-info"><i data-lucide="tag" class="icon-md"></i>System info</h2></div>
+    <dl class="kv-rows">
+        <div class="kv-row"><dt><i data-lucide="tag" class="icon-sm"></i>Version</dt><dd class="num">MFB {{ app_version }}</dd></div>
+        <div class="kv-row"><dt><i data-lucide="mail" class="icon-sm"></i>Accounts</dt><dd class="num">{{ total_accounts }}</dd></div>
+        <div class="kv-row"><dt><i data-lucide="user-circle" class="icon-sm"></i>Users</dt><dd class="num">{{ total_users }}</dd></div>
+        <div class="kv-row"><dt><i data-lucide="database" class="icon-sm"></i>Mail stores</dt><dd class="num">{{ total_stores }}</dd></div>
+        <div class="kv-row"><dt><i data-lucide="key-round" class="icon-sm"></i>OIDC</dt><dd>{{ 'Enabled' if oidc_enabled else 'Disabled' }}</dd></div>
+    </dl>
 
-<h3>Modules</h3>
-<table>
-    <tr>
-        <td><i data-lucide="server" class="icon-sm icon-inline"></i>Dovecot IMAP</td>
-        <td><span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Active</span></td>
-    </tr>
-    <tr>
-        <td><i data-lucide="globe" class="icon-sm icon-inline"></i>Webmail (Roundcube)</td>
-        <td>
-            {% if webmail_enabled %}
-            <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Active</span>
-            {% else %}
-            <span class="badge badge-disabled"><i data-lucide="minus-circle" class="icon-sm"></i> Disabled</span>
-            {% endif %}
-        </td>
-    </tr>
-    <tr>
-        <td><i data-lucide="file-search" class="icon-sm icon-inline"></i>Tika (Attachment FTS)</td>
-        <td>
-            {% if tika_enabled %}
-            <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Active</span>
-            <span class="text-muted text-small">{{ tika_url }}</span>
-            {% else %}
-            <span class="badge badge-disabled"><i data-lucide="minus-circle" class="icon-sm"></i> Disabled</span>
-            {% endif %}
-        </td>
-    </tr>
-</table>
+    <div class="fold">
+        <h3 class="fold-title">Modules</h3>
+        <dl class="kv-rows">
+            <div class="kv-row"><dt><i data-lucide="server" class="icon-sm"></i>Dovecot IMAP</dt><dd><span class="state-calm">{{ mail.mark("mark-ok") }} Active</span></dd></div>
+            <div class="kv-row"><dt><i data-lucide="globe" class="icon-sm"></i>Webmail (Roundcube)</dt><dd>
+                {% if webmail_enabled %}<span class="state-calm">{{ mail.mark("mark-ok") }} Active</span>{% else %}{{ mail.stamp({"badge": "stamp-muted", "icon": "minus-circle", "spin": false, "label": "Disabled"}) }}{% endif %}
+            </dd></div>
+            <div class="kv-row"><dt><i data-lucide="file-search" class="icon-sm"></i>Tika (Attachment FTS)</dt><dd>
+                {% if tika_enabled %}<span class="state-calm">{{ mail.mark("mark-ok") }} Active</span> <span class="text-muted text-small">{{ tika_url }}</span>{% else %}{{ mail.stamp({"badge": "stamp-muted", "icon": "minus-circle", "spin": false, "label": "Disabled"}) }}{% endif %}
+            </dd></div>
+        </dl>
+    </div>
 
-<h3>Service status</h3>
-<table>
-    <tr>
-        <td><i data-lucide="clock" class="icon-sm icon-inline"></i>Scheduler</td>
-        <td>
-            {% if scheduler_running %}
-            <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Running</span>
-            <span class="text-muted text-small">{{ scheduler_jobs }} active job{{ 's' if scheduler_jobs != 1 else '' }}</span>
-            {% else %}
-            <span class="badge badge-disabled"><i data-lucide="pause-circle" class="icon-sm"></i> Stopped</span>
-            {% endif %}
-        </td>
-    </tr>
-    <tr>
-        <td><i data-lucide="bug" class="icon-sm icon-inline"></i>Debug Mode</td>
-        <td>{{ 'On' if debug_mode else 'Off' }}</td>
-    </tr>
-</table>
+    <div class="fold">
+        <h3 class="fold-title">Service status</h3>
+        <dl class="kv-rows">
+            <div class="kv-row"><dt><i data-lucide="clock" class="icon-sm"></i>Scheduler</dt><dd>
+                {% if scheduler_running %}<span class="state-calm">{{ mail.mark("mark-ok") }} Running</span> <span class="text-muted text-small num">{{ scheduler_jobs }} active job{{ 's' if scheduler_jobs != 1 else '' }}</span>{% else %}{{ mail.stamp({"badge": "stamp-muted", "icon": "pause-circle", "spin": false, "label": "Stopped"}) }}{% endif %}
+            </dd></div>
+            <div class="kv-row"><dt><i data-lucide="bug" class="icon-sm"></i>Debug mode</dt><dd>{{ 'On' if debug_mode else 'Off' }}</dd></div>
+        </dl>
+    </div>
+</section>
 
-<h3><i data-lucide="server" class="icon-lg icon-inline"></i>Dovecot management</h3>
-{% if dovecot_status %}
-<p>
-    {% if dovecot_status == 'ok' %}
-    <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Healthy</span>
-    {% else %}
-    <span class="badge badge-error"><i data-lucide="alert-circle" class="icon-sm"></i> Error</span>
-    {% if dovecot_error %}<span class="text-muted text-small">{{ dovecot_error }}</span>{% endif %}
-    {% endif %}
-</p>
-{% endif %}
-{% if fts_status %}
-<p>
-    {% if fts_status == 'started' %}
-    <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i> FTS reindex started</span>
-    {% elif fts_status == 'already_running' %}
-    <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i> FTS reindex already running</span>
-    {% endif %}
-</p>
-{% endif %}
-{% if resync_status %}
-<p>
-    {% if resync_status == 'started' %}
-    <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i> Force resync started</span>
-    {% elif resync_status == 'already_running' %}
-    <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i> Force resync already running</span>
-    {% endif %}
-</p>
-{% endif %}
-<div class="actions">
-    <form method="post" action="/admin/dovecot/health-check" class="inline-form">
-        <button type="submit" class="icon-btn">
-            <i data-lucide="activity" class="icon-md"></i> Health Check
-        </button>
-    </form>
-    <form method="post" action="/admin/dovecot/force-resync" class="inline-form">
-        <button type="submit" class="icon-btn">
-            <i data-lucide="refresh-cw" class="icon-md"></i> Force Resync
-        </button>
-    </form>
-    <form method="post" action="/admin/dovecot/fts-reindex" class="inline-form">
-        <button type="submit" class="icon-btn">
-            <i data-lucide="search" class="icon-md"></i> FTS Reindex
-        </button>
-    </form>
-</div>
-
-<h3 class="mt-1">Configuration backup</h3>
-<div class="flex gap-1">
-    <a href="/api/config/export" role="button" class="outline">Export config (JSON)</a>
-</div>
-
-<details class="mt-1">
-    <summary><i data-lucide="archive-restore" class="icon-lg icon-inline"></i><strong>Restore configuration from repository</strong></summary>
-    <p class="text-muted text-small mt-05">
-        Disaster recovery: fetch the latest encrypted configuration snapshot from a repository
-        and re-import users, mailboxes, repositories, and policies. Existing rows are skipped.
+<section class="sheet" aria-labelledby="sys-dovecot">
+    <div class="sheet-head"><h2 class="sheet-title" id="sys-dovecot"><i data-lucide="server" class="icon-md"></i>Dovecot management</h2></div>
+    {% if dovecot_status or fts_status or resync_status %}
+    <div class="sheet-status">
+    {% if dovecot_status %}
+    <p>
+        {% if dovecot_status == 'ok' %}
+        <span class="state-calm">{{ mail.mark("mark-ok") }} Healthy</span>
+        {% else %}
+        {{ mail.stamp({"badge": "stamp-error", "icon": "alert-circle", "spin": false, "label": "Error"}) }}
+        {% if dovecot_error %}<span class="text-muted text-small">{{ dovecot_error }}</span>{% endif %}
+        {% endif %}
     </p>
-    <form hx-post="/admin/system/config-restore/preview" hx-target="#config-restore-result" hx-swap="innerHTML">
-        <div class="grid-2 mt-1">
-            <div>
-                <label for="dr_backend">Backend</label>
-                <select id="dr_backend" name="backend_type">
-                    <option value="s3">S3-compatible</option>
-                    <option value="local">Local path</option>
-                </select>
+    {% endif %}
+    {% if fts_status %}
+    <p>
+        {% if fts_status == 'started' %}
+        {{ mail.stamp({"badge": "stamp-active", "icon": "loader", "spin": true, "label": "Search reindex started"}) }}
+        {% elif fts_status == 'already_running' %}
+        {{ mail.stamp({"badge": "stamp-active", "icon": "loader", "spin": true, "label": "Search reindex already running"}) }}
+        {% endif %}
+    </p>
+    {% endif %}
+    {% if resync_status %}
+    <p>
+        {% if resync_status == 'started' %}
+        {{ mail.stamp({"badge": "stamp-active", "icon": "loader", "spin": true, "label": "Force resync started"}) }}
+        {% elif resync_status == 'already_running' %}
+        {{ mail.stamp({"badge": "stamp-active", "icon": "loader", "spin": true, "label": "Force resync already running"}) }}
+        {% endif %}
+    </p>
+    {% endif %}
+    </div>
+    {% endif %}
+    <div class="actions">
+        <form method="post" action="/admin/dovecot/health-check" class="inline-form">
+            <button type="submit" class="icon-btn">
+                <i data-lucide="activity" class="icon-md"></i> Health check
+            </button>
+        </form>
+        <form method="post" action="/admin/dovecot/force-resync" class="inline-form">
+            <button type="submit" class="icon-btn">
+                <i data-lucide="refresh-cw" class="icon-md"></i> Force resync
+            </button>
+        </form>
+        <form method="post" action="/admin/dovecot/fts-reindex" class="inline-form">
+            <button type="submit" class="icon-btn">
+                <i data-lucide="search" class="icon-md"></i> Search reindex
+            </button>
+        </form>
+    </div>
+</section>
+
+<section class="sheet" aria-labelledby="sys-config">
+    <div class="sheet-head"><h2 class="sheet-title" id="sys-config"><i data-lucide="file-lock" class="icon-md"></i>Configuration backup</h2></div>
+    <div class="actions">
+        <a href="/api/config/export" class="icon-btn"><i data-lucide="download" class="icon-sm"></i> Export config (JSON)</a>
+    </div>
+
+    <details class="fold config-restore">
+        <summary><i data-lucide="archive-restore" class="icon-md icon-inline"></i>Restore configuration from repository</summary>
+        <p class="sheet-lede">
+            Disaster recovery: fetch the latest encrypted configuration snapshot from a repository
+            and re-import users, mailboxes, repositories, and policies. Existing rows are skipped.
+        </p>
+        <form hx-post="/admin/system/config-restore/preview" hx-target="#config-restore-result" hx-swap="innerHTML">
+            <div class="form-grid">
+                <div>
+                    <label for="dr_backend">Backend</label>
+                    <select id="dr_backend" name="backend_type">
+                        <option value="s3">S3-compatible</option>
+                        <option value="local">Local path</option>
+                    </select>
+                </div>
             </div>
-        </div>
-        <div id="dr-s3" class="grid-2 mt-05">
-            <div><label>S3 Endpoint</label><input type="text" name="s3_endpoint" placeholder="https://s3.example.com"></div>
-            <div><label>S3 Bucket</label><input type="text" name="s3_bucket"></div>
-            <div><label>Access Key</label><input type="password" name="s3_access_key" autocomplete="off"></div>
-            <div><label>Secret Key</label><input type="password" name="s3_secret_key" autocomplete="off"></div>
-        </div>
-        <div id="dr-local" class="mt-05" hidden>
-            <label>Local path</label><input type="text" name="local_path" placeholder="/backups/restic">
-        </div>
-        <div class="grid-2 mt-05">
-            <div><label>Restic password</label><input type="password" name="restic_password" required autocomplete="off"></div>
-            <div><label>Passphrase</label><input type="password" name="passphrase" required autocomplete="off"></div>
-        </div>
-        <button type="submit" class="icon-btn mt-05">
-            <i data-lucide="search" class="icon-md"></i> Fetch and preview
-        </button>
-    </form>
-    <div id="config-restore-result" class="mt-05"></div>
-</details>
+            <div id="dr-s3" class="form-grid">
+                <div><label for="dr_s3_endpoint">S3 Endpoint</label><input type="text" id="dr_s3_endpoint" name="s3_endpoint" placeholder="https://s3.example.com"></div>
+                <div><label for="dr_s3_bucket">S3 Bucket</label><input type="text" id="dr_s3_bucket" name="s3_bucket"></div>
+                <div><label for="dr_s3_access">Access key</label><input type="password" id="dr_s3_access" name="s3_access_key" autocomplete="off"></div>
+                <div><label for="dr_s3_secret">Secret key</label><input type="password" id="dr_s3_secret" name="s3_secret_key" autocomplete="off"></div>
+            </div>
+            <div id="dr-local" class="form-grid" hidden>
+                <div><label for="dr_local_path">Local path</label><input type="text" id="dr_local_path" name="local_path" placeholder="/backups/restic"></div>
+            </div>
+            <div class="form-grid">
+                <div><label for="dr_restic_pw">Restic password</label><input type="password" id="dr_restic_pw" name="restic_password" required autocomplete="off"></div>
+                <div><label for="dr_passphrase">Passphrase</label><input type="password" id="dr_passphrase" name="passphrase" required autocomplete="off"></div>
+            </div>
+            <button type="submit" class="icon-btn">
+                <i data-lucide="search" class="icon-md"></i> Fetch and preview
+            </button>
+        </form>
+        <div id="config-restore-result" class="mt-05"></div>
+    </details>
+</section>
 {% endblock %}

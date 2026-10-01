@@ -1,81 +1,91 @@
 {% extends "base.html" %}
+{% import "partials/airmail.html" as mail %}
 {% block title %}Users — MFB{% endblock %}
+{% block body_class %}page-wide page-ledger{% endblock %}
 {% block content %}
-<h2><i data-lucide="users" class="icon-xl icon-inline"></i>Users</h2>
+<header class="page-head">
+    <div class="page-head-text">
+        <h1 class="page-title">Users</h1>
+        <p class="page-summary num">{{ users | length }} user{{ '' if users | length == 1 else 's' }}</p>
+    </div>
+    <div class="page-actions">
+        <a href="#add-user" class="icon-btn"><i data-lucide="user-plus" class="icon-sm"></i> Add user</a>
+    </div>
+</header>
 
-
-<div class="table-wrap">
-<table>
+<div class="table-wrap ledger-wrap">
+<table class="ledger ledger-admin">
+    <caption class="sr-only">Users</caption>
     <thead>
         <tr>
-            <th>Username</th>
-            <th>Role</th>
-            <th>Status</th>
-            <th>Accounts</th>
-            <th>Mail store</th>
-            <th class="text-right">Actions</th>
+            <th scope="col" class="ledger-state">Status</th>
+            <th scope="col" class="cell-wrap">Username</th>
+            <th scope="col">Role</th>
+            <th scope="col" class="ledger-num">Accounts</th>
+            <th scope="col">Mail store</th>
+            <th scope="col" class="ledger-action"><span class="sr-only">Actions</span></th>
         </tr>
     </thead>
     <tbody>
         {% for u in users %}
-        <tr {% if not u.enabled %}class="row-disabled"{% endif %}>
-            <td>{{ u.username }}</td>
+        <tr class="ledger-row{% if not u.enabled %} row-disabled{% endif %}">
+            <td class="ledger-state">
+                {% if u.migrating %}
+                {{ mail.stamp({"badge": "stamp-active", "icon": "loader", "spin": true, "label": "Migrating"}) }}
+                {% elif u.enabled %}
+                <span class="state-calm">Active</span>
+                {% else %}
+                {{ mail.stamp({"badge": "stamp-muted", "icon": "pause-circle", "spin": false, "label": "Disabled"}) }}
+                {% endif %}
+            </td>
+            <td class="cell-wrap ledger-mailbox"><span class="ledger-name">{{ u.username }}</span></td>
             <td>
                 {% if u.role.value == "admin" %}
-                <span class="badge badge-admin"><i data-lucide="shield" class="icon-sm"></i> admin</span>
+                <span class="tag tag-strong"><i data-lucide="shield" class="icon-sm"></i> admin</span>
                 {% else %}
-                <span class="badge badge-user"><i data-lucide="user" class="icon-sm"></i> user</span>
+                <span class="tag"><i data-lucide="user" class="icon-sm"></i> user</span>
                 {% endif %}
             </td>
-            <td>
-                {% if u.migrating %}
-                <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm"></i> Migrating</span>
-                {% elif u.enabled %}
-                <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> Active</span>
-                {% else %}
-                <span class="badge badge-disabled"><i data-lucide="pause-circle" class="icon-sm"></i> Disabled</span>
-                {% endif %}
-            </td>
-            <td>{{ u.accounts | length }}</td>
+            <td class="ledger-num" data-label="Accounts">{{ u.accounts | length }}</td>
             <td>{{ u.store.name if u.store else '—' }}</td>
-            <td>
+            <td class="ledger-action">
                 {% if not u.migrating %}
                 <div class="actions flex-end">
                     <div class="dropdown-wrap">
-                        <button class="icon-btn" onclick="toggleDropdown(this, event)">
+                        <button class="icon-btn" data-click="toggleDropdown" data-args='["$el", "$event"]' aria-label="Actions for {{ u.username }}" title="Actions">
                             <i data-lucide="more-vertical" class="icon-md"></i>
                         </button>
                         <div class="dropdown-menu hidden">
-                            <a class="dropdown-item" onclick="closeDropdown(); toggleRow('edit-{{ u.id }}')">
-                                <i data-lucide="pencil" class="icon-sm"></i> Edit User
+                            <a class="dropdown-item" data-click="toggleRow" data-args='["edit-{{ u.id }}"]' data-close-dropdown>
+                                <i data-lucide="pencil" class="icon-sm"></i> Edit user
                             </a>
-                            <a class="dropdown-item" onclick="closeDropdown(); toggleRow('pw-{{ u.id }}')">
-                                <i data-lucide="key-round" class="icon-sm"></i> Change Password
+                            <a class="dropdown-item" data-click="toggleRow" data-args='["pw-{{ u.id }}"]' data-close-dropdown>
+                                <i data-lucide="key-round" class="icon-sm"></i> Change password
                             </a>
                             <hr class="dropdown-divider">
-                            <a class="dropdown-item" onclick="closeDropdown(); toggleRow('migrate-{{ u.id }}')">
-                                <i data-lucide="truck" class="icon-sm"></i> Change Store
+                            <a class="dropdown-item" data-click="toggleRow" data-args='["migrate-{{ u.id }}"]' data-close-dropdown>
+                                <i data-lucide="truck" class="icon-sm"></i> Change store
                             </a>
                             {% if u.role.value != "admin" %}
-                            <a class="dropdown-item" onclick="closeDropdown(); toggleRow('stores-{{ u.id }}')">
-                                <i data-lucide="hard-drive" class="icon-sm"></i> Allowed Stores
+                            <a class="dropdown-item" data-click="toggleRow" data-args='["stores-{{ u.id }}"]' data-close-dropdown>
+                                <i data-lucide="hard-drive" class="icon-sm"></i> Allowed stores
                             </a>
-                            <a class="dropdown-item" title="Allowed repositories" onclick="closeDropdown(); toggleRow('repos-{{ u.id }}')">
-                                <i data-lucide="cloud-upload" class="icon-sm"></i> Allowed Repositories
+                            <a class="dropdown-item" title="Allowed repositories" data-click="toggleRow" data-args='["repos-{{ u.id }}"]' data-close-dropdown>
+                                <i data-lucide="cloud-upload" class="icon-sm"></i> Allowed repositories
                             </a>
                             {% endif %}
                             {% if u.id != user.id %}
                             <hr class="dropdown-divider">
                             {% if u.enabled %}
-                            <a class="dropdown-item" onclick="closeDropdown(); document.querySelector('.toggle-form-{{ u.id }}').submit()">
+                            <a class="dropdown-item" data-close-dropdown data-submit-form=".toggle-form-{{ u.id }}">
                                 <i data-lucide="user-x" class="icon-sm"></i> Disable
                             </a>
                             {% else %}
-                            <a class="dropdown-item" onclick="closeDropdown(); document.querySelector('.toggle-form-{{ u.id }}').submit()">
+                            <a class="dropdown-item" data-close-dropdown data-submit-form=".toggle-form-{{ u.id }}">
                                 <i data-lucide="user-check" class="icon-sm"></i> Enable
                             </a>
                             {% endif %}
-                            <a class="dropdown-item dropdown-danger" onclick="closeDropdown(); if(confirm('Delete user {{ u.username }}? Their Dovecot home goes too, including anything staged for restore. Backed-up account mail is not touched. This cannot be undone.')) document.querySelector('.delete-form-{{ u.id }}').submit()">
+                            <a class="dropdown-item dropdown-danger" data-close-dropdown data-confirm="Delete user {{ u.username }}? Their Dovecot home goes too, including anything staged for restore. Backed-up account mail is not touched. This cannot be undone." data-submit-form=".delete-form-{{ u.id }}">
                                 <i data-lucide="trash-2" class="icon-sm"></i> Delete
                             </a>
                             {% endif %}
@@ -91,14 +101,14 @@
                 {% endif %}
             </td>
         </tr>
-        <tr id="edit-{{ u.id }}" class="hidden">
+        <tr id="edit-{{ u.id }}" class="expand-row hidden">
             <td colspan="6">
-                <form method="post" action="/admin/users/{{ u.id }}/edit" class="flex gap-05 items-end flex-wrap">
-                    <div class="flex-1 min-w-200">
+                <form method="post" action="/admin/users/{{ u.id }}/edit" class="quick-add-row">
+                    <div>
                         <label for="username_{{ u.id }}">Username</label>
                         <input type="text" id="username_{{ u.id }}" name="username" value="{{ u.username }}">
                     </div>
-                    <div class="min-w-150">
+                    <div>
                         <label for="role_{{ u.id }}">Role</label>
                         <select id="role_{{ u.id }}" name="role">
                             <option value="user" {% if u.role.value == "user" %}selected{% endif %}>User</option>
@@ -111,18 +121,18 @@
                 </form>
             </td>
         </tr>
-        <tr id="pw-{{ u.id }}" class="hidden">
+        <tr id="pw-{{ u.id }}" class="expand-row hidden">
             <td colspan="6">
-                <form method="post" action="/admin/users/{{ u.id }}/password" class="flex gap-05 items-end flex-wrap">
+                <form method="post" action="/admin/users/{{ u.id }}/password" class="quick-add-row">
                     {% if not admin_verified %}
-                    <div class="flex-1 min-w-200">
+                    <div>
                         <label for="admin_password_{{ u.id }}">
                             <i data-lucide="shield-check" class="icon-sm icon-inline"></i>Your admin password
                         </label>
                         <input type="password" id="admin_password_{{ u.id }}" name="admin_password" required placeholder="Confirm your identity">
                     </div>
                     {% endif %}
-                    <div class="flex-1 min-w-200">
+                    <div>
                         <label for="new_password_{{ u.id }}">New password for {{ u.username }}</label>
                         <input type="password" id="new_password_{{ u.id }}" name="new_password" required minlength="6" placeholder="Min 6 characters">
                     </div>
@@ -131,11 +141,11 @@
                     </button>
                 </form>
                 {% if admin_verified %}
-                <small class="text-muted"><i data-lucide="check-circle" class="icon-sm"></i> Identity verified</small>
+                <small class="text-muted expand-note"><i data-lucide="check-circle" class="icon-sm icon-inline"></i> Identity verified</small>
                 {% endif %}
             </td>
         </tr>
-        <tr id="migrate-{{ u.id }}" {% if not u.migrating %}class="hidden"{% endif %}>
+        <tr id="migrate-{{ u.id }}" class="expand-row{% if not u.migrating %} hidden{% endif %}">
             <td colspan="6">
                 {% if u.migrating %}
                 <div hx-get="/admin/users/{{ u.id }}/migration-progress" hx-trigger="every 2s" hx-swap="innerHTML">
@@ -143,11 +153,10 @@
                 </div>
                 {% else %}
                 <form method="post" action="/admin/users/{{ u.id }}/migrate"
-                    data-confirm="Migrate all mail for {{ u.username }}? Sync and IMAP will be blocked during migration."
-                    onsubmit="return confirm(this.dataset.confirm)">
-                    <label>Current: <strong>{{ u.store.name if u.store else '—' }}</strong> — Move to</label>
-                    <div class="flex gap-05 items-end">
-                        <select name="target_store_id" class="mb-0">
+                    data-confirm="Migrate all mail for {{ u.username }}? Sync and IMAP will be blocked during migration.">
+                    <label class="expand-label">Current: <strong>{{ u.store.name if u.store else '—' }}</strong> — Move to</label>
+                    <div class="quick-add-row">
+                        <select name="target_store_id" class="mb-0" aria-label="Move to">
                             {% for s in stores %}
                             {% if not u.store or s.id != u.store.id %}
                             <option value="{{ s.id }}">{{ s.name }} ({{ s.path }})</option>
@@ -162,11 +171,11 @@
                 {% endif %}
             </td>
         </tr>
-        <tr id="stores-{{ u.id }}" class="hidden">
+        <tr id="stores-{{ u.id }}" class="expand-row hidden">
             <td colspan="6">
                 <form method="post" action="/admin/users/{{ u.id }}/allowed-stores">
-                    <label><strong>Allowed stores for {{ u.username }}:</strong></label>
-                    <div class="flex gap-05 flex-wrap mt-025">
+                    <p class="expand-label">Allowed stores for <strong>{{ u.username }}</strong>:</p>
+                    <div class="pill-row">
                         {% for s in stores %}
                         <label class="checkbox-pill">
                             <input type="checkbox" name="store_ids" value="{{ s.id }}"
@@ -181,11 +190,11 @@
                 </form>
             </td>
         </tr>
-        <tr id="repos-{{ u.id }}" class="hidden">
+        <tr id="repos-{{ u.id }}" class="expand-row hidden">
             <td colspan="6">
                 <form method="post" action="/admin/users/{{ u.id }}/allowed-repositories">
-                    <label><strong>Allowed repositories for {{ u.username }}:</strong></label>
-                    <div class="flex gap-05 flex-wrap mt-025">
+                    <p class="expand-label">Allowed repositories for <strong>{{ u.username }}</strong>:</p>
+                    <div class="pill-row">
                         {% for r in repositories %}
                         <label class="checkbox-pill">
                             <input type="checkbox" name="repository_ids" value="{{ r.id }}"
@@ -208,11 +217,10 @@
 </table>
 </div>
 
-<hr>
-
-<h3><i data-lucide="user-plus" class="icon-lg icon-inline"></i>Add User</h3>
+<section class="quick-add" id="add-user" aria-labelledby="add-user-title">
+<h2 class="quick-add-title" id="add-user-title"><i data-lucide="user-plus" class="icon-md"></i>Add user</h2>
 <form method="post" action="/admin/users/new">
-    <div class="grid-2">
+    <div class="quick-add-row">
         <div>
             <label for="username">Username</label>
             <input type="text" id="username" name="username" required>
@@ -221,8 +229,6 @@
             <label for="password">Password</label>
             <input type="password" id="password" name="password" required minlength="6">
         </div>
-    </div>
-    <div class="grid-3-auto">
         <div>
             <label for="role">Role</label>
             <select id="role" name="role">
@@ -244,4 +250,5 @@
         </button>
     </div>
 </form>
+</section>
 {% endblock %}

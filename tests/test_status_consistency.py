@@ -162,8 +162,23 @@ def _text(fragment: str) -> str:
     return " ".join(re.sub(r"<[^>]+>", " ", fragment).split())
 
 
-def _block(html: str, heading: str) -> str:
-    m = re.search(heading + r".*?</details>", html, re.S)
+def _block(html: str, heading: str, end: str = "</details>") -> str:
+    m = re.search(heading + r".*?" + end, html, re.S)
+    return m.group(0) if m else ""
+
+
+def _stage(html: str, stage: str) -> str:
+    m = re.search(rf'data-stage="{stage}".*?</li>', html, re.S)
+    return m.group(0) if m else ""
+
+
+def _envelope(html: str, account_id: str) -> str:
+    m = re.search(
+        rf'<article class="envelope envelope-mailbox[^"]*" data-account-id="{account_id}"'
+        r".*?</article>",
+        html,
+        re.S,
+    )
     return m.group(0) if m else ""
 
 
@@ -246,24 +261,38 @@ def test_every_surface_agrees(client, db_session, default_store, case):
     )
     _login(client, viewer.username)
 
-    # Accounts table: the resolver's badge and label.
+    # Accounts table: the resolver's stamp and label.
     table = client.get("/partials/accounts-table").text
-    assert f'<span class="badge {status.badge}"' in table
+    assert f'<span class="stamp {status.badge}"' in table
     assert status.label in table
 
-    # Dashboard: in Needs attention iff needs_attention; chain Local backup text.
+    # Home: an admin gets the ledger (in Needs attention iff needs_attention),
+    # anyone else the owner home (the envelope is flagged iff the same). Both
+    # carry the route strip with the same Local backup text.
     dash = client.get("/").text
-    attention = _block(dash, "Needs attention")
-    assert (account.name in attention) == status.needs_attention
-    local = re.search(r"</i> Local backup.*?</div>\s*</a>", dash, re.S).group(0)
+    if viewer.role == UserRole.admin:
+        attention = _block(dash, "Needs attention", "</tbody>")
+        assert (account.name in attention) == status.needs_attention
+    else:
+        envelope = _envelope(dash, account.id)
+        assert envelope, case
+        assert f'<span class="stamp {status.badge}"' in envelope
+        assert ("envelope-needs-attention" in envelope) == status.needs_attention
+        attention = envelope if status.needs_attention else ""
+    local = _stage(dash, "local")
     assert _text(local).endswith(_expected_local_text(status.tone, status.state))
     local_tone = status.tone if status.tone in (Tone.error, Tone.attention) else Tone.ok
-    assert f'<span class="stats-dot {TONE_DOT[local_tone.value]}"></span>' in local
+    assert f'<span class="mark {TONE_DOT[local_tone.value]}" aria-hidden="true"></span>' in local
 
-    # Detail page: Local sync dot tone + hero container class.
+    # /mine: the owner view of the viewer's own mailboxes, same stamp.
+    mine = _envelope(client.get("/mine").text, account.id)
+    assert f'<span class="stamp {status.badge}"' in mine
+
+    # Detail page: Local sync mark tone + hero container class.
     detail = client.get(f"/accounts/{account.id}").text
     dot = re.search(
-        r'<span class="stats-dot ([^"]*)"></span>\s*<span class="health-label">Local sync',
+        r'<span class="mark ([^"]*)" aria-hidden="true"></span>\s*'
+        r'<span class="health-label">Local sync',
         detail,
     ).group(1)
     assert dot.strip() == TONE_DOT[status.tone.value]
@@ -285,16 +314,18 @@ def test_every_surface_agrees(client, db_session, default_store, case):
     # dashboard's Recent activity and on the detail Sync history.
     if last_job is not None:
         outcome = resolve_job_outcome(last_job)
-        activity = _block(dash, "Recent activity")
-        assert f'<span class="badge {outcome.badge}">' in activity
+        activity = _block(dash, "Recent activity", "</section>")
+        stamp_head = f'<span class="stamp {outcome.badge}"><i data-lucide="{outcome.icon}"'
+        assert stamp_head in activity
         history = detail[detail.index("Sync history") :]
-        # A standalone badge there, so sentence case (Recent activity keeps
-        # the lower-case phrase that follows the mailbox name).
-        assert f'<span class="badge {outcome.badge}">{outcome.label.capitalize()}</span>' in history
-        assert f"{outcome.label}\n" in activity
+        # A standalone stamp there, so sentence case (Recent activity keeps
+        # the resolver's lower-case phrase).
+        assert f"></i> {outcome.label.capitalize()}</span>" in history
+        assert stamp_head in history
+        assert f"></i> {outcome.label}</span>" in activity
         if not (status.tone == Tone.error or last_job.failure_kind == "error"):
-            assert "badge-error" not in activity
-            assert "badge-error" not in history
+            assert "stamp-error" not in activity
+            assert "stamp-error" not in history
 
     if shared:
         # A group member can see the mailbox but cannot edit or reconnect it.
@@ -308,7 +339,11 @@ def test_every_surface_agrees(client, db_session, default_store, case):
 
     # System strip (admin-only): errors iff tone error, sign-in iff sign_in_needed.
     strip = client.get("/partials/system-status").text
-    error_rows = re.findall(r'text-error-state">\s*&#10007; <a href="/accounts/([^"]+)"', strip)
-    signin_rows = re.findall(r'text-warn-state">\s*&#9888; <a href="/accounts/([^"]+)"', strip)
+    error_rows = re.findall(
+        r'class="health-account health-account-error" data-account-id="([^"]+)"', strip
+    )
+    signin_rows = re.findall(
+        r'class="health-account health-account-attention" data-account-id="([^"]+)"', strip
+    )
     assert (account.id in error_rows) == (status.tone == Tone.error)
     assert (account.id in signin_rows) == (status.state == MailboxState.sign_in_needed)

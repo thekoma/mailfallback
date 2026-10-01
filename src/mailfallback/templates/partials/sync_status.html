@@ -1,14 +1,15 @@
+{% import "partials/airmail.html" as mail %}
 {% if state == "syncing" %}
 <div id="sync-status" hx-get="/accounts/{{ account_id }}/sync-status"
     hx-trigger="every 3s" hx-swap="outerHTML">
-    <span class="badge badge-syncing"><i data-lucide="loader" class="icon-sm spin"></i> syncing</span>
+    {{ mail.stamp({"badge": "stamp-active", "icon": "loader", "spin": true, "label": "syncing"}) }}
 </div>
 {% elif state == "error" %}
 <div id="sync-status">
-    <span class="badge badge-error"><i data-lucide="alert-circle" class="icon-sm"></i> error</span>
+    {{ mail.stamp({"badge": "stamp-error", "icon": "alert-circle", "spin": false, "label": "error"}) }}
 </div>
 {% else %}
 <div id="sync-status">
-    <span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i> idle</span>
+    {{ mail.stamp({"badge": "stamp-ok", "icon": "check-circle", "spin": false, "label": "idle"}) }}
 </div>
 {% endif %}

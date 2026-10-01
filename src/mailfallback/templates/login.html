@@ -1,25 +1,27 @@
 {% extends "base.html" %}
 {% block title %}Login — MFB{% endblock %}
 {% block content %}
-<article class="container-narrow">
-    <header class="text-center">
-        <i data-lucide="mail-check" class="icon-hero"></i>
-        <h2 class="mb-0">MailFallBack</h2>
-        <small class="text-muted">Your email safety net</small>
-    </header>
+<article class="envelope login-envelope" aria-labelledby="login-title">
+    <div class="login-head">
+        <span class="brand-mark brand-mark-lg" aria-hidden="true"><i data-lucide="mail-check" class="icon-lg"></i></span>
+        <div>
+            <h1 class="login-title" id="login-title">MailFallBack</h1>
+            <p class="login-tagline">Your email safety net</p>
+        </div>
+    </div>
     {% if error %}
-    <p class="alert-error">{{ error }}</p>
+    <p class="alert-error" role="alert"><i data-lucide="alert-circle" class="icon-sm"></i> {{ error }}</p>
     {% endif %}
-    <form method="post" action="/login">
+    <form method="post" action="/login" class="login-form">
         <label for="username">Username</label>
-        <input type="text" id="username" name="username" required>
+        <input type="text" id="username" name="username" autocomplete="username" required>
         <label for="password">Password</label>
-        <input type="password" id="password" name="password" required>
-        <button type="submit">Login</button>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+        <button type="submit" class="icon-btn primary icon-btn-lg icon-btn-block">Login</button>
     </form>
     {% if oidc_enabled %}
-    <hr>
-    <a href="/auth/oidc/login" role="button" class="secondary outline text-center w-full">Login with SSO</a>
+    <div class="login-or"><span>or</span></div>
+    <a href="/auth/oidc/login" class="icon-btn icon-btn-lg icon-btn-block"><i data-lucide="key-round" class="icon-sm"></i> Login with SSO</a>
     {% endif %}
 </article>
 {% endblock %}

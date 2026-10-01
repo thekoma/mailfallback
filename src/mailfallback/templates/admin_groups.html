@@ -1,60 +1,63 @@
 {% extends "base.html" %}
 {% block title %}Groups — MFB{% endblock %}
+{% block body_class %}page-wide page-ledger{% endblock %}
 {% block content %}
-<h2><i data-lucide="users" class="icon-xl icon-inline"></i>Groups</h2>
+<header class="page-head">
+    <div class="page-head-text">
+        <h1 class="page-title">Groups</h1>
+        <p class="page-summary num">{{ groups | length }} group{{ '' if groups | length == 1 else 's' }}</p>
+    </div>
+    {% if user.role.value == "admin" %}
+    <div class="page-actions">
+        <a href="#create-group" class="icon-btn"><i data-lucide="plus-circle" class="icon-sm"></i> Create group</a>
+    </div>
+    {% endif %}
+</header>
 
-<p class="text-muted">Groups let you share account access with multiple users. Members of a group can see all accounts assigned to it. SSO-synced groups auto-update membership from OIDC claims.</p>
+<p class="page-lede">Groups let you share account access with multiple users. Members of a group can see all accounts assigned to it. SSO-synced groups auto-update membership from OIDC claims.</p>
 
-<div class="table-wrap">
-<table>
+<div class="table-wrap ledger-wrap">
+<table class="ledger ledger-admin">
+    <caption class="sr-only">Groups</caption>
     <thead>
         <tr>
-            <th>Name</th>
-            <th>Owner</th>
-            <th>Members</th>
-            <th>Accounts</th>
-            <th>SSO Sync</th>
-            <th class="text-right">Actions</th>
+            <th scope="col" class="cell-wrap">Name</th>
+            <th scope="col">Owner</th>
+            <th scope="col" class="ledger-num">Members</th>
+            <th scope="col" class="ledger-num">Accounts</th>
+            <th scope="col">SSO Sync</th>
+            <th scope="col" class="ledger-action"><span class="sr-only">Actions</span></th>
         </tr>
     </thead>
     <tbody>
         {% for g in groups %}
-        <tr>
-            <td>{{ g.name }}</td>
-            <td><span class="badge badge-user">{{ g.owner.username }}</span></td>
-            <td>{{ g.members | length }}</td>
-            <td>{{ g.accounts | length }}</td>
+        <tr class="ledger-row">
+            <td class="cell-wrap ledger-mailbox"><span class="ledger-name">{{ g.name }}</span></td>
+            <td><span class="owner">{{ g.owner.username }}</span></td>
+            <td class="ledger-num" data-label="Members">{{ g.members | length }}</td>
+            <td class="ledger-num" data-label="Accounts">{{ g.accounts | length }}</td>
             <td>
                 {% if g.sso_sync %}
-                <span class="badge badge-admin"><i data-lucide="refresh-cw" class="icon-sm"></i> SSO</span>
+                <span class="tag tag-strong"><i data-lucide="refresh-cw" class="icon-sm"></i> SSO</span>
                 {% else %}
                 <span class="text-muted">—</span>
                 {% endif %}
             </td>
-            <td>
+            <td class="ledger-action">
                 <div class="actions flex-end">
-                    <button class="icon-btn" title="Edit" onclick="toggleRow('edit-{{ g.id }}')">
+                    <button class="icon-btn" title="Edit" aria-label="Edit {{ g.name }}" data-click="toggleRow" data-args='["edit-{{ g.id }}"]'>
                         <i data-lucide="pencil" class="icon-md"></i>
                     </button>
-                    {% if user.role.value == "admin" %}
-                    <form method="post" action="/admin/groups/{{ g.id }}/delete" class="inline-form"
-                        data-confirm="Delete group {{ g.name }}?"
-                        onsubmit="return confirm(this.dataset.confirm)">
-                        <button type="submit" class="icon-btn danger" title="Delete">
-                            <i data-lucide="trash-2" class="icon-md"></i>
-                        </button>
-                    </form>
-                    {% endif %}
                 </div>
             </td>
         </tr>
-        <tr id="edit-{{ g.id }}" class="hidden">
+        <tr id="edit-{{ g.id }}" class="expand-row hidden">
             <td colspan="6">
                 <form method="post" action="/admin/groups/{{ g.id }}/edit">
-                    <div class="grid-2 mt-025">
+                    <div class="contents-grid">
                         <div>
-                            <label><strong>Members:</strong></label>
-                            <div class="flex gap-05 flex-wrap mt-025">
+                            <p class="expand-label">Members:</p>
+                            <div class="pill-row">
                                 {% for u in all_users %}
                                 <label class="checkbox-pill">
                                     <input type="checkbox" name="member_ids" value="{{ u.id }}"
@@ -65,8 +68,8 @@
                             </div>
                         </div>
                         <div>
-                            <label><strong>Visible accounts:</strong></label>
-                            <div class="flex gap-05 flex-wrap mt-025">
+                            <p class="expand-label">Visible accounts:</p>
+                            <div class="pill-row">
                                 {% for a in all_accounts %}
                                 <label class="checkbox-pill">
                                     <input type="checkbox" name="account_ids" value="{{ a.id }}"
@@ -77,7 +80,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="mt-05">
+                    <div class="pill-row expand-gap">
                         <label class="checkbox-pill">
                             <input type="checkbox" name="sso_sync" value="1"
                                 {% if g.sso_sync %}checked{% endif %}>
@@ -88,6 +91,18 @@
                         <i data-lucide="save" class="icon-md"></i> Save
                     </button>
                 </form>
+                {% if user.role.value == "admin" %}
+                <div class="danger-zone danger-zone-inline">
+                    <p class="danger-title"><i data-lucide="trash-2" class="icon-md"></i>Delete group</p>
+                    <p>Members lose the shared view of this group's mailboxes. The mailboxes and their mail are not touched.</p>
+                    <form method="post" action="/admin/groups/{{ g.id }}/delete" class="inline-form"
+                        data-confirm="Delete group {{ g.name }}?">
+                        <button type="submit" class="icon-btn danger" aria-label="Delete {{ g.name }}">
+                            <i data-lucide="trash-2" class="icon-md"></i> Delete group
+                        </button>
+                    </form>
+                </div>
+                {% endif %}
             </td>
         </tr>
         {% endfor %}
@@ -103,10 +118,10 @@
 </div>
 
 {% if user.role.value == "admin" %}
-<hr>
-<h3><i data-lucide="plus-circle" class="icon-lg icon-inline"></i>Create Group</h3>
+<section class="quick-add" id="create-group" aria-labelledby="create-group-title">
+<h2 class="quick-add-title" id="create-group-title"><i data-lucide="plus-circle" class="icon-md"></i>Create group</h2>
 <form method="post" action="/admin/groups/new">
-    <div class="grid-3-auto">
+    <div class="quick-add-row">
         <div>
             <label for="group_name">Name</label>
             <input type="text" id="group_name" name="name" required>
@@ -119,16 +134,14 @@
                 {% endfor %}
             </select>
         </div>
-        <div>
-            <label>&nbsp;</label>
-            <label class="checkbox-pill">
-                <input type="checkbox" name="sso_sync" value="1"> SSO sync
-            </label>
-        </div>
+        <label class="checkbox-pill quick-add-pill">
+            <input type="checkbox" name="sso_sync" value="1"> SSO sync
+        </label>
         <button type="submit" class="icon-btn primary">
             <i data-lucide="plus-circle" class="icon-md"></i> Create
         </button>
     </div>
 </form>
+</section>
 {% endif %}
 {% endblock %}

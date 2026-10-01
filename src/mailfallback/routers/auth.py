@@ -45,8 +45,10 @@ def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     request.session["user_id"] = user.id
-    if user.preferences:
-        request.session["theme"] = user.preferences.get("theme", "light")
+    # Only an explicit choice pins the theme; otherwise the page follows
+    # the browser (prefers-color-scheme).
+    if (user.preferences or {}).get("theme"):
+        request.session["theme"] = user.preferences["theme"]
     from mailfallback.services.audit_service import log_action
 
     log_action(
@@ -355,6 +357,8 @@ async def oidc_callback(request: Request, db: Session = Depends(get_db)):
     )
 
     request.session["user_id"] = user.id
-    if user.preferences:
-        request.session["theme"] = user.preferences.get("theme", "light")
+    # Only an explicit choice pins the theme; otherwise the page follows
+    # the browser (prefers-color-scheme).
+    if (user.preferences or {}).get("theme"):
+        request.session["theme"] = user.preferences["theme"]
     return RedirectResponse("/")

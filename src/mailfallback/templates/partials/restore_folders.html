@@ -1,17 +1,19 @@
 <div id="folder-panel">
     {% if folders %}
-    <table class="compact">
-        <thead><tr><th></th><th>Folder</th><th>Messages</th></tr></thead>
+    <div class="table-wrap ledger-wrap">
+    <table class="ledger ledger-compact">
+        <thead><tr><th scope="col"><span class="sr-only">Include</span></th><th scope="col">Folder</th><th scope="col" class="ledger-num">Messages</th></tr></thead>
         <tbody>
         {% for f in folders %}
-        <tr>
+        <tr class="ledger-row">
             <td><input type="checkbox" name="selected_folders" value="{{ f.name }}" checked></td>
             <td>{{ f.name }}</td>
-            <td>{{ f.messages }}</td>
+            <td class="ledger-num">{{ f.messages }}</td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
+    </div>
     {% else %}
     <p class="text-muted">No folders found.</p>
     {% endif %}

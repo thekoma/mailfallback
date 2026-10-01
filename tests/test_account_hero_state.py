@@ -72,7 +72,9 @@ def _login(client, username, password):
 
 def _auth_dot(html: str) -> str:
     m = re.search(
-        r'<span class="stats-dot ([^"]*)"></span>\s*<span class="health-label">Sign-in</span>', html
+        r'<span class="mark ([^"]*)" aria-hidden="true"></span>\s*'
+        r'<span class="health-label">Sign-in</span>',
+        html,
     )
     assert m, "Sign-in health row not found"
     return m.group(1)
@@ -106,7 +108,7 @@ def test_health_auth_dot_warns_on_needs_reauth(client, db_session, oauth_account
     db_session.commit()
     _login(client, "hadmin", "pass")
     html = client.get(f"/accounts/{oauth_account.id}").text
-    assert _auth_dot(html) == "stats-dot-warning"
+    assert _auth_dot(html) == "mark-attention"
     assert _hero_class(html) == "sign-in-needed"
 
 
@@ -121,12 +123,13 @@ def test_health_auth_dot_warns_on_rejected_app_password(client, db_session, defa
         last_error="AUTHENTICATIONFAILED Invalid credentials",
     )
     _login(client, "hadmin", "pass")
-    assert _auth_dot(client.get(f"/accounts/{ok.id}").text) == "stats-dot-ok"
+    assert _auth_dot(client.get(f"/accounts/{ok.id}").text) == "mark-ok"
     html = client.get(f"/accounts/{bad.id}").text
-    assert _auth_dot(html) == "stats-dot-warning"
-    # Local sync dot follows the resolver's tone (error → red)
+    assert _auth_dot(html) == "mark-attention"
+    # Local sync mark follows the resolver's tone (error → the red block)
     assert re.search(
-        r'<span class="stats-dot stats-dot-error"></span>\s*<span class="health-label">Local sync',
+        r'<span class="mark mark-error" aria-hidden="true"></span>\s*'
+        r'<span class="health-label">Local sync',
         html,
     )
 
@@ -175,7 +178,11 @@ def test_hero_error_headline_is_classified_not_raw(client, db_session, default_s
     )
     _login(client, "hadmin", "pass")
     panel = client.get(f"/accounts/{bad.id}/partials/sync-panel").text
-    assert "<strong>Sync failed</strong>" in panel
+    # The hero's title is the resolver's stamp.
+    assert (
+        '<h2 class="hero-title"><span class="stamp stamp-error">'
+        '<i data-lucide="alert-circle" class="icon-sm"></i> Sync failed</span></h2>'
+    ) in panel
     assert (
         '<p class="hero-error-headline"><strong>The server rejected the password.</strong></p>'
         in panel
@@ -253,7 +260,11 @@ def test_user_stop_hero_is_stopped_with_sync_now(client, db_session, default_sto
     assert "Sync stopped" in html
     assert "The last sync was stopped. The next scheduled sync runs normally." in html
     assert f'hx-post="/api/sync/{a.id}"' in html
-    assert "if(d.warning){showToast(d.warning,'error')}" in html
+    # The pause-override warning is still toasted after the request — now
+    # declared on the button and handled by core.js, not an inline script.
+    assert re.search(rf'hx-post="/api/sync/{a.id}"[^>]*data-after-warning-toast', html), (
+        "Sync now must toast the pause-override warning"
+    )
 
 
 def test_stale_account_hero_is_out_of_date(client, db_session, default_store):
@@ -429,7 +440,7 @@ def test_hero_headline_matches_dashboard_when_the_log_has_two_errors(
     panel = client.get(f"/accounts/{a.id}/partials/sync-panel").text
     headline = re.search(r'<p class="hero-error-headline"><strong>(.*?)</strong>', panel).group(1)
     dash = client.get("/").text
-    reason = re.search(r'<span class="text-small text-muted">— (.*?)</span>', dash).group(1)
+    reason = re.search(r'<span class="ledger-reason">(.*?)</span>', dash).group(1)
     assert headline == reason == "The server rejected the password."
     # Sub-text and buttons follow the same classification, not the network line.
     assert "Check the password, then update it." in panel
@@ -481,7 +492,12 @@ def test_token_refresh_retry_never_claims_expired(client, db_session, default_st
     assert "expired" not in panel
     assert "/auth/google/start" not in panel
     dash = client.get("/").text
-    block = dash[dash.index("Needs attention") : dash.index("</details>")]
+    # The member's home is the owner view: the copy sits on the envelope.
+    block = re.search(
+        rf'<article class="envelope envelope-mailbox[^"]*" data-account-id="{a.id}".*?</article>',
+        dash,
+        re.S,
+    ).group(0)
     assert member_copy in block
     assert "expired" not in block
     assert "/auth/google/start" not in block
@@ -519,8 +535,8 @@ def test_host_error_instruction_follows_the_viewer(client, db_session, default_s
     assert "Ask the mailbox owner or an admin to check the mailbox settings." in panel
     assert "Check the IMAP host" not in panel
     dash = client.get("/").text
-    # Dashboard reason = the headline only, no instruction.
-    assert "— Couldn&#39;t find the IMAP host.</span>" in dash
+    # Home reason = the headline only, no instruction.
+    assert "<p>Couldn&#39;t find the IMAP host.</p>" in dash
     assert "Check the IMAP host" not in dash
 
 
