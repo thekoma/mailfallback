@@ -1,0 +1,997 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-01T17:12:07+00:00",
+  "title": "Design System: MailFallBack",
+  "extensions": {
+    "colorMeta": {
+      "paper": {
+        "role": "neutral",
+        "displayName": "Onionskin",
+        "canonical": "oklch(92.3% 0.019 248.0)",
+        "tonalRamp": [
+          "#050c13",
+          "#1e262e",
+          "#3a434c",
+          "#59626c",
+          "#7a848e",
+          "#9ca6b1",
+          "#c0cbd5",
+          "#e5f0fb"
+        ],
+        "theme": "light"
+      },
+      "paper-dark": {
+        "role": "neutral",
+        "displayName": "Navy-Night Paper",
+        "canonical": "oklch(22.0% 0.047 261.7)",
+        "tonalRamp": [
+          "#020a1e",
+          "#18253c",
+          "#34425b",
+          "#53627c",
+          "#73839f",
+          "#95a6c3",
+          "#b9cae8",
+          "#e6effe"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "paper"
+      },
+      "paper-rail": {
+        "role": "neutral",
+        "displayName": "Rail Onionskin",
+        "canonical": "oklch(89.8% 0.023 248.1)",
+        "tonalRamp": [
+          "#040c14",
+          "#1c2630",
+          "#39434e",
+          "#57636e",
+          "#788490",
+          "#9aa7b3",
+          "#becbd8",
+          "#e3f0fd"
+        ],
+        "theme": "light"
+      },
+      "paper-rail-dark": {
+        "role": "neutral",
+        "displayName": "Night Rail",
+        "canonical": "oklch(20.0% 0.040 259.8)",
+        "tonalRamp": [
+          "#030b1c",
+          "#192538",
+          "#364257",
+          "#546278",
+          "#75839b",
+          "#97a6bf",
+          "#bacae4",
+          "#e5efff"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "paper-rail"
+      },
+      "paper-env": {
+        "role": "neutral",
+        "displayName": "Envelope Stock",
+        "canonical": "oklch(96.4% 0.010 247.9)",
+        "tonalRamp": [
+          "#080c0f",
+          "#21262a",
+          "#3e4347",
+          "#5d6267",
+          "#7e8388",
+          "#a0a6ab",
+          "#c4cad0",
+          "#e9eff5"
+        ],
+        "theme": "light"
+      },
+      "paper-env-dark": {
+        "role": "neutral",
+        "displayName": "Night Envelope Stock",
+        "canonical": "oklch(26.2% 0.055 260.3)",
+        "tonalRamp": [
+          "#010922",
+          "#152540",
+          "#314260",
+          "#4f6281",
+          "#6f83a4",
+          "#91a6c8",
+          "#b5caee",
+          "#e6efff"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "paper-env"
+      },
+      "paper-sunk": {
+        "role": "neutral",
+        "displayName": "Sunk Onionskin",
+        "canonical": "oklch(87.9% 0.026 250.0)",
+        "tonalRamp": [
+          "#040c16",
+          "#1c2631",
+          "#38434f",
+          "#566370",
+          "#778492",
+          "#99a7b5",
+          "#bdcbda",
+          "#e3f0ff"
+        ],
+        "theme": "light"
+      },
+      "paper-sunk-dark": {
+        "role": "neutral",
+        "displayName": "Night Sunk",
+        "canonical": "oklch(30.3% 0.063 261.2)",
+        "tonalRamp": [
+          "#000825",
+          "#132443",
+          "#2f4263",
+          "#4d6285",
+          "#6d83a9",
+          "#8fa6cd",
+          "#b2caf3",
+          "#e6efff"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "paper-sunk"
+      },
+      "stamp-paper": {
+        "role": "neutral",
+        "displayName": "Stamp Face",
+        "canonical": "oklch(98.1% 0.006 255.5)",
+        "tonalRamp": [
+          "#090b0e",
+          "#232528",
+          "#404245",
+          "#5f6165",
+          "#808286",
+          "#a2a5a9",
+          "#c6c9cd",
+          "#eceff3"
+        ],
+        "theme": "light"
+      },
+      "stamp-paper-dark": {
+        "role": "neutral",
+        "displayName": "Night Stamp Face",
+        "canonical": "oklch(30.8% 0.068 260.9)",
+        "tonalRamp": [
+          "#000826",
+          "#112446",
+          "#2d4266",
+          "#4b6288",
+          "#6b83ac",
+          "#8da6d1",
+          "#b0caf7",
+          "#e6efff"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "stamp-paper"
+      },
+      "ink": {
+        "role": "primary",
+        "displayName": "Registry Navy",
+        "canonical": "oklch(27.3% 0.074 263.3)",
+        "tonalRamp": [
+          "#00062a",
+          "#112349",
+          "#2d4169",
+          "#4b618c",
+          "#6b82af",
+          "#8da5d4",
+          "#b0cafb",
+          "#e7effe"
+        ],
+        "theme": "light"
+      },
+      "ink-dark": {
+        "role": "primary",
+        "displayName": "Chalk",
+        "canonical": "oklch(92.5% 0.014 93.0)",
+        "tonalRamp": [
+          "#0d0b05",
+          "#27251e",
+          "#44423a",
+          "#646159",
+          "#858279",
+          "#a8a59c",
+          "#ccc9bf",
+          "#f1eee4"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "ink"
+      },
+      "ink-2": {
+        "role": "primary",
+        "displayName": "Faded Navy",
+        "canonical": "oklch(42.7% 0.064 261.2)",
+        "tonalRamp": [
+          "#000825",
+          "#132444",
+          "#2e4264",
+          "#4d6286",
+          "#6d83a9",
+          "#8fa6ce",
+          "#b2caf3",
+          "#e6effe"
+        ],
+        "theme": "light"
+      },
+      "ink-2-dark": {
+        "role": "primary",
+        "displayName": "Faded Chalk",
+        "canonical": "oklch(79.5% 0.024 258.4)",
+        "tonalRamp": [
+          "#060b15",
+          "#1e2531",
+          "#3a434f",
+          "#59626f",
+          "#7a8391",
+          "#9ca6b4",
+          "#c0cad9",
+          "#e5effe"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "ink-2"
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Hairline Rule",
+        "canonical": "oklch(75.9% 0.047 254.6)",
+        "tonalRamp": [
+          "#000b1e",
+          "#14263c",
+          "#31435b",
+          "#4f637c",
+          "#6f849f",
+          "#91a7c3",
+          "#b5cbe8",
+          "#e4f0ff"
+        ],
+        "theme": "light"
+      },
+      "rule-dark": {
+        "role": "neutral",
+        "displayName": "Hairline Rule (dark)",
+        "canonical": "oklch(36.6% 0.059 259.9)",
+        "tonalRamp": [
+          "#000923",
+          "#132541",
+          "#2f4261",
+          "#4d6283",
+          "#6e83a6",
+          "#90a6cb",
+          "#b3cbf0",
+          "#e5efff"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "rule"
+      },
+      "rule-strong": {
+        "role": "neutral",
+        "displayName": "Strong Rule",
+        "canonical": "oklch(61.7% 0.057 256.4)",
+        "tonalRamp": [
+          "#000a20",
+          "#112540",
+          "#2d4360",
+          "#4c6382",
+          "#6c84a5",
+          "#8ea7c9",
+          "#b1cbef",
+          "#e4f0ff"
+        ],
+        "theme": "light"
+      },
+      "rule-strong-dark": {
+        "role": "neutral",
+        "displayName": "Strong Rule (dark)",
+        "canonical": "oklch(49.1% 0.070 261.1)",
+        "tonalRamp": [
+          "#000827",
+          "#102447",
+          "#2c4267",
+          "#4a6189",
+          "#6b83ad",
+          "#8ca6d2",
+          "#b0caf8",
+          "#e6effe"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "rule-strong"
+      },
+      "ok": {
+        "role": "tertiary",
+        "displayName": "Cancellation Green",
+        "canonical": "oklch(43.3% 0.080 162.1)",
+        "tonalRamp": [
+          "#000f07",
+          "#022d1d",
+          "#064f35",
+          "#306f53",
+          "#539174",
+          "#76b596",
+          "#9adaba",
+          "#c4fee0"
+        ],
+        "theme": "light"
+      },
+      "ok-dark": {
+        "role": "tertiary",
+        "displayName": "Cancellation Green (dark)",
+        "canonical": "oklch(80.6% 0.093 162.5)",
+        "tonalRamp": [
+          "#000f07",
+          "#022d1d",
+          "#054f35",
+          "#207151",
+          "#479472",
+          "#6bb894",
+          "#8fddb7",
+          "#c3fee0"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "ok"
+      },
+      "active": {
+        "role": "tertiary",
+        "displayName": "Transit Steel",
+        "canonical": "oklch(45.1% 0.102 244.7)",
+        "tonalRamp": [
+          "#000c1a",
+          "#012742",
+          "#04456f",
+          "#246697",
+          "#4888bb",
+          "#6bace1",
+          "#98d0ff",
+          "#e1f1ff"
+        ],
+        "theme": "light"
+      },
+      "active-dark": {
+        "role": "tertiary",
+        "displayName": "Transit Steel (dark)",
+        "canonical": "oklch(80.1% 0.084 242.6)",
+        "tonalRamp": [
+          "#000c19",
+          "#012840",
+          "#0c466a",
+          "#31668d",
+          "#5388b1",
+          "#75acd6",
+          "#99d0fc",
+          "#e0f1ff"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "active"
+      },
+      "attention": {
+        "role": "tertiary",
+        "displayName": "Held Amber",
+        "canonical": "oklch(45.6% 0.099 69.1)",
+        "tonalRamp": [
+          "#140800",
+          "#361f01",
+          "#5d3902",
+          "#855513",
+          "#a9773a",
+          "#ce9a5d",
+          "#f4be81",
+          "#ffebd6"
+        ],
+        "theme": "light"
+      },
+      "attention-dark": {
+        "role": "tertiary",
+        "displayName": "Held Amber (dark)",
+        "canonical": "oklch(84.3% 0.120 82.4)",
+        "tonalRamp": [
+          "#120a00",
+          "#322201",
+          "#563d04",
+          "#7c5b0b",
+          "#a57a14",
+          "#ca9d43",
+          "#f0c269",
+          "#ffeccb"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "attention"
+      },
+      "error": {
+        "role": "tertiary",
+        "displayName": "Return Carmine",
+        "canonical": "oklch(46.2% 0.176 20.1)",
+        "tonalRamp": [
+          "#1e0003",
+          "#4c010e",
+          "#7f021d",
+          "#af2135",
+          "#d74b55",
+          "#fc7479",
+          "#ffb2b1",
+          "#fee9e8"
+        ],
+        "theme": "light"
+      },
+      "error-dark": {
+        "role": "tertiary",
+        "displayName": "Return Carmine (dark)",
+        "canonical": "oklch(79.0% 0.121 20.1)",
+        "tonalRamp": [
+          "#1e0003",
+          "#4c010e",
+          "#751d25",
+          "#9a4044",
+          "#c06263",
+          "#e78485",
+          "#feb2b1",
+          "#ffe8e8"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "error"
+      },
+      "muted": {
+        "role": "tertiary",
+        "displayName": "Unfranked Slate",
+        "canonical": "oklch(47.5% 0.040 259.3)",
+        "tonalRamp": [
+          "#030b1c",
+          "#192538",
+          "#354357",
+          "#546278",
+          "#74839b",
+          "#96a6bf",
+          "#bacae4",
+          "#e5efff"
+        ],
+        "theme": "light"
+      },
+      "muted-dark": {
+        "role": "tertiary",
+        "displayName": "Unfranked Slate (dark)",
+        "canonical": "oklch(74.8% 0.029 260.3)",
+        "tonalRamp": [
+          "#050b17",
+          "#1d2533",
+          "#394252",
+          "#586272",
+          "#798394",
+          "#9ba6b8",
+          "#bfcadc",
+          "#e6efff"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "muted"
+      },
+      "error-wash": {
+        "role": "tertiary",
+        "displayName": "Carmine Wash",
+        "canonical": "rgba(164, 18, 44, 0.07)",
+        "tonalRamp": [
+          "#1e0003",
+          "#4c010e",
+          "#7f021d",
+          "#af2135",
+          "#d74b55",
+          "#fc7479",
+          "#ffb2b1",
+          "#fee9e8"
+        ],
+        "theme": "light"
+      },
+      "error-wash-dark": {
+        "role": "tertiary",
+        "displayName": "Carmine Wash (dark)",
+        "canonical": "rgba(255, 154, 154, 0.09)",
+        "tonalRamp": [
+          "#1e0003",
+          "#4c010e",
+          "#751d25",
+          "#9a4044",
+          "#c06263",
+          "#e78485",
+          "#feb2b1",
+          "#ffe8e8"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "error-wash"
+      },
+      "attention-wash": {
+        "role": "tertiary",
+        "displayName": "Amber Wash",
+        "canonical": "rgba(122, 75, 0, 0.06)",
+        "tonalRamp": [
+          "#140800",
+          "#361f01",
+          "#5d3902",
+          "#855513",
+          "#a9773a",
+          "#ce9a5d",
+          "#f4be81",
+          "#ffebd6"
+        ],
+        "theme": "light"
+      },
+      "attention-wash-dark": {
+        "role": "tertiary",
+        "displayName": "Amber Wash (dark)",
+        "canonical": "rgba(242, 196, 107, 0.07)",
+        "tonalRamp": [
+          "#120a00",
+          "#322201",
+          "#563d04",
+          "#7c5b0b",
+          "#a57a14",
+          "#ca9d43",
+          "#f0c269",
+          "#ffeccb"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "attention-wash"
+      },
+      "par-red": {
+        "role": "secondary",
+        "displayName": "Par-Avion Vermilion",
+        "canonical": "oklch(59.8% 0.189 32.4)",
+        "tonalRamp": [
+          "#1e0100",
+          "#490801",
+          "#7b1503",
+          "#b02408",
+          "#dc482e",
+          "#fd765c",
+          "#fdb5a5",
+          "#fee9e4"
+        ],
+        "theme": "light"
+      },
+      "par-red-dark": {
+        "role": "secondary",
+        "displayName": "Par-Avion Vermilion (dark)",
+        "canonical": "oklch(66.6% 0.167 33.0)",
+        "tonalRamp": [
+          "#1e0100",
+          "#490a01",
+          "#7a1703",
+          "#ab2d13",
+          "#d3533a",
+          "#fc785d",
+          "#feb4a3",
+          "#ffe9e4"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "par-red"
+      },
+      "par-blue": {
+        "role": "secondary",
+        "displayName": "Par-Avion Ultramarine",
+        "canonical": "oklch(46.7% 0.171 265.7)",
+        "tonalRamp": [
+          "#010035",
+          "#040776",
+          "#16339b",
+          "#3257c1",
+          "#517be8",
+          "#7ba2fc",
+          "#b1c9fe",
+          "#e7efff"
+        ],
+        "theme": "light"
+      },
+      "par-blue-dark": {
+        "role": "secondary",
+        "displayName": "Par-Avion Ultramarine (dark)",
+        "canonical": "oklch(66.4% 0.135 267.0)",
+        "tonalRamp": [
+          "#020034",
+          "#0a1765",
+          "#223a88",
+          "#3f5bad",
+          "#5e7dd3",
+          "#7fa1fa",
+          "#b2c8ff",
+          "#e8eefe"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "par-blue"
+      },
+      "focus": {
+        "role": "secondary",
+        "displayName": "Focus Ultramarine",
+        "canonical": "oklch(46.7% 0.171 265.7)",
+        "tonalRamp": [
+          "#010035",
+          "#040776",
+          "#16339b",
+          "#3257c1",
+          "#517be8",
+          "#7ba2fc",
+          "#b1c9fe",
+          "#e7efff"
+        ],
+        "theme": "light"
+      },
+      "focus-dark": {
+        "role": "secondary",
+        "displayName": "Focus Ultramarine (dark)",
+        "canonical": "oklch(78.5% 0.108 269.3)",
+        "tonalRamp": [
+          "#030033",
+          "#121d58",
+          "#2b3c7b",
+          "#495d9e",
+          "#687fc3",
+          "#8aa2e9",
+          "#b4c8fe",
+          "#e8eeff"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "focus"
+      },
+      "selection": {
+        "role": "secondary",
+        "displayName": "Selection Ultramarine",
+        "canonical": "rgba(43, 79, 184, 0.22)",
+        "tonalRamp": [
+          "#010035",
+          "#040776",
+          "#16339b",
+          "#3257c1",
+          "#517be8",
+          "#7ba2fc",
+          "#b1c9fe",
+          "#e7efff"
+        ],
+        "theme": "light"
+      },
+      "selection-dark": {
+        "role": "secondary",
+        "displayName": "Selection Ultramarine (dark)",
+        "canonical": "rgba(157, 182, 255, 0.3)",
+        "tonalRamp": [
+          "#030033",
+          "#121d58",
+          "#2b3c7b",
+          "#495d9e",
+          "#687fc3",
+          "#8aa2e9",
+          "#b4c8fe",
+          "#e8eeff"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "selection"
+      },
+      "overlay": {
+        "role": "neutral",
+        "displayName": "Navy Overlay",
+        "canonical": "rgba(19, 37, 75, 0.42)",
+        "tonalRamp": [
+          "#00062a",
+          "#112349",
+          "#2d4169",
+          "#4b618c",
+          "#6b82af",
+          "#8da5d4",
+          "#b0cafb",
+          "#e7effe"
+        ],
+        "theme": "light"
+      },
+      "overlay-dark": {
+        "role": "neutral",
+        "displayName": "Navy Overlay (dark)",
+        "canonical": "rgba(3, 8, 18, 0.62)",
+        "tonalRamp": [
+          "#050b16",
+          "#1d2631",
+          "#394350",
+          "#586270",
+          "#798392",
+          "#9ba6b5",
+          "#bfcada",
+          "#e5effe"
+        ],
+        "theme": "dark",
+        "lightCounterpart": "overlay"
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Verdict",
+        "purpose": "The owner-home verdict sentence, once per screen, capped at 22ch."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page titles (h1, page head)."
+      },
+      "title-lg": {
+        "displayName": "Title Large",
+        "purpose": "Mailbox names on envelopes, h2."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Section and sheet titles, verdict reason, address-field query text."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Running text; measure held by 46-72ch caps."
+      },
+      "body-sm": {
+        "displayName": "Body Small",
+        "purpose": "Ledger cells, buttons, nav items, metadata, page summaries."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Ledger column heads, route stage names, postmark dates, tags. 12px is the floor."
+      },
+      "stamp": {
+        "displayName": "Stamp",
+        "purpose": "Hand-stamp text only: uppercase, 0.07em tracking, tabular figures."
+      },
+      "postmark-time": {
+        "displayName": "Postmark Time",
+        "purpose": "HH:MM inside the circular postmark (20px on the large postmark)."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Tokens, paths and code only."
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-env",
+        "value": "0 1px 0 rgba(19, 37, 75, 0.06), 0 12px 28px -20px rgba(19, 37, 75, 0.55)",
+        "dark": "0 1px 0 rgba(0, 0, 0, 0.35), 0 14px 30px -20px rgba(0, 0, 0, 0.85)",
+        "purpose": "Envelope drop: envelopes, sheets, framed ledgers."
+      },
+      {
+        "name": "shadow-pop",
+        "value": "0 2px 4px rgba(19, 37, 75, 0.12), 0 18px 40px -16px rgba(19, 37, 75, 0.45)",
+        "dark": "0 2px 4px rgba(0, 0, 0, 0.4), 0 20px 44px -16px rgba(0, 0, 0, 0.9)",
+        "purpose": "Pop slip: dropdown menus, health panel, flatpickr, open mobile drawer, toasts."
+      },
+      {
+        "name": "label-under-edge",
+        "value": "0 1px 0 var(--rule-strong)",
+        "purpose": "Label buttons, segmented choice, provider cards; removed on press."
+      },
+      {
+        "name": "picked-frame",
+        "value": "inset 0 0 0 1px var(--ink)",
+        "purpose": "Picked provider card, checked checkbox pill."
+      },
+      {
+        "name": "stamp-lift",
+        "value": "drop-shadow(0 1px 1px var(--stamp-shadow))",
+        "purpose": "Filter on the perforated provider stamp only. --stamp-shadow is rgba(19,37,75,0.28) light, rgba(0,0,0,0.55) dark."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "The one easing for authored motion and state transitions."
+      },
+      {
+        "name": "postmark-strike",
+        "value": "380ms var(--ease-out) both; scale(1.32) rotate(-17deg) blur(1.2px) -> scale(0.965) rotate(-8deg) at 55% -> scale(1) rotate(-9deg)",
+        "purpose": "The one authored motion: the postmark stamps down when a re-rendered postmark carries a newer copy time (postmark.js). Off under prefers-reduced-motion in JS and CSS."
+      },
+      {
+        "name": "cancel-ink",
+        "value": "340ms var(--ease-out) 120ms both; clip-path inset(0 0 0 100%) -> inset(0 0 0 0)",
+        "purpose": "Cancellation bars ink in after the strike. Off under prefers-reduced-motion."
+      },
+      {
+        "name": "state-transition",
+        "value": "140-160ms var(--ease-out)",
+        "purpose": "Background/colour changes on labels, nav items, rows."
+      },
+      {
+        "name": "drawer",
+        "value": "260ms var(--ease-out)",
+        "purpose": "Mobile rail drawer slide. Off under prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "drawer",
+        "value": "768px"
+      },
+      {
+        "name": "ledger-restack",
+        "value": "720px"
+      },
+      {
+        "name": "route-2col",
+        "value": "860px"
+      },
+      {
+        "name": "sheet-bleed",
+        "value": "640px"
+      },
+      {
+        "name": "seg-full",
+        "value": "560px"
+      },
+      {
+        "name": "route-1col",
+        "value": "420px"
+      }
+    ],
+    "grid": {
+      "unit": "8px",
+      "col": "72rem",
+      "contentMaxWidth": "calc(var(--col) + 2 * var(--s-6))",
+      "rail": "232px",
+      "topbar": "56px",
+      "chevronEdge": "7px"
+    }
+  },
+  "components": [
+    {
+      "name": "Label Button",
+      "kind": "button",
+      "refersTo": "button-label",
+      "description": "Default action: a registered-mail label with a hairline ink frame and an under-edge.",
+      "html": "<button class=\"ds-btn\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\"/><path d=\"M3 3v5h5\"/><path d=\"M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16\"/><path d=\"M16 16h5v5\"/></svg>Retry</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 14px; background: var(--paper-env, #eef4fa); border: 1px solid var(--ink, #13254b); border-radius: 3px; box-shadow: 0 1px 0 var(--rule-strong, #6f87a8); color: var(--ink, #13254b); font: 500 0.875rem/1.2 'Atkinson Hyperlegible Next', system-ui, sans-serif; cursor: pointer; transition: background 140ms cubic-bezier(0.16,1,0.3,1), transform 140ms cubic-bezier(0.16,1,0.3,1); } .ds-btn:hover { background: var(--paper-sunk, #cbd9e8); } .ds-btn:active { transform: translateY(1px); box-shadow: none; } .ds-btn:focus-visible { outline: 2px solid var(--focus, #2b4fb8); outline-offset: 2px; }"
+    },
+    {
+      "name": "Primary Label Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one primary action: ink fill, icon in its own ruled cell like the R of a registered-mail label.",
+      "html": "<button class=\"ds-btn-primary\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4\"/><polyline points=\"10 17 15 12 10 7\"/><line x1=\"15\" x2=\"3\" y1=\"12\" y2=\"12\"/></svg>Reconnect</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 14px; background: var(--ink, #13254b); border: 1px solid var(--ink, #13254b); border-radius: 3px; box-shadow: 0 1px 0 var(--rule-strong, #6f87a8); color: var(--paper-env, #eef4fa); font: 500 0.875rem/1.2 'Atkinson Hyperlegible Next', system-ui, sans-serif; cursor: pointer; transition: background 140ms cubic-bezier(0.16,1,0.3,1), transform 140ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-primary > svg:first-child { box-sizing: content-box; padding-right: 8px; border-right: 1px solid color-mix(in srgb, var(--paper-env, #eef4fa) 45%, transparent); } .ds-btn-primary:hover { background: color-mix(in srgb, var(--ink, #13254b) 86%, var(--paper, #dce7f2)); } .ds-btn-primary:active { transform: translateY(1px); box-shadow: none; } .ds-btn-primary:focus-visible { outline: 2px solid var(--focus, #2b4fb8); outline-offset: 2px; }"
+    },
+    {
+      "name": "Danger Label Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Destructive action: error ink and frame on a transparent face, red wash on hover.",
+      "html": "<button class=\"ds-btn-danger\">Delete mailbox</button>",
+      "css": ".ds-btn-danger { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 14px; background: transparent; border: 1px solid var(--error, #a4122c); border-radius: 3px; box-shadow: 0 1px 0 var(--rule-strong, #6f87a8); color: var(--error, #a4122c); font: 500 0.875rem/1.2 'Atkinson Hyperlegible Next', system-ui, sans-serif; cursor: pointer; transition: background 140ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-danger:hover { background: var(--error-wash, rgba(164,18,44,0.07)); } .ds-btn-danger:focus-visible { outline: 2px solid var(--focus, #2b4fb8); outline-offset: 2px; }"
+    },
+    {
+      "name": "Hand Stamps",
+      "kind": "chip",
+      "refersTo": "stamp-ok",
+      "description": "The resolver's label, inked: one silhouette per tone (ok oval, active side-barred box, attention double box, error heavy box on red wash, muted dashed), rotated, printed through ink grain.",
+      "html": "<div class=\"ds-stamps\"><span class=\"ds-stamp ds-stamp-ok\">Up to date</span><span class=\"ds-stamp ds-stamp-active\">Syncing</span><span class=\"ds-stamp ds-stamp-attention\">Sign-in needed</span><span class=\"ds-stamp ds-stamp-error\">Sync failed</span><span class=\"ds-stamp ds-stamp-muted\">Suspended</span></div>",
+      "css": ".ds-stamps { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; padding: 8px; } .ds-stamp { --ink-s: var(--muted, #4f5d73); display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 7px; color: var(--ink-s); border: 1.5px dashed var(--ink-s); border-radius: 2px; font: 500 0.75rem/1.25 'Atkinson Hyperlegible Next', system-ui, sans-serif; letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; font-variant-numeric: tabular-nums; } .ds-stamp-ok { --ink-s: var(--ok, #1d5e43); transform: rotate(-3deg); border: 1.5px solid var(--ink-s); border-radius: 999px; outline: 1px solid var(--ink-s); outline-offset: 2px; margin: 3px; padding-inline: 10px 11px; } .ds-stamp-active { --ink-s: var(--active, #155a8a); transform: rotate(-1.5deg); border: 1.5px solid var(--ink-s); border-inline-width: 5px; border-radius: 0; } .ds-stamp-attention { --ink-s: var(--attention, #7a4b00); transform: rotate(2deg); border: 4px double var(--ink-s); border-radius: 0; background: var(--attention-wash, rgba(122,75,0,0.06)); } .ds-stamp-error { --ink-s: var(--error, #a4122c); transform: rotate(-2.5deg); border: 3px solid var(--ink-s); border-radius: 1px; background: var(--error-wash, rgba(164,18,44,0.07)); } .ds-stamp-muted { --ink-s: var(--muted, #4f5d73); border-style: dashed; }"
+    },
+    {
+      "name": "Postmark",
+      "kind": "custom",
+      "refersTo": "postmark",
+      "description": "Circular date stamp for the last local copy: double ring, -9deg, tabular date and time, wavy cancellation bars. Strikes down once when a newer copy lands.",
+      "html": "<div class=\"ds-pm\"><svg class=\"ds-pm-cancel\" width=\"64\" height=\"34\" viewBox=\"0 0 64 34\" aria-hidden=\"true\"><g fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\"><path d=\"M0 4 q6 -4 12 0 t12 0 t12 0 t12 0 t12 0\"/><path d=\"M0 13 q6 -4 12 0 t12 0 t12 0 t12 0 t12 0\"/><path d=\"M0 22 q6 -4 12 0 t12 0 t12 0 t12 0 t12 0\"/><path d=\"M0 31 q6 -4 12 0 t12 0 t12 0 t12 0 t12 0\"/></g></svg><span class=\"ds-pm-disc\"><span class=\"ds-pm-label\">Last copied</span><span class=\"ds-pm-date\">30 SEP 2026</span><span class=\"ds-pm-time\">22:27</span></span></div>",
+      "css": ".ds-pm { position: relative; display: inline-flex; color: var(--ink, #13254b); padding: 12px 12px 12px 60px; font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; font-weight: 500; font-variant-numeric: tabular-nums; } .ds-pm-cancel { position: absolute; top: 50%; left: 8px; transform: translateY(-50%) rotate(-9deg); opacity: 0.55; } .ds-pm-disc { position: relative; box-sizing: border-box; width: 108px; height: 108px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 10px; border: 2px solid currentColor; border-radius: 50%; outline: 1px solid currentColor; outline-offset: -8px; line-height: 1.15; text-align: center; transform: rotate(-9deg); background: var(--paper-env, #eef4fa); } .ds-pm-label { font-size: 0.75rem; color: var(--ink-2, #3b4f72); } .ds-pm-date { font-size: 0.75rem; letter-spacing: 0.06em; } .ds-pm-time { font-size: 1rem; letter-spacing: 0.02em; } .ds-pm:hover .ds-pm-disc { animation: ds-strike 380ms cubic-bezier(0.16,1,0.3,1) both; } @keyframes ds-strike { 0% { transform: scale(1.32) rotate(-17deg); opacity: 0; filter: blur(1.2px); } 55% { transform: scale(0.965) rotate(-8deg); opacity: 1; filter: blur(0); } 100% { transform: scale(1) rotate(-9deg); opacity: 1; } } @media (prefers-reduced-motion: reduce) { .ds-pm:hover .ds-pm-disc { animation: none; } }"
+    },
+    {
+      "name": "Provider Stamp",
+      "kind": "custom",
+      "refersTo": "provider-stamp",
+      "description": "A 72px perforated postage stamp in the envelope corner: neutral glyph plus provider name, never a third-party logo.",
+      "html": "<span class=\"ds-ps\"><span class=\"ds-ps-face\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"20\" height=\"16\" x=\"2\" y=\"4\" rx=\"2\"/><path d=\"m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7\"/></svg><span class=\"ds-ps-name\">Google</span></span></span>",
+      "css": ".ds-ps { display: inline-block; filter: drop-shadow(0 1px 1px rgba(19,37,75,0.28)); } .ds-ps-face { --hole: 2.4px; --pitch: 8px; box-sizing: border-box; width: 72px; height: 72px; padding: 9px 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; background: var(--stamp-paper, #f6f9fd); color: var(--ink-2, #3b4f72); outline: 1px solid var(--rule-strong, #6f87a8); outline-offset: -6px; -webkit-mask: linear-gradient(#000 0 0) content-box, radial-gradient(circle, #0000 var(--hole), #000 calc(var(--hole) + 0.5px)) calc(var(--pitch) / -2) calc(var(--pitch) / -2) / var(--pitch) var(--pitch); mask: linear-gradient(#000 0 0) content-box, radial-gradient(circle, #0000 var(--hole), #000 calc(var(--hole) + 0.5px)) calc(var(--pitch) / -2) calc(var(--pitch) / -2) / var(--pitch) var(--pitch); } .ds-ps-name { font: 500 0.75rem/1 'Atkinson Hyperlegible Next', system-ui, sans-serif; letter-spacing: 0.02em; color: var(--ink, #13254b); }"
+    },
+    {
+      "name": "Mailbox Envelope",
+      "kind": "card",
+      "refersTo": "envelope",
+      "description": "One envelope per mailbox: stamp first, name and address, postmark in the corner, a dashed fold line above the note and its one action.",
+      "html": "<article class=\"ds-env\"><span class=\"ds-env-stamp\">Sign-in needed</span><h3 class=\"ds-env-name\">New Gmail</h3><p class=\"ds-env-addr\">giulia.demo@gmail.com<br><small>31,000 messages · 3.2 GB</small></p><div class=\"ds-env-note\"><p>Sign-in expired. Reconnect to resume syncing.</p><button class=\"ds-env-btn\">Reconnect</button></div></article>",
+      "css": ".ds-env { box-sizing: border-box; max-width: 640px; padding: 24px; background: var(--paper-env, #eef4fa); border: 1px solid var(--rule-strong, #6f87a8); border-radius: 2px; box-shadow: 0 1px 0 rgba(19,37,75,0.06), 0 12px 28px -20px rgba(19,37,75,0.55); color: var(--ink, #13254b); font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; font-weight: 500; } .ds-env-stamp { display: inline-flex; padding: 3px 9px 3px 7px; border: 4px double var(--attention, #7a4b00); background: var(--attention-wash, rgba(122,75,0,0.06)); color: var(--attention, #7a4b00); font-size: 0.75rem; letter-spacing: 0.07em; text-transform: uppercase; transform: rotate(2deg); } .ds-env-name { margin: 4px 0 2px; font-size: 1.625rem; font-weight: 500; line-height: 1.15; letter-spacing: -0.012em; } .ds-env-addr { margin: 0; color: var(--ink-2, #3b4f72); } .ds-env-addr small { font-size: 0.875rem; font-variant-numeric: tabular-nums; } .ds-env-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--rule-strong, #6f87a8); } .ds-env-note p { margin: 0; } .ds-env-btn { min-height: 40px; padding: 8px 14px; background: var(--ink, #13254b); color: var(--paper-env, #eef4fa); border: 1px solid var(--ink, #13254b); border-radius: 3px; font: inherit; font-size: 0.875rem; cursor: pointer; } .ds-env-btn:hover { background: color-mix(in srgb, var(--ink, #13254b) 86%, var(--paper, #dce7f2)); } .ds-env-btn:focus-visible { outline: 2px solid var(--focus, #2b4fb8); outline-offset: 2px; }"
+    },
+    {
+      "name": "Address Field",
+      "kind": "input",
+      "refersTo": "address-field-input",
+      "description": "The search, written on the envelope's address line: no box, a 2px ink underline that turns focus ultramarine.",
+      "html": "<label class=\"ds-addr\"><span class=\"ds-addr-label\">Search messages and attachments</span><span class=\"ds-addr-line\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"11\" cy=\"11\" r=\"8\"/><path d=\"m21 21-4.3-4.3\"/></svg><input type=\"search\" placeholder=\"Sender, subject or any word\"></span></label>",
+      "css": ".ds-addr { display: block; max-width: 640px; font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; font-weight: 500; color: var(--ink, #13254b); } .ds-addr-label { display: block; margin-bottom: 8px; font-size: 1.25rem; } .ds-addr-line { display: flex; align-items: center; gap: 12px; padding-bottom: 8px; border-bottom: 2px solid var(--ink, #13254b); } .ds-addr-line svg { color: var(--ink-2, #3b4f72); flex: none; } .ds-addr-line:focus-within { border-bottom-color: var(--focus, #2b4fb8); box-shadow: 0 2px 0 var(--focus, #2b4fb8); } .ds-addr input { flex: 1; min-width: 0; padding: 8px 0; background: transparent; border: 0; outline: none; color: var(--ink, #13254b); font: inherit; font-size: 1.25rem; } .ds-addr input::placeholder { color: var(--ink-2, #3b4f72); opacity: 1; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Form field on the stationery: envelope stock, strong-rule frame, ink border and selection ring on focus.",
+      "html": "<label class=\"ds-field\"><span>Mailbox name</span><input type=\"text\" value=\"Work Outlook\"></label>",
+      "css": ".ds-field { display: grid; gap: 4px; max-width: 360px; font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; font-weight: 500; } .ds-field span { font-size: 0.875rem; color: var(--ink-2, #3b4f72); } .ds-field input { min-height: 40px; padding: 8px 12px; background: var(--paper-env, #eef4fa); border: 1px solid var(--rule-strong, #6f87a8); border-radius: 3px; color: var(--ink, #13254b); font: inherit; font-size: 1rem; font-variant-numeric: tabular-nums; } .ds-field input:focus { outline: none; border-color: var(--ink, #13254b); box-shadow: 0 0 0 2px var(--selection, rgba(43,79,184,0.22)); } .ds-field input:disabled { background: var(--paper-sunk, #cbd9e8); color: var(--ink-2, #3b4f72); }"
+    },
+    {
+      "name": "Rail Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Fixed 232px rail: faded-ink items, the active one is a label laid on the rail.",
+      "html": "<nav class=\"ds-rail\"><a href=\"#\" class=\"active\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\"/><path d=\"M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/></svg>Dashboard</a><a href=\"#\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"20\" height=\"16\" x=\"2\" y=\"4\" rx=\"2\"/><path d=\"m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7\"/></svg>Mailboxes</a><span class=\"ds-rail-label\">Admin</span><a href=\"#\">Users</a></nav>",
+      "css": ".ds-rail { display: flex; flex-direction: column; gap: 2px; width: 232px; box-sizing: border-box; padding: 12px; background: var(--paper-rail, #d2dfec); border-right: 1px solid var(--rule, #9db3cf); font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; font-weight: 500; } .ds-rail a { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 8px 12px; border: 1px solid transparent; border-radius: 3px; color: var(--ink-2, #3b4f72); font-size: 0.875rem; text-decoration: none; transition: background 160ms cubic-bezier(0.16,1,0.3,1), color 160ms cubic-bezier(0.16,1,0.3,1); } .ds-rail a:hover { background: var(--paper-sunk, #cbd9e8); color: var(--ink, #13254b); } .ds-rail a.active { background: var(--paper-env, #eef4fa); border-color: var(--rule, #9db3cf); box-shadow: 0 1px 0 var(--rule, #9db3cf); color: var(--ink, #13254b); } .ds-rail a:focus-visible { outline: 2px solid var(--focus, #2b4fb8); outline-offset: 2px; } .ds-rail-label { margin: 16px 12px 4px; padding-top: 12px; border-top: 1px solid var(--rule, #9db3cf); font-size: 0.75rem; color: var(--ink-2, #3b4f72); }"
+    },
+    {
+      "name": "Ledger with Route Strip",
+      "kind": "custom",
+      "refersTo": "ledger-cell",
+      "description": "The sorting office: route strip and ruled ledger in one box; double rule under column heads, stamp column first.",
+      "html": "<div class=\"ds-office\"><ol class=\"ds-route\"><li><span>Source</span><b>3 of 6 connected</b></li><li><span>Local backup</span><b>3 of 6 failing</b></li><li><span>Repository</span><b>None configured</b></li><li><span>Snapshot</span><b>None yet</b></li></ol><table class=\"ds-ledger\"><thead><tr><th>State</th><th>Mailbox</th><th>Last copied</th></tr></thead><tbody><tr><td><span class=\"ds-l-stamp\">Sync failed</span></td><td>Family Fastmail<small>The sync configuration has an error.</small></td><td>30 SEP 2026 · 22:06</td></tr></tbody></table></div>",
+      "css": ".ds-office { max-width: 720px; background: var(--paper-env, #eef4fa); border: 1px solid var(--rule, #9db3cf); box-shadow: 0 1px 0 rgba(19,37,75,0.06), 0 12px 28px -20px rgba(19,37,75,0.55); font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; font-weight: 500; color: var(--ink, #13254b); } .ds-route { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px 24px; margin: 0; padding: 16px 24px; list-style: none; background: var(--paper, #dce7f2); border-bottom: 1px solid var(--rule, #9db3cf); } .ds-route li { display: flex; flex-direction: column; gap: 4px; } .ds-route span { font-size: 0.75rem; color: var(--ink-2, #3b4f72); } .ds-route b { font-weight: 500; font-size: 0.875rem; } .ds-ledger { width: 100%; border-collapse: collapse; font-size: 0.875rem; font-variant-numeric: tabular-nums; } .ds-ledger th, .ds-ledger td { padding: 11px 14px; text-align: left; border-bottom: 1px solid var(--rule, #9db3cf); font-weight: 500; } .ds-ledger thead th { padding: 12px 14px 8px; border-bottom: 3px double var(--rule-strong, #6f87a8); color: var(--ink-2, #3b4f72); font-size: 0.75rem; letter-spacing: 0.03em; } .ds-ledger tbody tr:hover td { background: color-mix(in srgb, var(--paper-sunk, #cbd9e8) 35%, transparent); } .ds-ledger small { display: block; color: var(--ink, #13254b); font-size: 0.875rem; } .ds-ledger td:first-child { width: 1%; white-space: nowrap; } .ds-l-stamp { display: inline-flex; padding: 3px 9px 3px 7px; border: 3px solid var(--error, #a4122c); border-radius: 1px; background: var(--error-wash, rgba(164,18,44,0.07)); color: var(--error, #a4122c); font-size: 0.75rem; letter-spacing: 0.07em; text-transform: uppercase; transform: rotate(-2.5deg); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Airmail in Your Care",
+    "overview": "Every mailbox is an airmail envelope lying on pale blue onionskin. A circular postmark says when the local backup was last copied, in tabular date and time. A rotated rubber hand stamp says, only when something needs saying, what state the mailbox is in. The red-and-blue par-avion chevron runs along the top edge of the shell and nowhere else. Admin pages are the sorting office: a ruled ledger with the route strip (Source, Local backup, Repository, Snapshot) printed in the same box, so the map and the list share one space.\n\nDensity is calm on the owner side and close-ruled on the admin side. Both run in one 72rem content column. The interface has one face at one weight, so hierarchy comes from size alone. Paper is never neutral white: the light ground is onionskin blue and the dark ground is navy-night paper written in chalk ink. State is always carried by shape plus icon plus text, never by colour alone, and red means only a real failure.\n\nThis world was built to reject the category default: a Pico/SaaS admin console with same-size KPI cards, sidebar badges and neon-on-dark status pills.",
+    "keyCharacteristics": [
+      "Onionskin ground (light) or navy-night paper (dark); envelopes are one step lighter stock.",
+      "One self-hosted grotesque, Atkinson Hyperlegible Next Medium, never synthesised bold.",
+      "Hand stamps with a distinct silhouette per tone, slightly rotated and printed through an ink-grain mask.",
+      "Circular postmarks with wavy cancellation bars and tabular figures; a dashed empty ring when nothing was ever copied.",
+      "Registered-mail labels for actions: a hairline frame, a paper face, and on the primary label the icon in its own ruled cell.",
+      "One authored motion: the postmark stamps down when a sync lands."
+    ],
+    "rules": [
+      {
+        "name": "The Only-Red Rule",
+        "body": "`error` is the one red, and only the resolver's `error` tone uses it. Throttled, transient, budget-paused and interrupted states recover on their own, so they wear `active`, never red.",
+        "section": "colors"
+      },
+      {
+        "name": "The Frame-Edge Rule",
+        "body": "Par-avion vermilion and ultramarine belong to the chevron frame edge. They never mark status, never fill a button and never decorate content.",
+        "section": "colors"
+      },
+      {
+        "name": "The Never-White Rule",
+        "body": "No surface is neutral white or neutral grey. Every paper is tinted toward the navy hue.",
+        "section": "colors"
+      },
+      {
+        "name": "The One-Weight Rule",
+        "body": "Hierarchy comes from size steps (12/14/16/20/26/34/verdict), never from weight.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular-Figures Rule",
+        "body": "Tables, `time`, postmarks, stamps, counts and summaries use `tabular-nums`. Numbers are real and line up; no invented percentages.",
+        "section": "typography"
+      },
+      {
+        "name": "The Paper-Not-Plastic Rule",
+        "body": "Shadows are tinted with the ink hue and blur outward softly. No glows and no coloured halos.",
+        "section": "elevation"
+      },
+      {
+        "name": "The One-Authored-Motion Rule",
+        "body": "The postmark stamp-down is the only authored motion in the interface. Everything else is a short state transition.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Shape-Carries-State Rule",
+        "body": "Each tone has its own silhouette, in stamps (oval / side-barred box / double box / heavy box / dashed), in marks (ring / open square / double box / solid block / dashed ring), and in notes and the health toggle (hairline / double / heavy). A colour-blind reader can still tell every state apart.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do keep every page in the one `--col: 72rem` column and hold reading measure with ch caps.",
+      "Do spell status with the resolver's label and its stamp shape, using the `mail.stamp` macro in `partials/airmail.html`. Never hand-roll a stamp.",
+      "Do pair every state colour with its shape and an icon. A grayscale screenshot must still read.",
+      "Do show the last-copied time as a postmark (`mail.postmark` / `mail.postmark_line`) in tabular figures, and show the dashed empty ring when there is no copy.",
+      "Do lead each screen with one dominant envelope or one ledger. Everything else stacks under it.",
+      "Do honour `prefers-reduced-motion` for any new motion, the way the postmark strike does.",
+      "Do keep both dark-token blocks (OS preference and explicit toggle) identical when changing a dark value."
+    ],
+    "donts": [
+      "Don't use `error` red for anything except a real failure. Throttled, transient, budget and interrupted states use `active`.",
+      "Don't use the par-avion vermilion or ultramarine outside the chevron frame edge.",
+      "Don't set any surface in neutral white or neutral grey.",
+      "Don't add a second font weight or a second display face. Hierarchy is size.",
+      "Don't build same-size KPI card grids, sidebar count badges or neon-on-dark status pills.",
+      "Don't put a third-party provider logo in the provider stamp.",
+      "Don't add a second authored motion. State changes stay at 140–260ms ease-out.",
+      "Don't nest framed boxes inside a sheet. Use a dashed fold line."
+    ]
+  }
+}

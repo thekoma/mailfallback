@@ -67,3 +67,12 @@ site/
 
 # Helm chart dependencies (fetched via `helm dependency build`)
 charts/mailfallback/charts/
+
+# Impeccable design-loop artifacts: generated captures and session state.
+# config.json, critique/, surfaces/ and design.json stay tracked.
+.impeccable/review/
+.impeccable/questions/
+.impeccable/live/
+.impeccable/tmp/
+.impeccable/cache/
+.impeccable/hook.cache.json

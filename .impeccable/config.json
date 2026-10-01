@@ -1,0 +1,41 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "repeating-stripes-gradient",
+        "value": "*",
+        "files": [
+          "src/mailfallback/templates/base.html"
+        ],
+        "createdAt": "2026-10-01T15:45:11.340Z",
+        "reason": "direction contract: the par-avion chevron frame edge is the one sanctioned stripe"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/mailfallback/templates/base.html"
+        ],
+        "createdAt": "2026-10-01T15:45:36.037Z",
+        "reason": "direction contract: the 7px stripe is the par-avion chevron frame edge of the shell (top; bottom on login), not a card side-tab"
+      },
+      {
+        "rule": "dark-glow",
+        "value": "*",
+        "files": [
+          "src/mailfallback/templates/base.html"
+        ],
+        "createdAt": "2026-10-01T18:00:00.000Z",
+        "reason": "vendored Pico's own --pico-box-shadow token (rgba(129,145,181)); style.css overrides it with the ink offset+blur shadow, and vendor files can't be patched (vendor CI drift check)"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "rgb(0, 0, 0)",
+        "createdAt": "2026-10-01T17:30:35.520Z",
+        "reason": "detector scans child templates/partials standalone without base.html's stylesheet, so text reads as the browser default rgb(0,0,0); base.html (the only file that links style.css) has no finding and style.css never sets rgb(0,0,0)"
+      }
+    ]
+  }
+}
