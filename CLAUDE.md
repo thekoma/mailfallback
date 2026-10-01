@@ -39,7 +39,7 @@ Each command stops short of committing. Authorize the commit explicitly when rea
 - **Frontend**: Jinja2 templates, HTMX, Pico CSS, Lucide icons
 - **Database**: PostgreSQL (only supported backend)
 - **Sync**: mbsync/isync (subprocess)
-- **IMAP access**: Dovecot 2.4 (`dovecot/dovecot:2.4.4` pinned, SQL auth against MFB database)
+- **IMAP access**: Dovecot 2.4 (`dovecot/dovecot:2.4.5` pinned, SQL auth against MFB database)
 - **Webmail**: Roundcube (`roundcube/roundcubemail:latest`, read-only via Dovecot IMAP)
 - **Package manager**: uv (with uv.lock)
 
@@ -217,7 +217,7 @@ Uses **UUID-based paths** with **LAYOUT=fs** and **SubFolders Verbatim**. Folder
 
 ## Dovecot Integration
 
-- Uses **official `dovecot/dovecot:2.4.4`** image (latest stable) — no custom Dockerfile
+- Uses **official `dovecot/dovecot:2.4.5`** image (latest stable) — no custom Dockerfile
 - Config files volume-mounted from `docker/dovecot/conf.d/mfb-*.conf` to `/etc/dovecot/conf.d/`
 - SQL auth queries the MFB `users` and `mail_stores` tables directly via PostgreSQL
 - `auth_mechanisms = plain login` (login required by Roundcube)
