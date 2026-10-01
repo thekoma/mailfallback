@@ -288,7 +288,7 @@ against `charts/mailfallback/values.yaml` for the version you install.
 | Component | Image | Values key |
 |-----------|-------|------------|
 | MFB app | `ghcr.io/thekoma/mailfallback:<CalVer>` (empty tag = chart `appVersion`) | `image.*` |
-| Dovecot | `dovecot/dovecot:2.4.4` | `dovecot.image.*` |
+| Dovecot | `dovecot/dovecot:2.4.5` | `dovecot.image.*` |
 | Roundcube | `roundcube/roundcubemail:1.7.2-apache` | `webmail.image.*` |
 | Tika | `apache/tika:3.3.1.0-full` | `tika.image.*` |
 | Init (wait-config) | `docker.io/library/busybox:1.38` | `initImage.*` |
