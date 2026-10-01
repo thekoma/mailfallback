@@ -1,26 +1,25 @@
 {% if snapshots %}
-<div class="table-wrap">
-<table>
+<div class="table-wrap ledger-wrap ledger-flat">
+<table class="ledger ledger-compact">
     <thead>
         <tr>
-            <th>Snapshot</th>
-            <th>Date</th>
-            <th>Hostname</th>
-            <th class="text-right">Actions</th>
+            <th scope="col">Snapshot</th>
+            <th scope="col">Date</th>
+            <th scope="col">Hostname</th>
+            <th scope="col" class="ledger-action"><span class="sr-only">Actions</span></th>
         </tr>
     </thead>
     <tbody>
         {% for snap in snapshots %}
-        <tr>
+        <tr class="ledger-row">
             <td><code>{{ snap.short_id }}</code></td>
-            <td>{{ snap.time[:19] | replace('T', ' ') }}</td>
+            <td class="ledger-when num">{{ snap.time[:19] | replace('T', ' ') }}</td>
             <td>{{ snap.hostname }}</td>
-            <td>
+            <td class="ledger-action">
                 <div class="actions flex-end">
                     <form method="post" action="/accounts/{{ account.id }}/backup/restore/{{ snap.short_id }}"
-                        data-confirm="Restore snapshot {{ snap.short_id }}? This creates a read-only recovery you can browse in webmail and delete when done."
-                        onsubmit="return confirm(this.dataset.confirm)">
-                        <button type="submit" class="icon-btn" title="Restore this snapshot">
+                        data-confirm="Restore snapshot {{ snap.short_id }}? This creates a read-only recovery you can browse in webmail and delete when done.">
+                        <button type="submit" class="icon-btn" title="Restore this snapshot" aria-label="Restore snapshot {{ snap.short_id }}">
                             <i data-lucide="archive-restore" class="icon-md"></i>
                         </button>
                     </form>
@@ -35,30 +34,29 @@
 <p class="text-muted text-small">No snapshots found.</p>
 {% endif %}
 {% for src in attached_sources %}
-<h4 class="text-small">Attached: <code>{{ src.attachment.prefix }}</code></h4>
+<p class="expand-label">Attached: <code>{{ src.attachment.prefix }}</code></p>
 {% if src.snapshots %}
-<div class="table-wrap">
-<table>
+<div class="table-wrap ledger-wrap ledger-flat">
+<table class="ledger ledger-compact">
     <thead>
         <tr>
-            <th>Snapshot</th>
-            <th>Date</th>
-            <th>Hostname</th>
-            <th class="text-right">Actions</th>
+            <th scope="col">Snapshot</th>
+            <th scope="col">Date</th>
+            <th scope="col">Hostname</th>
+            <th scope="col" class="ledger-action"><span class="sr-only">Actions</span></th>
         </tr>
     </thead>
     <tbody>
         {% for snap in src.snapshots %}
-        <tr>
+        <tr class="ledger-row">
             <td><code>{{ snap.short_id }}</code></td>
-            <td>{{ snap.time[:19] | replace('T', ' ') }}</td>
+            <td class="ledger-when num">{{ snap.time[:19] | replace('T', ' ') }}</td>
             <td>{{ snap.hostname }}</td>
-            <td>
+            <td class="ledger-action">
                 <div class="actions flex-end">
                     <form method="post" action="/accounts/{{ account.id }}/backup/attachments/{{ src.attachment.id }}/restore/{{ snap.short_id }}"
-                        data-confirm="Restore snapshot {{ snap.short_id }} from attached prefix {{ src.attachment.prefix }}?"
-                        onsubmit="return confirm(this.dataset.confirm)">
-                        <button type="submit" class="icon-btn" title="Restore this snapshot">
+                        data-confirm="Restore snapshot {{ snap.short_id }} from attached prefix {{ src.attachment.prefix }}?">
+                        <button type="submit" class="icon-btn" title="Restore this snapshot" aria-label="Restore snapshot {{ snap.short_id }}">
                             <i data-lucide="archive-restore" class="icon-md"></i>
                         </button>
                     </form>

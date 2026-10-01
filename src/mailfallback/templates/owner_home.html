@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% import "partials/airmail.html" as mail %}
+{% block title %}{% if request.url.path == "/mine" %}My mailboxes{% else %}Dashboard{% endif %} — MFB{% endblock %}
+{% block body_class %}page-owner{% endblock %}
+{% block content %}
+{% set n = envelopes | length %}
+{% if not envelopes %}
+{# First run: nothing to look after yet. #}
+<article class="envelope envelope-lead envelope-first-run" aria-labelledby="verdict-title">
+    <div class="envelope-return">MailFallBack <span>Local backup on this server</span></div>
+    <div class="envelope-corner">{{ mail.postmark(none, size="lg") }}</div>
+    <div class="envelope-address">
+        <h1 class="verdict" id="verdict-title">No mailboxes yet.</h1>
+        <p class="addressee">Connect a mailbox to start your local backup. Once it is copied here, it stays readable even if the provider locks you out.</p>
+        <a href="/accounts/new" class="icon-btn primary icon-btn-lg"><i data-lucide="plus" class="icon-md"></i> Connect a mailbox</a>
+    </div>
+</article>
+{% else %}
+{% set v = verdict %}
+<article class="envelope envelope-lead" aria-labelledby="verdict-title">
+    <div class="envelope-return">MailFallBack <span>Local backup on this server</span></div>
+    <div class="envelope-corner">
+        {{ mail.postmark(v.latest, size="lg") }}
+        <span class="envelope-verdict-stamp">{{ mail.stamp(v.stamp) }}</span>
+    </div>
+    <div class="envelope-address">
+        <h1 class="verdict" id="verdict-title">
+            {%- if v.attention == 1 %}{{ v.lead.name }} needs attention.
+            {%- elif v.attention > 1 %}{{ v.attention }} mailboxes need attention.
+            {%- elif v.all_current %}{% if n == 1 %}Your mailbox is up to date.{% else %}All {{ n }} mailboxes are up to date.{% endif %}
+            {%- else %}Nothing needs your attention.{% endif -%}
+        </h1>
+        {% if v.attention == 1 %}
+        {% set lead_item = (envelopes | selectattr("account.id", "equalto", v.lead.id) | first).item %}
+        {% if v.reason %}<p class="verdict-reason">{{ v.reason }}</p>
+        {% elif lead_item %}<p class="verdict-reason">{{ lead_item.reason }}</p>{% endif %}
+        {% endif %}
+        <p class="addressee"><span class="addressee-name">{{ user.username }}</span> <span class="sep" aria-hidden="true">·</span> <span class="num">{{ n }}</span> mailbox{{ "" if n == 1 else "es" }} in your care</p>
+    </div>
+</article>
+
+<form class="address-field" action="/restore" method="get" role="search" aria-labelledby="search-label">
+    <label class="address-label" id="search-label" for="home-search">Search messages and attachments</label>
+    <div class="address-line">
+        <i data-lucide="search" class="icon-md address-icon" aria-hidden="true"></i>
+        <input type="search" id="home-search" name="q" autocomplete="off" required
+               placeholder="Sender, subject or any word">
+        <div class="address-actions">
+            <button type="submit" class="icon-btn primary">Search messages</button>
+            <button type="submit" name="preset" value="attachment" class="icon-btn">
+                <i data-lucide="paperclip" class="icon-sm"></i> Attachments
+            </button>
+        </div>
+    </div>
+</form>
+
+<section class="envelopes" aria-labelledby="envelopes-title">
+    <h2 class="section-title" id="envelopes-title">Your mailboxes</h2>
+    {% for e in envelopes %}
+    {% set a = e.account %}
+    {% set st = e.status %}
+    <article class="envelope envelope-mailbox{% if st.needs_attention %} envelope-needs-attention{% endif %}" data-account-id="{{ a.id }}" aria-labelledby="env-{{ a.id }}">
+        <div class="envelope-stamp-slot">{{ mail.stamp(st) }}</div>
+        <div class="envelope-corner">
+            {{ mail.postmark(st.last_success_at) }}
+            {{ mail.provider_stamp(a.provider) }}
+        </div>
+        <div class="envelope-address">
+            <h3 class="envelope-name" id="env-{{ a.id }}"><a href="/accounts/{{ a.id }}">{{ a.name }}</a></h3>
+            {% if a.email_address %}<p class="address-line">{{ a.email_address }}</p>{% endif %}
+            {% if a.total_messages %}<p class="address-line address-meta num">{{ a.total_messages | number }} messages · {{ a.maildir_size_bytes | filesizeformat }}</p>{% endif %}
+        </div>
+        {% if e.item %}
+        <div class="envelope-note">
+            <p>{{ e.item.reason }}</p>
+            {% with item = e.item %}{% include "partials/attention_action.html" %}{% endwith %}
+        </div>
+        {% elif st.detail and st.state.value in ("paused", "initial_sync", "first_sync", "stopped") %}
+        <div class="envelope-note envelope-note-quiet"><p>{{ st.detail }}</p></div>
+        {% endif %}
+        {% for b in e.backup_items %}
+        <div class="envelope-note{% if b.type == 'info' %} envelope-note-quiet{% endif %}">
+            <p>{{ b.reason }}</p>
+            {% if b.type != 'info' %}{% with item = b %}{% include "partials/attention_action.html" %}{% endwith %}{% endif %}
+        </div>
+        {% endfor %}
+    </article>
+    {% endfor %}
+</section>
+
+<section class="owner-route" aria-label="Where your mail is kept">
+    {% include "partials/route_strip.html" %}
+</section>
+
+{% if recent_jobs %}
+{% include "partials/recent_activity.html" %}
+{% endif %}
+{% endif %}
+{% endblock %}

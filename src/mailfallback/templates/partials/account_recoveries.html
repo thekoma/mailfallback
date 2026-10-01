@@ -1,3 +1,4 @@
+{% import "partials/airmail.html" as mail %}
 {# Recoveries sub-section: read-only restored snapshots attached to this account.
    Each row exposes the snapshot id, when it was taken, when WE restored it,
    the on-disk size, and a delete button. Browsing happens through the user's
@@ -7,21 +8,21 @@
     They appear as a separate folder in your webmail; they are not synced and
     do not become a new account.
 </p>
-<div class="table-wrap">
-<table>
+<div class="table-wrap ledger-wrap">
+<table class="ledger ledger-compact">
     <thead>
         <tr>
-            <th>Snapshot</th>
-            <th>Taken</th>
-            <th>Restored</th>
-            <th>Size</th>
-            <th>Status</th>
-            <th class="text-right">Actions</th>
+            <th scope="col">Snapshot</th>
+            <th scope="col">Taken</th>
+            <th scope="col">Restored</th>
+            <th scope="col" class="ledger-num">Size</th>
+            <th scope="col">Status</th>
+            <th scope="col" class="ledger-action"><span class="sr-only">Actions</span></th>
         </tr>
     </thead>
     <tbody>
         {% for r in recoveries %}
-        <tr>
+        <tr class="ledger-row">
             <td><code>{{ r.snapshot_id }}</code></td>
             <td>
                 {% if r.snapshot_time %}
@@ -31,7 +32,7 @@
                 {% endif %}
             </td>
             <td>{{ r.restored_at | time_ago }}</td>
-            <td>
+            <td class="ledger-num">
                 {% if r.size_bytes %}
                 {{ r.size_bytes | filesizeformat }}
                 {% else %}
@@ -40,22 +41,21 @@
             </td>
             <td>
                 {% if r.status.value == "ready" %}
-                <span class="stats-pill"><span class="stats-dot stats-dot-ok"></span> Ready</span>
+                <span class="mark-label">{{ mail.mark("mark-ok") }} Ready</span>
                 {% elif r.status.value == "restoring" %}
-                <span class="stats-pill"><span class="stats-dot stats-dot-syncing"></span> Restoring</span>
+                <span class="mark-label">{{ mail.mark("mark-active") }} Restoring</span>
                 {% elif r.status.value == "failed" %}
-                <span class="stats-pill" title="{{ r.error or '' }}">
-                    <span class="stats-dot stats-dot-error"></span> Failed
+                <span class="mark-label" title="{{ r.error or '' }}">
+                    {{ mail.mark("mark-error") }} Failed
                 </span>
                 {% else %}
-                <span class="stats-pill"><span class="stats-dot"></span> {{ r.status.value | capitalize }}</span>
+                <span class="mark-label">{{ mail.mark("mark-muted") }} {{ r.status.value | capitalize }}</span>
                 {% endif %}
             </td>
-            <td>
+            <td class="ledger-action">
                 <div class="actions flex-end">
                     <form method="post" action="/accounts/{{ account.id }}/recoveries/{{ r.id }}/delete"
-                          data-confirm="Delete this recovery? The on-disk Maildir will be removed permanently."
-                          onsubmit="return confirm(this.dataset.confirm)" class="d-inline">
+                          data-confirm="Delete this recovery? The on-disk Maildir will be removed permanently." class="d-inline">
                         <button type="submit" class="icon-btn danger" title="Delete recovery">
                             <i data-lucide="trash-2" class="icon-sm"></i>
                         </button>

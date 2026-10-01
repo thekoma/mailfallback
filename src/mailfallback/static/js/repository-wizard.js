@@ -75,3 +75,15 @@
         if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
     });
 })();
+
+// The page head's "Add Repository" link points at the wizard; open the
+// disclosure it lands on instead of scrolling to a closed summary.
+(function () {
+    function openWizard() {
+        if (location.hash !== "#repo-wizard-details") return;
+        var d = document.getElementById("repo-wizard-details");
+        if (d) d.open = true;
+    }
+    window.addEventListener("hashchange", openWizard);
+    document.addEventListener("DOMContentLoaded", openWizard);
+})();

@@ -1,4 +1,4 @@
-<div x-data="restoreWorkspace()" x-init="init()" class="ws-root"
+<div x-data="restoreWorkspace()" class="ws-root"
      data-webmail-url="{{ webmail_url }}"
      data-tika-enabled="{{ '1' if tika_enabled else '' }}">
   {# Data island (data, not code): account id → name/email for the Alpine component.
@@ -10,21 +10,22 @@
   <script type="application/json" id="ws-accounts-all-data">{{ all_accounts_json | safe }}</script>
   {% endif %}
 
-  <div class="ws-header">
-    <div>
-      <h2><i data-lucide="archive-restore" class="icon-xl icon-inline"></i>Restore</h2>
-      <p class="text-muted text-small mt-0">What are you looking for?</p>
+  <header class="page-head ws-head">
+    <div class="page-head-text">
+      <h1 class="page-title">Restore</h1>
+      <p class="page-summary" id="ws-presets-label">What are you looking for?</p>
     </div>
-  </div>
+  </header>
 
-  {# Preset chips #}
-  <div class="ws-presets" role="tablist">
+  {# Preset choice: a segmented row of plain toggle buttons (aria-pressed),
+     not a tablist — the panels below are not tab panels. #}
+  <div class="seg ws-presets" role="group" aria-labelledby="ws-presets-label">
     <template x-for="p in presets" :key="p.id">
       <button type="button"
-              class="ws-chip"
-              :class="{'is-active': preset === p.id}"
+              class="ws-preset"
+              :aria-pressed="preset === p.id ? 'true' : 'false'"
               @click="applyPreset(p.id)">
-        <i :data-lucide="p.icon" class="icon-sm icon-inline"></i>
+        <i :data-lucide="p.icon" class="icon-sm"></i>
         <span x-text="p.label"></span>
       </button>
     </template>
@@ -49,7 +50,7 @@
       </label>
     </aside>
 
-    <main class="ws-panel">
+    <div class="ws-panel">
       {# Shared search row — drives the message search (single-mail) AND the
          attachment search; the submit routes by preset via submitSearch().
          It sits OUTSIDE the preset x-if templates so both presets share the
@@ -59,9 +60,26 @@
       <div class="ws-search ws-search-shared"
            x-show="preset === 'single-mail' || preset === 'attachment'">
         <form @submit.prevent="submitSearch()" class="ws-search-row">
+          {# The address line: the query, written where the address goes. #}
+          <label class="ws-query-label" for="ws-query"
+                 x-text="preset === 'attachment' ? 'Search attachments' : 'Search messages'">Search messages</label>
+          <div class="ws-address-line">
+          <i data-lucide="search" class="icon-md ws-address-icon" aria-hidden="true"></i>
+          <input type="text" id="ws-query" x-model="query" autocomplete="off"
+                 :placeholder="preset === 'attachment' ? 'Search attachments…' : 'Search subject, sender…'">
+          <button type="submit" class="ws-btn-primary" :disabled="anySearching">
+            <template x-if="!anySearching">
+              <span><i data-lucide="search" class="icon-sm icon-inline"></i> Search</span>
+            </template>
+            <template x-if="anySearching">
+              <span><i data-lucide="loader" class="icon-sm icon-inline spin"></i> Searching…</span>
+            </template>
+          </button>
+          </div>
+          <div class="ws-scope-line">
           {# Options render from the active dataset (accessible vs all) via
              Alpine so the admin toggle swap re-renders them. #}
-          <select x-model="scopeAccountId" class="ws-scope" @change="onScopeChange()">
+          <select x-model="scopeAccountId" class="ws-scope" @change="onScopeChange()" aria-label="Mailboxes to search">
             <option value="" x-text="'All mailboxes (' + accounts.length + ')'"></option>
             <template x-for="a in accounts" :key="a.id">
               <option :value="a.id" x-text="a.name + ' (' + (a.email || '—') + ')'"></option>
@@ -73,16 +91,7 @@
             All users' mailboxes <span class="text-muted text-xsmall">— audited</span>
           </label>
           {% endif %}
-          <input type="text" x-model="query" autocomplete="off"
-                 :placeholder="preset === 'attachment' ? 'Search attachments…' : 'Search subject, sender…'">
-          <button type="submit" class="ws-btn-primary" :disabled="anySearching">
-            <template x-if="!anySearching">
-              <span><i data-lucide="search" class="icon-sm icon-inline"></i> Search</span>
-            </template>
-            <template x-if="anySearching">
-              <span><i data-lucide="loader" class="icon-sm icon-inline spin"></i> Searching…</span>
-            </template>
-          </button>
+          </div>
         </form>
       </div>
 
@@ -169,8 +178,11 @@
           {# Loading skeletons #}
           <template x-if="searching && results.length === 0">
             <div class="ws-results">
+              {# Calm, honest loading: static ruled lines and the word,
+                 no shimmer — the search button already says Searching…. #}
+              <p class="ws-loading" role="status">Searching…</p>
               <template x-for="i in 3" :key="i">
-                <div class="ws-skeleton">
+                <div class="ws-skeleton" aria-hidden="true">
                   <div class="ws-skeleton-line w-60"></div>
                   <div class="ws-skeleton-line w-40"></div>
                 </div>
@@ -206,13 +218,20 @@
                          tabindex="0" role="button"
                          @keydown.enter.prevent="openPreview(r)"
                          @keydown.space.prevent="openPreview(r)">
+                      {# A ledger line per letter: sender and postmark date on
+                         top, the subject below, then where it lives. #}
+                      <div class="ws-result-from">
+                        <span class="ws-result-from-text" x-text="r.from_addr || '?'"></span>
+                        <time class="ws-result-date" :datetime="r.date_sent || ''"
+                              x-text="postmarkDate(r.date_sent)"></time>
+                      </div>
                       <div class="ws-result-subject">
                         <span class="ws-result-subject-text" x-text="r.subject || '(no subject)'"></span>
-                        <span class="ws-badge ws-badge-acct" x-text="accountName(r.account_id)"></span>
-                        <i data-lucide="paperclip" class="icon-sm ws-att-mark" x-show="r.has_attachments"></i>
+                        <i data-lucide="paperclip" class="icon-sm ws-att-mark" x-show="r.has_attachments" aria-label="Has attachments"></i>
                       </div>
-                      <div class="ws-result-meta text-xsmall text-muted">
-                        <span class="ws-result-meta-text" x-text="resultMeta(r)"></span>
+                      <div class="ws-result-meta">
+                        <span class="ws-badge ws-badge-acct" x-text="accountName(r.account_id)"></span>
+                        <span class="ws-result-meta-text" x-text="r.folder_path || ''"></span>
                         <span class="ws-badge ws-badge-live" x-show="r.alive_in_live">live</span>
                         <span class="ws-badge ws-badge-snap" x-show="r.snapshots && r.snapshots.length" x-text="'snap ×' + r.snapshots.length"></span>
                         <span class="ws-badge ws-badge-gone"
@@ -247,8 +266,11 @@
           {# Loading skeletons #}
           <template x-if="attSearching && attResults.length === 0">
             <div class="ws-results">
+              {# Calm, honest loading: static ruled lines and the word,
+                 no shimmer — the search button already says Searching…. #}
+              <p class="ws-loading" role="status">Searching…</p>
               <template x-for="i in 3" :key="i">
-                <div class="ws-skeleton">
+                <div class="ws-skeleton" aria-hidden="true">
                   <div class="ws-skeleton-line w-60"></div>
                   <div class="ws-skeleton-line w-40"></div>
                 </div>
@@ -272,8 +294,8 @@
                 <table class="ws-att-table">
                   <thead>
                     <tr>
-                      <th class="ws-att-check"></th>
-                      <th class="ws-att-ticon-cell"></th>
+                      <th class="ws-att-check"><span class="sr-only">Select</span></th>
+                      <th class="ws-att-ticon-cell"><span class="sr-only">Type</span></th>
                       <th>Attachment</th>
                       <th>Message</th>
                       <th>Size</th>
@@ -338,7 +360,7 @@
                           </div>
                         </td>
                         <td class="ws-att-size" x-text="fmtSize(a.size_bytes)"></td>
-                        <td class="ws-att-date" x-text="a.date_sent ? a.date_sent.slice(0, 10) : '—'"></td>
+                        <td class="ws-att-date"><time :datetime="a.date_sent || ''" x-text="a.date_sent ? postmarkDate(a.date_sent) : '—'"></time></td>
                       </tr>
                     </template>
                   </tbody>
@@ -381,7 +403,7 @@
             <i :data-lucide="restoring ? 'loader' : 'play'"
                :class="{'spin': restoring}"
                class="icon-sm icon-inline"></i>
-            <span x-text="restoring ? 'Restoring…' : 'Restore selected →'"></span>
+            <span x-text="restoring ? 'Restoring…' : 'Restore selected'"></span>
           </button>
         </div>
       </div>
@@ -421,7 +443,7 @@
                class="icon-sm icon-inline"></i>
             <span x-text="restoring
               ? 'Restoring…'
-              : 'Restore ' + selectedFolders.length + ' folder' + (selectedFolders.length === 1 ? '' : 's') + ' →'"></span>
+              : 'Restore ' + selectedFolders.length + ' folder' + (selectedFolders.length === 1 ? '' : 's')"></span>
           </button>
           <p class="text-muted text-xsmall" x-text="folderStatus" x-show="folderStatus"></p>
         </div>
@@ -446,12 +468,12 @@
             <i :data-lucide="restoring ? 'loader' : 'play'"
                :class="{'spin': restoring}"
                class="icon-sm icon-inline"></i>
-            <span x-text="restoring ? 'Restoring…' : 'Run full restore →'"></span>
+            <span x-text="restoring ? 'Restoring…' : 'Run full restore'"></span>
           </button>
           <p class="text-muted text-xsmall" x-text="fullStatus" x-show="fullStatus"></p>
         </div>
       </template>
-    </main>
+    </div>
   </div>
 
   {# Docked staging bar — fixed to the bottom edge, visible in every preset
@@ -472,7 +494,7 @@
        target="_blank" rel="noopener">Open in webmail</a>
     {% endif %}
     <button class="ws-btn-ghost ws-btn-ghost-danger" @click="emptyStaging()">Empty</button>
-    <button class="ws-btn-primary" @click="pushPanelOpen = !pushPanelOpen">Push upstream →</button>
+    <button class="ws-btn-primary" @click="pushPanelOpen = !pushPanelOpen"><i data-lucide="forward" class="icon-sm icon-inline"></i> Push upstream</button>
   </div>
 
   {# Push options popover — anchored above the staging bar's right edge.

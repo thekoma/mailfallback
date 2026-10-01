@@ -88,14 +88,16 @@ def test_restore_move_renders_legacy_form(client, db_session, default_store):
 
 
 def test_restore_move_show_all_toggle_url_is_correct(client, db_session, default_store):
-    """The toggle's onchange URL must stay on /restore/move. Previously it pointed
-    at /restore which dumped the user back at the chooser."""
+    """The toggle's target URLs must stay on /restore/move. Previously it pointed
+    at /restore which dumped the user back at the chooser. The switch navigates
+    through core.js's data-switch-href wiring (no inline handler)."""
     create_user(db_session, "admin", "pass", UserRole.admin, store_id=default_store.id)
     _login(client, "admin", "pass")
     resp = client.get("/restore/move")
     assert resp.status_code == 200
-    assert "window.location.href='/restore/move'" in resp.text
-    assert "window.location.href='/restore'" not in resp.text
+    assert 'data-switch-href="/restore/move"' in resp.text
+    assert 'data-switch-href-on="/restore/move?show_all=1"' in resp.text
+    assert 'data-switch-href="/restore"' not in resp.text
 
 
 def test_restore_unprotected_state(client, db_session, default_store):

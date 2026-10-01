@@ -1,27 +1,29 @@
+{% import "partials/airmail.html" as mail %}
 {% macro backup_row(job) %}
-<tr>
-    <td>{{ job.started_at.strftime('%Y-%m-%d %H:%M') if job.started_at else '—' }}</td>
+<tr class="ledger-row">
+    <td class="num">{{ job.started_at.strftime('%Y-%m-%d %H:%M') if job.started_at else '—' }}</td>
     <td>{{ job.source }}</td>
     <td>
-        {% if job.status.value == 'completed' %}<span class="badge badge-idle">completed</span>
-        {% elif job.status.value == 'running' %}<span class="badge badge-syncing">running</span>
-        {% elif job.status.value == 'failed' %}<span class="badge badge-error">{{ job.failure_kind or 'failed' }}</span>
-        {% else %}<span class="badge">{{ job.status.value }}</span>
+        {% if job.status.value == 'completed' %}{{ mail.stamp({"badge": "stamp-ok", "icon": "check-circle", "spin": false, "label": "completed"}) }}
+        {% elif job.status.value == 'running' %}{{ mail.stamp({"badge": "stamp-active", "icon": "loader", "spin": true, "label": "running"}) }}
+        {% elif job.status.value == 'failed' %}{% if job.failure_kind and job.failure_kind != "error" %}{{ mail.stamp({"badge": "stamp-attention", "icon": "clock", "spin": false, "label": job.failure_kind}) }}{% else %}{{ mail.stamp({"badge": "stamp-error", "icon": "alert-circle", "spin": false, "label": job.failure_kind or "failed"}) }}{% endif %}
+        {% else %}{{ mail.stamp({"badge": "stamp-muted", "icon": "clock", "spin": false, "label": job.status.value}) }}
         {% endif %}
     </td>
-    <td>{{ job.started_at | duration_human(job.completed_at) }}</td>
+    <td class="num">{{ job.started_at | duration_human(job.completed_at) }}</td>
     <td>{% if job.snapshot_id %}<code>{{ job.snapshot_id[:8] }}</code>{% else %}—{% endif %}</td>
-    <td>{% if job.bytes_added %}{{ job.bytes_added | filesizeformat }}{% else %}—{% endif %}</td>
-    <td>{% if job.log %}<button class="icon-btn" onclick="showLogModal(this)" data-log="{{ job.log|e }}">View</button>{% endif %}</td>
+    <td class="num">{% if job.bytes_added %}{{ job.bytes_added | filesizeformat }}{% else %}—{% endif %}</td>
+    <td class="ledger-action">{% if job.log %}<button class="icon-btn" data-click="showLogModal" data-log="{{ job.log|e }}">View</button>{% endif %}</td>
 </tr>
 {% endmacro %}
 
-<h3><i data-lucide="history" class="icon-lg icon-inline"></i>Backup History</h3>
+<h3 class="section-title"><i data-lucide="history" class="icon-md icon-inline"></i>Backup History</h3>
 
 {% if not backup_jobs %}
 <p class="text-muted text-small">No off-site backup has run for this mailbox yet.</p>
 {% else %}
-<table>
+<div class="table-wrap ledger-wrap">
+<table class="ledger ledger-compact">
     <thead>
         <tr>
             <th>Started</th><th>Trigger</th><th>Status</th>
@@ -34,17 +36,20 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 
 {% if backup_jobs|length > 5 %}
 <details>
     <summary class="text-muted text-small">Show {{ backup_jobs|length - 5 }} older runs</summary>
-    <table>
+    <div class="table-wrap ledger-wrap">
+    <table class="ledger ledger-compact">
         <tbody>
             {% for job in backup_jobs[5:] %}
             {{ backup_row(job) }}
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </details>
 {% endif %}
 {% endif %}

@@ -3,40 +3,40 @@
     <div class="results-toolbar">
         <small class="text-muted">{{ messages|length }} result{{ 's' if messages|length != 1 }} (max 100)</small>
         <div class="col-toggle-wrap">
-            <button type="button" class="outline secondary text-small" onclick="toggleColMenu()" id="col-toggle-btn">
-                <i data-lucide="columns-3" class="icon-sm icon-inline"></i> Columns
+            <button type="button" class="icon-btn" data-click="toggleColMenu" data-args='[]' id="col-toggle-btn" aria-controls="col-menu">
+                <i data-lucide="columns-3" class="icon-sm"></i> Columns
             </button>
             <div id="col-menu" class="col-menu hidden">
-                <label><input type="checkbox" data-col="col-folder" {{ 'checked' if show_folder else '' }} onchange="toggleColumn(this)"> Folder</label>
-                <label><input type="checkbox" data-col="col-subject" checked onchange="toggleColumn(this)"> Subject</label>
-                <label><input type="checkbox" data-col="col-from" checked onchange="toggleColumn(this)"> From</label>
-                <label><input type="checkbox" data-col="col-to" onchange="toggleColumn(this)"> To</label>
-                <label><input type="checkbox" data-col="col-date" checked onchange="toggleColumn(this)"> Date</label>
-                <label><input type="checkbox" data-col="col-msgid" onchange="toggleColumn(this)"> Message-ID</label>
+                <label><input type="checkbox" data-col="col-folder" {{ 'checked' if show_folder else '' }} data-change="toggleColumn"> Folder</label>
+                <label><input type="checkbox" data-col="col-subject" checked data-change="toggleColumn"> Subject</label>
+                <label><input type="checkbox" data-col="col-from" checked data-change="toggleColumn"> From</label>
+                <label><input type="checkbox" data-col="col-to" data-change="toggleColumn"> To</label>
+                <label><input type="checkbox" data-col="col-date" checked data-change="toggleColumn"> Date</label>
+                <label><input type="checkbox" data-col="col-msgid" data-change="toggleColumn"> Message-ID</label>
             </div>
         </div>
     </div>
-    <div class="table-responsive">
-    <table class="compact sortable resizable" id="results-table">
+    <div class="table-responsive ledger-wrap">
+    <table class="ledger ledger-compact sortable resizable" id="results-table">
         <thead><tr>
-            <th class="col-check"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
-            <th class="col-folder sortable-header" onclick="sortByCol(this)" {% if not show_folder %}style="display:none"{% endif %}>Folder <span class="sort-arrow"></span></th>
-            <th class="col-subject sortable-header" onclick="sortByCol(this)">Subject <span class="sort-arrow"></span></th>
-            <th class="col-from sortable-header" onclick="sortByCol(this)">From <span class="sort-arrow"></span></th>
-            <th class="col-to sortable-header" onclick="sortByCol(this)" style="display:none">To <span class="sort-arrow"></span></th>
-            <th class="col-date sortable-header" onclick="sortByCol(this)">Date <span class="sort-arrow"></span></th>
-            <th class="col-msgid sortable-header" onclick="sortByCol(this)" style="display:none">Message-ID <span class="sort-arrow"></span></th>
+            <th class="col-check"><input type="checkbox" id="select-all" data-change="toggleSelectAll" aria-label="Select all"></th>
+            <th class="col-folder sortable-header" data-click="sortByCol" {% if not show_folder %}hidden{% endif %}>Folder <span class="sort-arrow"></span></th>
+            <th class="col-subject sortable-header" data-click="sortByCol">Subject <span class="sort-arrow"></span></th>
+            <th class="col-from sortable-header" data-click="sortByCol">From <span class="sort-arrow"></span></th>
+            <th class="col-to sortable-header" data-click="sortByCol" hidden>To <span class="sort-arrow"></span></th>
+            <th class="col-date sortable-header" data-click="sortByCol">Date <span class="sort-arrow"></span></th>
+            <th class="col-msgid sortable-header" data-click="sortByCol" hidden>Message-ID <span class="sort-arrow"></span></th>
         </tr></thead>
         <tbody>
         {% for msg in messages %}
         <tr>
             <td class="col-check"><input type="checkbox" name="selected_uids" value="{{ msg.uid }}" data-folder="{{ msg.folder or '' }}"></td>
-            <td class="col-folder text-muted text-small" {% if not show_folder %}style="display:none"{% endif %}>{{ msg.folder or '' }}</td>
+            <td class="col-folder text-muted text-small" {% if not show_folder %}hidden{% endif %}>{{ msg.folder or '' }}</td>
             <td class="col-subject">{{ msg.subject }}</td>
             <td class="col-from">{{ msg.from }}</td>
-            <td class="col-to" style="display:none">{{ msg.to }}</td>
+            <td class="col-to" hidden>{{ msg.to }}</td>
             <td class="col-date text-small" data-sort="{{ msg.date }}">{{ msg.date }}</td>
-            <td class="col-msgid text-small" style="display:none">{{ msg.message_id }}</td>
+            <td class="col-msgid text-small" hidden>{{ msg.message_id }}</td>
         </tr>
         {% endfor %}
         </tbody>

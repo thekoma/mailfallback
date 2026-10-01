@@ -6,27 +6,27 @@
             — {{ account.total_messages | number }} messages{% if account.unread_messages %} ({{ account.unread_messages | number }} unread){% endif %}, {{ account.maildir_size_bytes|filesizeformat }}
         </span>
     </summary>
-    <div class="table-wrap">
-    <table class="mt-1">
+    <div class="table-wrap ledger-wrap stats-ledger">
+    <table class="ledger ledger-compact">
         <thead>
-            <tr><th>Folder</th><th>Messages</th><th>Unread</th><th>Size</th></tr>
+            <tr><th scope="col">Folder</th><th scope="col" class="ledger-num">Messages</th><th scope="col" class="ledger-num">Unread</th><th scope="col" class="ledger-num">Size</th></tr>
         </thead>
         <tbody>
             {% for folder in folder_stats %}
-            <tr>
-                <td>{{ folder.name }}</td>
-                <td>{{ folder.messages | number }}</td>
-                <td>{{ folder.unread if folder.unread else '—' }}</td>
-                <td>{{ folder.size_bytes|filesizeformat if folder.size_bytes else '—' }}</td>
+            <tr class="ledger-row">
+                <td class="cell-wrap">{{ folder.name }}</td>
+                <td class="ledger-num">{{ folder.messages | number }}</td>
+                <td class="ledger-num">{{ folder.unread if folder.unread else '—' }}</td>
+                <td class="ledger-num">{{ folder.size_bytes|filesizeformat if folder.size_bytes else '—' }}</td>
             </tr>
             {% endfor %}
         </tbody>
         <tfoot>
-            <tr>
+            <tr class="ledger-total">
                 <td><strong>Total</strong></td>
-                <td><strong>{{ account.total_messages | number }}</strong></td>
-                <td><strong>{{ account.unread_messages if account.unread_messages else '—' }}</strong></td>
-                <td><strong>{{ account.maildir_size_bytes|filesizeformat if account.maildir_size_bytes else '—' }}</strong></td>
+                <td class="ledger-num"><strong>{{ account.total_messages | number }}</strong></td>
+                <td class="ledger-num"><strong>{{ account.unread_messages if account.unread_messages else '—' }}</strong></td>
+                <td class="ledger-num"><strong>{{ account.maildir_size_bytes|filesizeformat if account.maildir_size_bytes else '—' }}</strong></td>
             </tr>
         </tfoot>
     </table>

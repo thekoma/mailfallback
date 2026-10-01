@@ -102,6 +102,9 @@ function restoreWorkspace() {
     preview: null,
     previewRef: null,           // the result row behind the open preview — staging adds need its ids
     previewOpen: false,
+    // Phone layout (drawer breakpoint): the open preview is a bottom sheet
+    // there, and the selection bar steps aside while it is open.
+    isPhone: false,
     previewLoading: false,
     _previewSeq: 0,             // monotonic seq — stale preview responses are dropped
 
@@ -246,6 +249,11 @@ function restoreWorkspace() {
 
     // === Lifecycle ===
     init() {
+      const phoneMq = window.matchMedia ? window.matchMedia('(max-width: 768px)') : null;
+      if (phoneMq) {
+        this.isPhone = phoneMq.matches;
+        if (phoneMq.addEventListener) phoneMq.addEventListener('change', e => { this.isPhone = e.matches; });
+      }
       // Pick first mailbox. The "Another mailbox" select lives inside x-if
       // templates (not in the DOM yet), but it renders the SAME Jinja option
       // list as the sidebar Mailbox select — seed it from there so the
@@ -277,6 +285,18 @@ function restoreWorkspace() {
       // until the user narrows them (the old silent 7-day default hid hits).
       this.fetchSnapshotDates();
       this.refreshStaging();
+      this._prefillFromUrl();
+    },
+
+    _prefillFromUrl() {
+      // The owner home's address field submits here as ?q=…[&preset=attachment]:
+      // land on the right search preset with the query already running.
+      const params = new URLSearchParams(window.location.search);
+      const q = (params.get('q') || '').trim();
+      if (!q) return;
+      if (params.get('preset') === 'attachment') this.applyPreset('attachment');
+      this.query = q;
+      this.submitSearch();
     },
 
     _initDockHeightVars() {
@@ -412,6 +432,16 @@ function restoreWorkspace() {
         || this.accountsAll.find(x => x.id === id);
       return a ? a.name : '?';
     },
+    // Postmark date for ledger rows: "30 SEP 2026" (UTC, tabular in CSS),
+    // the same shape as the server's postmark_date filter. Empty → "—".
+    postmarkDate(iso) {
+      if (!iso) return '—';
+      // Read the calendar date as written (no zone shift on naive stamps).
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+      if (!m) return iso.slice(0, 10);
+      const mon = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'][Number(m[2]) - 1];
+      return m[3] + ' ' + mon + ' ' + m[1];
+    },
     fmtSize(n) {
       if (n == null) return '?';
       if (n < 1024) return n + ' B';
@@ -446,8 +476,11 @@ function restoreWorkspace() {
       // Single source of truth: the bar's x-show AND its --ws-action-h
       // height tracker both watch this getter, so the measured dock slot
       // can never disagree with what is actually rendered.
+      // On phones the open preview sheet owns the bottom of the screen: the
+      // bar steps aside (and its dock slot reads 0) until the sheet closes.
       return (this.preset === 'single-mail' || this.preset === 'attachment')
-        && this.selectableCount > 0;
+        && this.selectableCount > 0
+        && !(this.previewOpen && this.isPhone);
     },
     isPreviewing(r) {
       // The row behind the open preview pane (message-level marker).

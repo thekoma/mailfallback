@@ -1,0 +1,15 @@
+{#- Recent activity as ledger entries: how each of the last runs ended, from
+    resolve_job_outcome. Needs: recent_jobs. -#}
+{% import "partials/airmail.html" as mail %}
+<section class="activity" aria-labelledby="activity-title">
+    <h2 class="section-title" id="activity-title">Recent activity</h2>
+    <ol class="activity-list">
+        {% for job in recent_jobs %}
+        <li class="activity-entry">
+            <span class="activity-stamp">{{ mail.stamp({"badge": job.outcome_badge, "icon": job.outcome_icon, "spin": job.outcome_spin, "label": job.outcome_label}) }}</span>
+            <a class="activity-name" href="/accounts/{{ job.account_id }}">{{ job.account_name }}</a>
+            <span class="activity-when num">{{ job.time_ago }}</span>
+        </li>
+        {% endfor %}
+    </ol>
+</section>

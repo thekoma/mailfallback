@@ -1,0 +1,91 @@
+{#- The route every message travels: Source → Local backup → Repository →
+    Snapshot. Counts come from chain_summary (routers/ui.py), which reads the
+    resolver's verdicts. Shared by the admin ledger and the owner home.
+    Needs: chain_summary, dot_class, user, show_chain_explainer. -#}
+{% import "partials/airmail.html" as mail %}
+{% set _admin = user.role.value == "admin" %}
+<div class="route-wrap">
+    <h2 class="route-title" id="route-title">Mail safety chain</h2>
+    {% if show_chain_explainer %}
+    {# The explainer is a note written on the same strip, above a fold —
+       not a box inside the box. Its terms sit over the stages they explain. #}
+    {# Admins read the route daily: the note folds away behind a summary
+       line; owners see it open until they dismiss it. #}
+    <details class="route-note"{% if not _admin %} open{% endif %}>
+        <summary class="route-note-toggle">What this means</summary>
+        <p class="route-note-lede">How MailFallBack keeps your mail safe. Each stage in the chain moves your mail one step further from the original mailbox:</p>
+        <dl class="route-note-terms">
+            <div><dt>Source</dt><dd>your provider (Gmail, Outlook, …).</dd></div>
+            <div><dt>Local backup</dt><dd>the always-on Maildir on this server.</dd></div>
+            <div><dt>Repository</dt><dd>an off-site, encrypted store you control.</dd></div>
+            <div><dt>Snapshot</dt><dd>a point-in-time capture inside a Repository.</dd></div>
+        </dl>
+        <div class="route-note-foot">
+            <p>Click a stage's name below to open it.</p>
+            <form method="post" action="/profile/dismiss-chain-explainer" class="d-inline">
+                <input type="hidden" name="next" value="{{ request.url.path }}">
+                <button type="submit" class="icon-btn">
+                    <i data-lucide="check" class="icon-sm"></i> Got it — don't show again
+                </button>
+            </form>
+        </div>
+    </details>
+    {% endif %}
+    <ol class="route" aria-labelledby="route-title">
+        <li class="route-stage" data-stage="source">
+            <a class="route-link" href="/accounts" title="Manage mailboxes">
+                <span class="route-name"><i data-lucide="inbox" class="icon-sm"></i> Source</span>
+                <span class="route-value">{{ mail.mark(dot_class[chain_summary.source_tone]) }}
+                {% if chain_summary.connected == chain_summary.mirrors_total %}
+                {{ chain_summary.mailboxes }} mailbox{{ 'es' if chain_summary.mailboxes != 1 else '' }} connected
+                {% else %}
+                {{ chain_summary.connected }} of {{ chain_summary.mirrors_total }} connected
+                {% endif %}</span>
+            </a>
+        </li>
+        <li class="route-stage" data-stage="local">
+            <a class="route-link" href="/accounts" title="Local backup health is shown per mailbox">
+                <span class="route-name"><i data-lucide="hard-drive" class="icon-sm"></i> Local backup</span>
+                <span class="route-value">{{ mail.mark(dot_class[chain_summary.local_tone]) }}
+                {% if chain_summary.mirrors_failing > 0 %}
+                {{ chain_summary.mirrors_failing }} of {{ chain_summary.mirrors_total }} failing
+                {% elif chain_summary.mirrors_attention > 0 %}
+                {{ chain_summary.mirrors_attention }} of {{ chain_summary.mirrors_total }} need attention
+                {% else %}
+                {{ chain_summary.mirrors_ok }} of {{ chain_summary.mirrors_total }} healthy
+                {%- if chain_summary.mirrors_suspended %} · {{ chain_summary.mirrors_suspended }} suspended{% endif %}
+                {%- if chain_summary.mirrors_stopped %} · {{ chain_summary.mirrors_stopped }} stopped{% endif %}
+                {%- if chain_summary.mirrors_waiting %} · {{ chain_summary.mirrors_waiting }} not started{% endif %}
+                {% endif %}</span>
+            </a>
+        </li>
+        <li class="route-stage" data-stage="repository">
+            {% if _admin %}
+            <a class="route-link" href="/admin/backup" title="Manage repositories">
+            {% else %}
+            <div class="route-link route-link-static" title="Repositories are managed by an admin">
+            {% endif %}
+                <span class="route-name"><i data-lucide="cloud-upload" class="icon-sm"></i> Repository</span>
+                <span class="route-value">
+                {% if chain_summary.repositories == 0 %}
+                {{ mail.mark(dot_class["muted"]) }} None configured
+                {% elif chain_summary.policies_failed > 0 %}
+                {{ mail.mark(dot_class["error"]) }} {{ chain_summary.repositories }} configured · {{ chain_summary.policies_failed }} failing
+                {% else %}
+                {{ mail.mark(dot_class["ok"]) }} {{ chain_summary.repositories }} configured · {{ chain_summary.policies }} polic{{ 'ies' if chain_summary.policies != 1 else 'y' }}
+                {% endif %}</span>
+            {% if _admin %}</a>{% else %}</div>{% endif %}
+        </li>
+        <li class="route-stage" data-stage="snapshot">
+            <a class="route-link" href="/recover" title="Recover from a snapshot">
+                <span class="route-name"><i data-lucide="camera" class="icon-sm"></i> Snapshot</span>
+                <span class="route-value">
+                {% if chain_summary.snapshots_total == 0 %}
+                {{ mail.mark(dot_class["muted"]) }} None yet
+                {% else %}
+                {{ mail.mark(dot_class["ok"]) }} {{ chain_summary.snapshots_total | number }} stored
+                {% endif %}</span>
+            </a>
+        </li>
+    </ol>
+</div>

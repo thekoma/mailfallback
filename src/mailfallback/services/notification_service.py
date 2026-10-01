@@ -13,7 +13,7 @@ from mailfallback.security import decrypt_credentials
 
 logger = logging.getLogger(__name__)
 
-# (event key, short badge label, badge class, checkbox label).
+# (event key, short tag label, checkbox label).
 #
 # Single source for the subscription UI too. The profile template used to carry
 # its own hardcoded copy, so a key added here never grew a checkbox and was
@@ -22,38 +22,35 @@ logger = logging.getLogger(__name__)
 PROBLEM_EVENT_OPTIONS = (
     # Labels use the mailbox status vocabulary (services/mailbox_status.py), so
     # a subscription reads the same as the chip it is about.
-    ("needs_reauth", "Sign-in needed", "badge-warning", "Sign-in needed (reconnect to resume)"),
-    ("sync_error", "Sync failed", "badge-error", "Sync failed"),
+    ("needs_reauth", "Sign-in needed", "Sign-in needed (reconnect to resume)"),
+    ("sync_error", "Sync failed", "Sync failed"),
     (
         "sync_paused",
         "Paused",
-        "badge-disabled",
         "Sync paused (daily budget, provider throttling or a temporary error)",
     ),
-    ("stale", "Out of date", "badge-warning", "Out of date (no successful sync for a long time)"),
+    ("stale", "Out of date", "Out of date (no successful sync for a long time)"),
     # Bare "Backup failed" is forbidden by LEXICON.md; the off-site push
     # produces a snapshot, so that is what fails. The event KEY stays
     # backup_failed — internal code is exempt, only what users read is governed.
     (
         "backup_failed",
         "Snapshot failed",
-        "badge-error",
         "Snapshot failed (mailbox or configuration)",
     ),
 )
 ACTIVITY_EVENT_OPTIONS = (
-    ("sync_completed", "Sync done", "badge-idle", "Sync completed"),
-    ("initial_sync_completed", "Initial sync done", "badge-idle", "Initial sync completed"),
-    ("restore_completed", "Restore done", "badge-idle", "Restore completed"),
+    ("sync_completed", "Sync done", "Sync completed"),
+    ("initial_sync_completed", "Initial sync done", "Initial sync completed"),
+    ("restore_completed", "Restore done", "Restore completed"),
     # Only config_backup_service emits it (the mailbox back-up worker does
     # not), so the label promises exactly that.
     (
         "backup_completed",
         "Snapshot done",
-        "badge-idle",
         "Configuration snapshot completed",
     ),
-    ("account_added", "Mailbox added", "badge-admin", "Mailbox added"),
+    ("account_added", "Mailbox added", "Mailbox added"),
 )
 
 PROBLEM_EVENT_KEYS = tuple(e[0] for e in PROBLEM_EVENT_OPTIONS)

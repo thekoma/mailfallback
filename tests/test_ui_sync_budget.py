@@ -129,7 +129,7 @@ def test_accounts_table_initial_sync_chip_with_pct(client, db_session, default_s
 
     assert resp.status_code == 200
     assert "Initial sync 38%" in resp.text
-    assert "badge-info" in resp.text
+    assert "stamp-active" in resp.text
 
 
 def test_accounts_table_paused_chip_with_resume_and_tooltip(client, db_session, default_store):
@@ -147,7 +147,7 @@ def test_accounts_table_paused_chip_with_resume_and_tooltip(client, db_session, 
     assert "Paused · resumes shortly" in resp.text
     assert 'title="Daily sync budget reached"' in resp.text
     # Self-recovering pause is NOT the red path.
-    assert "badge-error" not in resp.text
+    assert "stamp-error" not in resp.text
 
 
 def test_accounts_table_throttle_tooltip(client, db_session, default_store):
@@ -176,7 +176,7 @@ def test_accounts_table_error_chip_unchanged(client, db_session, default_store):
 
     resp = client.get("/partials/accounts-table")
 
-    assert '<span class="badge badge-error"><i data-lucide="alert-circle"' in resp.text
+    assert '<span class="stamp stamp-error"><i data-lucide="alert-circle"' in resp.text
 
 
 def test_accounts_table_reauth_shows_sign_in_needed(client, db_session, default_store):
@@ -192,9 +192,9 @@ def test_accounts_table_reauth_shows_sign_in_needed(client, db_session, default_
 
     resp = client.get("/partials/accounts-table")
 
-    assert '<span class="badge badge-warning"><i data-lucide="key-round"' in resp.text
+    assert '<span class="stamp stamp-attention"><i data-lucide="key-round"' in resp.text
     assert "Sign-in needed" in resp.text
-    assert "badge-error" not in resp.text
+    assert "stamp-error" not in resp.text
 
 
 def test_accounts_table_oauth_without_credentials_shows_sign_in_needed(
@@ -208,7 +208,7 @@ def test_accounts_table_oauth_without_credentials_shows_sign_in_needed(
 
     assert "Sign-in needed" in resp.text
     assert "Unauthenticated" not in resp.text
-    assert "badge-error" not in resp.text
+    assert "stamp-error" not in resp.text
 
 
 def test_accounts_table_hidden_account_shows_status_too(client, db_session, default_store):
@@ -225,7 +225,7 @@ def test_accounts_table_hidden_account_shows_status_too(client, db_session, defa
 
     assert "Hidden" in resp.text
     assert (
-        '<span class="badge badge-idle"><i data-lucide="check-circle" class="icon-sm"></i>'
+        '<span class="stamp stamp-ok"><i data-lucide="check-circle" class="icon-sm"></i>'
         " Up to date</span>" in resp.text
     )
 
@@ -240,7 +240,7 @@ def test_accounts_table_first_sync_chip_has_no_title(client, db_session, default
         _clear_progress()
 
     assert (
-        '<span class="badge badge-info"><i data-lucide="loader" class="icon-sm spin"></i>'
+        '<span class="stamp stamp-active"><i data-lucide="loader" class="icon-sm spin"></i>'
         " Initial sync 38%</span>"
     ) in resp.text
     assert 'title="First full sync incomplete"' not in resp.text

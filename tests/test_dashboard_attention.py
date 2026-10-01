@@ -62,7 +62,25 @@ def _box(db_session, default_store, **kw):
 
 
 def _attention_block(html: str) -> str:
-    m = re.search(r"Needs attention.*?</details>", html, re.S)
+    """The admin ledger's Needs attention group."""
+    m = re.search(r"Needs attention.*?</tbody>", html, re.S)
+    return m.group(0) if m else ""
+
+
+def _envelope(html: str, account_id: str) -> str:
+    """One mailbox's envelope on the owner home."""
+    m = re.search(
+        rf'<article class="envelope envelope-mailbox[^"]*" data-account-id="{account_id}"'
+        r".*?</article>",
+        html,
+        re.S,
+    )
+    return m.group(0) if m else ""
+
+
+def _stage(html: str, stage: str) -> str:
+    """One stage of the route strip (Source → Local backup → …)."""
+    m = re.search(rf'data-stage="{stage}".*?</li>', html, re.S)
     return m.group(0) if m else ""
 
 
@@ -99,8 +117,9 @@ def test_reauth_badge_is_warning_not_error(client, db_session, default_store):
     )
     block = _attention_block(client.get("/").text)
     assert "Microsoft sign-in expired. Reconnect to resume syncing." in block
-    assert '<span class="badge badge-warning"><i data-lucide="log-in"' in block
-    assert "badge-error" not in block
+    # The resolver's sign-in stamp: the attention shape, never the red one.
+    assert '<span class="stamp stamp-attention"><i data-lucide="key-round"' in block
+    assert "stamp-error" not in block
 
 
 def test_reauth_turns_source_stage_to_attention(client, db_session, default_store):
@@ -117,12 +136,12 @@ def test_reauth_turns_source_stage_to_attention(client, db_session, default_stor
         sync_state=SyncState.needs_reauth,
     )
     text = client.get("/").text
-    source = re.search(r"</i> Source.*?</div>\s*</a>", text, re.S).group(0)
+    source = _stage(text, "source")
     assert "4 of 5 connected" in source
-    assert "stats-dot-warning" in source
-    local = re.search(r"</i> Local backup.*?</div>\s*</a>", text, re.S).group(0)
+    assert "mark-attention" in source
+    local = _stage(text, "local")
     assert "1 of 5 need attention" in local
-    assert "stats-dot-warning" in local
+    assert "mark-attention" in local
 
 
 def test_credential_error_offers_update_password_link(client, db_session, default_store):
@@ -140,7 +159,7 @@ def test_credential_error_offers_update_password_link(client, db_session, defaul
     assert "Update password" in block
     assert f'hx-post="/api/sync/{a.id}"' not in block
     # The reason is the classified headline, never the raw IMAP response.
-    assert "— The server rejected the password.</span>" in block
+    assert '<span class="ledger-reason">The server rejected the password.</span>' in block
     assert "AUTHENTICATIONFAILED" not in block
     assert "Invalid credentials" not in block
 
@@ -167,10 +186,10 @@ def test_recent_activity_budget_pause_is_not_failed(client, db_session, default_
     )
     db_session.commit()
     text = client.get("/").text
-    activity = re.search(r"Recent activity.*?</details>", text, re.S).group(0)
+    activity = re.search(r"Recent activity.*?</section>", text, re.S).group(0)
     assert "paused (daily limit)" in activity
-    assert "badge-error" not in activity
-    assert "badge-info" in activity
+    assert "stamp-error" not in activity
+    assert "stamp-active" in activity
 
 
 def test_suspended_error_is_not_attention(client, db_session, default_store):
@@ -230,7 +249,8 @@ def test_group_member_is_told_who_can_reconnect(client, db_session, default_stor
     set_group_accounts(db_session, group.id, [a.id])
 
     client.post("/api/auth/login", json={"username": "member", "password": "pass"})
-    block = _attention_block(client.get("/").text)
+    # A member gets the owner home: the reason lives on the mailbox's envelope.
+    block = _envelope(client.get("/").text, a.id)
     assert "FamilyGmail" in block
     assert "Ask the mailbox owner or an admin to reconnect it." in block
     assert "Reconnect to resume syncing" not in block
@@ -242,9 +262,9 @@ def test_dashboard_counts_read_as_mailboxes_with_separators(client, db_session, 
     _admin(client, db_session, default_store)
     _box(db_session, default_store, name="Big", total_messages=279986)
     text = client.get("/").text
-    assert '<div class="stat-value">279,986</div>' in text
+    assert "279,986 messages" in text
     assert "279986" not in text
-    assert "</i> Mailbox</div>" in text  # one mailbox: singular
+    assert '<a href="/accounts">1 mailbox</a>' in text  # one mailbox: singular
     assert 'class="icon-nav"></i>Mailboxes</a>' in text
 
 

@@ -1,10 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Restore — MailFallBack{% endblock %}
 {% block content %}
-<h2><i data-lucide="archive-restore" class="icon-inline"></i> Mail Restore</h2>
+<header class="page-head">
+    <div class="page-head-text">
+        <h1 class="page-title">Mail restore</h1>
+    </div>
+</header>
 
-<form id="restore-form" onsubmit="return false;">
-    <div class="grid">
+<form id="restore-form" class="move-form" data-submit="restoreFormNoSubmit" data-args='[]'>
+    <section class="sheet">
+    <div class="grid move-route">
         <label>
             Source account
             <select name="source_account_id" id="source-account"
@@ -33,7 +38,7 @@
         </label>
     </div>
 
-    <fieldset>
+    <fieldset class="fold move-mode">
         <legend>Restore mode</legend>
         <label><input type="radio" name="restore_mode" value="full" checked> Full restore</label>
         <label><input type="radio" name="restore_mode" value="folder"> Select folders</label>
@@ -52,7 +57,7 @@
             </label>
             <label>
                 Search query
-                <input type="text" id="search-query" name="search_query" placeholder="Type to search…" onkeydown="if(event.key==='Enter'){event.preventDefault();executeSearch();}">
+                <input type="text" id="search-query" name="search_query" placeholder="Type to search…" data-enter="executeSearch" data-args='[]'>
             </label>
         </div>
 
@@ -63,7 +68,7 @@
                     <legend>Search in</legend>
                     <label><input type="checkbox" role="switch" id="sf-subject" checked> Subject</label>
                     <div class="search-field-group">
-                        <label><input type="checkbox" role="switch" id="sf-sender" checked> Sender <span class="chevron" onclick="toggleSubFields('sender-sub')">&#9662;</span></label>
+                        <label><input type="checkbox" role="switch" id="sf-sender" checked> Sender <button type="button" class="chevron" aria-expanded="false" aria-label="Sender fields" aria-controls="sender-sub" data-click="toggleSubFields" data-args='["sender-sub"]'><i data-lucide="chevron-down" class="icon-sm"></i></button></label>
                         <div id="sender-sub" class="sub-fields hidden">
                             <label><input type="checkbox" id="sf-from" checked> From</label>
                             <label><input type="checkbox" id="sf-reply-to"> Reply-To</label>
@@ -71,7 +76,7 @@
                         </div>
                     </div>
                     <div class="search-field-group">
-                        <label><input type="checkbox" role="switch" id="sf-recipient"> Recipient <span class="chevron" onclick="toggleSubFields('recipient-sub')">&#9662;</span></label>
+                        <label><input type="checkbox" role="switch" id="sf-recipient"> Recipient <button type="button" class="chevron" aria-expanded="false" aria-label="Recipient fields" aria-controls="recipient-sub" data-click="toggleSubFields" data-args='["recipient-sub"]'><i data-lucide="chevron-down" class="icon-sm"></i></button></label>
                         <div id="recipient-sub" class="sub-fields hidden">
                             <label><input type="checkbox" id="sf-to"> To</label>
                             <label><input type="checkbox" id="sf-cc"> Cc</label>
@@ -79,7 +84,7 @@
                         </div>
                     </div>
                     <label><input type="checkbox" role="switch" id="sf-body"> Body</label>
-                    <label><input type="checkbox" role="switch" id="sf-entire" onchange="toggleEntireMessage(this)"> Entire message</label>
+                    <label><input type="checkbox" role="switch" id="sf-entire" data-change="toggleEntireMessage"> Entire message</label>
                 </fieldset>
 
                 <div class="grid">
@@ -97,7 +102,7 @@
                     </label>
                     <label>
                         Scope
-                        <select id="search-scope" onchange="updateSearchScope()">
+                        <select id="search-scope" data-change="updateSearchScope" data-args='[]'>
                             <option value="current">Current folder</option>
                             <option value="all">All folders</option>
                         </select>
@@ -116,7 +121,7 @@
             </div>
         </details>
 
-        <button type="button" id="search-btn" onclick="executeSearch()">
+        <button type="button" id="search-btn" class="icon-btn" data-click="executeSearch" data-args='[]'>
             <i data-lucide="search" class="icon-sm icon-inline" id="search-icon"></i>
             <i data-lucide="loader" class="icon-sm icon-inline spin hidden" id="search-spinner"></i>
             <span id="search-btn-text">Search</span>
@@ -124,12 +129,15 @@
         <div id="message-panel"></div>
     </div>
 
-    <fieldset>
-        <legend>Options</legend>
+    </section>
+
+    <section class="sheet" aria-labelledby="move-options-title">
+    <fieldset class="move-options">
+        <legend class="sheet-title" id="move-options-title">Options</legend>
         <div class="grid">
             <label>
                 Folder mapping
-                <select name="folder_mapping" id="folder-mapping-select" onchange="toggleCustomPrefix()">
+                <select name="folder_mapping" id="folder-mapping-select" data-change="toggleCustomPrefix" data-args='[]'>
                     <option value="original">Original folder</option>
                     <option value="Restored">Restored/ prefix</option>
                     <option value="custom">Custom prefix…</option>
@@ -149,21 +157,22 @@
         <div id="separator-warning" class="hidden"></div>
     </fieldset>
 
-    <button type="button" id="start-restore-btn" onclick="executeRestore()">
-        <i data-lucide="play" class="icon-sm icon-inline"></i> Start Restore
+    <button type="button" id="start-restore-btn" class="icon-btn primary icon-btn-lg" data-click="executeRestore" data-args='[]'>
+        <i data-lucide="play" class="icon-sm"></i> Start restore
     </button>
+    </section>
 </form>
 
 <div id="restore-progress"></div>
 
 {% include "partials/restore_running.html" %}
 
-<div class="row-between">
-    <h3>Restore History</h3>
+<div class="row-between move-history-head">
+    <h2 class="section-title">Restore history</h2>
     {% if user.role.value == "admin" %}
-    <label class="text-small">
+    <label class="switch-label">
         <input type="checkbox" role="switch" {% if show_all_users %}checked{% endif %}
-               onchange="window.location.href='/restore/move' + (this.checked ? '?show_all=1' : '')">
+               data-switch-href="/restore/move" data-switch-href-on="/restore/move?show_all=1">
         Show all users
     </label>
     {% endif %}

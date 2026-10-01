@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 from sqlalchemy.orm import Session, selectinload
 
 from mailfallback.config import settings
@@ -21,7 +22,7 @@ from mailfallback.models import (
     account_owners,
 )
 from mailfallback.services import notification_service as _ns
-from mailfallback.services.account_service import get_accounts_for_user
+from mailfallback.services.account_service import get_accounts_for_user, get_own_accounts
 from mailfallback.services.mailbox_status import (
     PAUSE_TOOLTIPS,
     TONE_DOT,
@@ -193,6 +194,40 @@ def _number_format(value):
         return str(value)
 
 
+_MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _postmark_date(value) -> str:
+    """ "30 SEP 2026" — the postmark's date line, in UTC (the column's zone).
+    static/js/postmark.js re-renders it in the viewer's own zone."""
+    if not value:
+        return ""
+    ts = _as_utc(value)
+    return f"{ts.day:02d} {_MONTHS[ts.month - 1]} {ts.year}"
+
+
+def _postmark_time(value) -> str:
+    """ "21:04" in UTC; the template marks it UTC until JS localises it."""
+    if not value:
+        return ""
+    return _as_utc(value).strftime("%H:%M")
+
+
+def _email_wrap(value) -> Markup:
+    """An address that may only wrap after "@" and ".": each break point gets
+    a <wbr>, and the CSS keeps the words themselves whole."""
+    safe = escape(value or "")
+    return safe.replace("@", Markup("@<wbr>")).replace(".", Markup(".<wbr>"))
+
+
+def _iso(value) -> str:
+    return _as_utc(value).isoformat() if value else ""
+
+
 templates.env.filters["filesizeformat"] = _filesizeformat
 templates.env.filters["cron_human"] = _cron_human
 templates.env.filters["time_ago"] = _time_ago
@@ -200,6 +235,10 @@ templates.env.filters["time_until"] = _time_until
 templates.env.filters["duration_human"] = _duration_human
 templates.env.filters["time_ago_class"] = _time_ago_class
 templates.env.filters["number"] = _number_format
+templates.env.filters["postmark_date"] = _postmark_date
+templates.env.filters["postmark_time"] = _postmark_time
+templates.env.filters["iso"] = _iso
+templates.env.filters["email_wrap"] = _email_wrap
 templates.env.filters["auth_label"] = _auth_label
 templates.env.filters["password_noun"] = _password_noun
 templates.env.globals["fixed_host_providers"] = FIXED_HOST_PROVIDERS
@@ -270,8 +309,9 @@ def account_live_status(account) -> dict:
 
 def _get_theme(request: Request) -> str:
     if hasattr(request, "session"):
-        return request.session.get("theme", "light")
-    return "light"
+        # "" = no explicit choice: the page follows prefers-color-scheme.
+        return request.session.get("theme", "")
+    return ""
 
 
 def _get_flash(request, flash_type):
@@ -313,8 +353,10 @@ async def login_submit(request: Request, db: Session = Depends(get_db)):
             context={"oidc_enabled": settings.oidc_enabled, "error": "Invalid credentials"},
         )
     request.session["user_id"] = user.id
-    if user.preferences:
-        request.session["theme"] = user.preferences.get("theme", "light")
+    # Only an explicit choice pins the theme; otherwise the page follows
+    # the browser (prefers-color-scheme).
+    if (user.preferences or {}).get("theme"):
+        request.session["theme"] = user.preferences["theme"]
     from mailfallback.services.audit_service import log_action
 
     log_action(
@@ -390,14 +432,137 @@ def _backup_attention_items(accounts, policies) -> list[dict]:
     return items
 
 
-@router.get("/", response_class=HTMLResponse)
-def dashboard(request: Request, db: Session = Depends(get_db)):
-    user = _get_session_user(request, db)
-    if not user:
-        return RedirectResponse("/login")
-    accounts = get_accounts_for_user(db, user)
-    # The one verdict per mailbox (services/mailbox_status.py). Every count,
-    # dot and attention item below reads it; none re-derives health.
+# Most urgent first: the owner verdict leads with the first of these, and the
+# envelopes / ledger rows sort by it. Only presentation order — the states and
+# their tones are the resolver's.
+_URGENCY = {
+    MailboxState.error: 0,
+    MailboxState.sign_in_needed: 1,
+    MailboxState.initial_stalled: 2,
+    MailboxState.stale: 3,
+    MailboxState.migrating: 4,
+    MailboxState.first_sync: 5,
+    MailboxState.syncing: 6,
+    MailboxState.initial_sync: 7,
+    MailboxState.paused: 8,
+    MailboxState.stopped: 9,
+    MailboxState.waiting: 10,
+    MailboxState.suspended: 11,
+    MailboxState.current: 12,
+}
+
+
+def _time_ago_short(now: datetime, ts: datetime | None) -> str:
+    if not ts:
+        return "—"
+    delta = now - (ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts)
+    secs = delta.total_seconds()
+    if secs < 60:
+        return "just now"
+    if secs < 3600:
+        return f"{int(secs / 60)}m ago"
+    if secs < 86400:
+        return f"{int(secs / 3600)}h ago"
+    return f"{delta.days}d ago"
+
+
+def _mailbox_attention_item(account, st, can_modify: bool) -> dict:
+    """The Needs attention entry for one mailbox whose verdict says so."""
+    base = {"id": account.id, "name": account.name, "account": account, "status": st}
+    if st.state == MailboxState.sign_in_needed:
+        # Revoked/expired OAuth token (e.g. provider password change) — only
+        # an owner can fix it, so surface it with a one-click reconnect, not
+        # buried in the account page. Someone who can't reconnect is told who
+        # can, not handed an action they lack.
+        return {
+            **base,
+            "type": "reauth",
+            "reason": sign_in_message(account, can_modify=can_modify),
+            "never_connected": sign_in_never_completed(account),
+            "provider": account.provider,
+            "action": NextAction.reconnect.value if can_modify else None,
+        }
+    if st.state == MailboxState.error:
+        action = st.action.value if st.action else None
+        if st.action == NextAction.update_password and not can_modify:
+            action = None
+        return {
+            **base,
+            "type": "error",
+            # The classified headline; the raw last_error (a whole mbsync log
+            # at worst) stays on the detail page.
+            "reason": st.detail,
+            "action": action,
+            "password_noun": _password_noun(account),
+        }
+    # stale, initial_stalled
+    return {
+        **base,
+        "type": "stale",
+        "reason": st.detail,
+        "action": st.action.value if st.action else None,
+        # `action` is agent-facing (None while paused, because the agent
+        # trigger refuses); the UI trigger overrides a pause with a warning,
+        # so the button follows the state.
+        "sync_button": True,
+    }
+
+
+_BACKUP_FAILED_STAMP = {
+    "badge": "stamp-error",
+    "icon": "cloud-off",
+    "spin": False,
+    "label": "Snapshot failed",
+}
+
+
+def _verdict(accounts, statuses, backup_items=()) -> dict:
+    """The owner home's postmark verdict: the most urgent mailbox if one needs
+    action, otherwise the quietest true sentence about all of them.
+
+    A failed off-site backup counts as needing attention even when the
+    mailbox syncs fine — the card shows a red "Back up now", so the headline
+    must not say nothing needs attention (#248 class). Sync problems still
+    lead: they are the more urgent of the two."""
+    latest = max(
+        (st.last_success_at for st in statuses.values() if st.last_success_at), default=None
+    )
+    if not accounts:
+        return {
+            "status": None,
+            "stamp": None,
+            "lead": None,
+            "reason": None,
+            "attention": 0,
+            "latest": None,
+        }
+    ordered = sorted(accounts, key=lambda a: (_URGENCY[statuses[a.id].state], a.name or ""))
+    sync_ids = {a.id for a in accounts if statuses[a.id].needs_attention}
+    failed_backup = {i["id"]: i for i in backup_items if i.get("backup")}
+    attention = len(sync_ids | set(failed_backup))
+    lead = ordered[0]
+    stamp = statuses[lead.id]
+    reason = None
+    if not sync_ids and failed_backup:
+        lead = next(a for a in ordered if a.id in failed_backup)
+        stamp = _BACKUP_FAILED_STAMP
+        reason = failed_backup[lead.id]["reason"]
+    return {
+        "status": statuses[lead.id],
+        "stamp": stamp,
+        "lead": lead,
+        "reason": reason,
+        "attention": attention,
+        "all_current": attention == 0
+        and all(st.state == MailboxState.current for st in statuses.values()),
+        "latest": latest,
+    }
+
+
+def _dashboard_context(db: Session, user: User, accounts: list, *, admin_view: bool) -> dict:
+    """Everything both the admin ledger and the owner home read. One verdict
+    per mailbox (services/mailbox_status.py): every count, mark, row and
+    attention item below reads it; none re-derives health."""
     now = datetime.now(UTC)
     statuses = resolve_many(db, accounts, now=now)
     owned_ids = owned_account_ids(db, user)
@@ -415,7 +580,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "errors": error_count,
     }
 
-    if user.role.value == "admin":
+    if admin_view:
         from mailfallback.services.store_service import get_default_store, list_stores
         from mailfallback.services.user_service import list_users
 
@@ -424,6 +589,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
         # Add storage capacity from default store
         default_store = get_default_store(db)
+        stats["storage_total"] = None
         if default_store:
             import shutil
 
@@ -432,76 +598,36 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
                 stats["storage_total"] = _filesizeformat(usage.total)
             except OSError:
                 stats["storage_total"] = None
-        else:
-            stats["storage_total"] = None
 
-    attention = []
     # Mailbox entries come from the resolver's needs_attention verdict. Backup
     # entries are appended separately, after it — a broken backup must not
     # hide behind (or be hidden by) a healthy sync.
-    for a in accounts:
-        st = statuses[a.id]
-        if not st.needs_attention:
-            continue
-        can_modify = can_modify_account(user, a.id, owned_ids)
-        if st.state == MailboxState.sign_in_needed:
-            # Revoked/expired OAuth token (e.g. provider password change) —
-            # only an owner can fix it, so surface it with a one-click
-            # reconnect, not buried in the account page. Someone who can't
-            # reconnect is told who can, not handed an action they lack.
-            attention.append(
-                {
-                    "id": a.id,
-                    "name": a.name,
-                    "type": "reauth",
-                    "reason": sign_in_message(a, can_modify=can_modify),
-                    "never_connected": sign_in_never_completed(a),
-                    "provider": a.provider,
-                    "action": NextAction.reconnect.value if can_modify else None,
-                }
-            )
-        elif st.state == MailboxState.error:
-            action = st.action.value if st.action else None
-            if st.action == NextAction.update_password and not can_modify:
-                action = None
-            attention.append(
-                {
-                    "id": a.id,
-                    "name": a.name,
-                    "type": "error",
-                    # The classified headline; the raw last_error (a whole
-                    # mbsync log at worst) stays on the detail page.
-                    "reason": st.detail,
-                    "action": action,
-                    "password_noun": _password_noun(a),
-                }
-            )
-        else:  # stale, initial_stalled
-            attention.append(
-                {
-                    "id": a.id,
-                    "name": a.name,
-                    "type": "stale",
-                    "reason": st.detail,
-                    "action": st.action.value if st.action else None,
-                    # `action` is agent-facing (None while paused, because the
-                    # agent trigger refuses); the UI trigger overrides a pause
-                    # with a warning, so the button follows the state.
-                    "sync_button": True,
-                }
-            )
+    attention = [
+        _mailbox_attention_item(a, statuses[a.id], can_modify_account(user, a.id, owned_ids))
+        for a in accounts
+        if statuses[a.id].needs_attention
+    ]
+    attention.sort(key=lambda item: _URGENCY[item["status"].state])
 
     account_ids = [a.id for a in accounts]
+    backup_items: list[dict] = []
     if account_ids:
-        attention.extend(
-            _backup_attention_items(
-                accounts,
-                db.query(BackupPolicy).filter(BackupPolicy.account_id.in_(account_ids)).all(),
-            )
+        by_id = {a.id: a for a in accounts}
+        backup_items = _backup_attention_items(
+            accounts,
+            db.query(BackupPolicy).filter(BackupPolicy.account_id.in_(account_ids)).all(),
         )
+        for item in backup_items:
+            item["account"] = by_id[item["id"]]
+            item["status"] = statuses[item["id"]]
+        # A running back-up is work in progress, not a problem: it stays out
+        # of Needs attention and its count, and reads as a quiet note on the
+        # mailbox's own row / envelope instead.
+        attention.extend(i for i in backup_items if i["type"] != "info")
+    backup_notes = {i["id"]: i["reason"] for i in backup_items if i["type"] == "info"}
 
     # Repositories are an admin-level object; a plain user has no page to act on.
-    if user.role.value == "admin":
+    if admin_view:
         from mailfallback.models import Repository
 
         attention.extend(_config_backup_attention_items(db.query(Repository).all()))
@@ -517,26 +643,13 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         )
         account_map = {a.id: a.name for a in accounts}
         for j in jobs:
-            ts = j.completed_at or j.requested_at
-            if ts:
-                delta = now - ts.replace(tzinfo=UTC)
-                if delta.total_seconds() < 60:
-                    time_ago = "just now"
-                elif delta.total_seconds() < 3600:
-                    time_ago = f"{int(delta.total_seconds() / 60)}m ago"
-                elif delta.total_seconds() < 86400:
-                    time_ago = f"{int(delta.total_seconds() / 3600)}h ago"
-                else:
-                    time_ago = f"{delta.days}d ago"
-            else:
-                time_ago = "—"
             outcome = resolve_job_outcome(j)
             recent_jobs.append(
                 {
                     "account_id": j.account_id,
                     "account_name": account_map.get(j.account_id, "?"),
                     "status": j.status.value,
-                    "time_ago": time_ago,
+                    "time_ago": _time_ago_short(now, j.completed_at or j.requested_at),
                     "outcome_badge": outcome.badge,
                     "outcome_icon": outcome.icon,
                     "outcome_spin": outcome.spin,
@@ -548,8 +661,8 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
     from mailfallback.models import Repository
 
-    # Wave 4: chain summary feeds the dashboard hero card. Four stages:
-    # Source (mailboxes connected) → Mirror (local sync health) →
+    # Chain summary feeds the route strip. Four stages:
+    # Source (mailboxes connected) → Local backup (local sync health) →
     # Repository (configured + reachable) → Snapshot (cached counts).
     # Source and Local backup are counted from the resolver's verdicts.
     tones = [st.tone for st in statuses.values()]
@@ -570,9 +683,30 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         local_tone = Tone.attention.value
     else:
         local_tone = Tone.ok.value
-    snapshots_total = (
-        db.query(func.coalesce(func.sum(BackupPolicy.last_snapshot_count), 0)).scalar() or 0
-    )
+
+    # Off-site counts: everything on the admin ledger; on an owner page only
+    # the policies of the viewer's own mailboxes and the repositories those
+    # policies use — one user must never read another's policy or snapshot
+    # counts off the route strip.
+    def _policies():
+        q = db.query(BackupPolicy)
+        if not admin_view:
+            q = q.filter(BackupPolicy.account_id.in_(account_ids or [""]))
+        return q
+
+    snapshot_q = db.query(func.coalesce(func.sum(BackupPolicy.last_snapshot_count), 0))
+    if not admin_view:
+        snapshot_q = snapshot_q.filter(BackupPolicy.account_id.in_(account_ids or [""]))
+    snapshots_total = snapshot_q.scalar() or 0
+    if admin_view:
+        repositories_count = db.query(Repository).count()
+    else:
+        repositories_count = (
+            _policies()
+            .with_entities(func.count(func.distinct(BackupPolicy.destination_id)))
+            .scalar()
+            or 0
+        )
     chain_summary = {
         "mailboxes": len(accounts),
         "mirrors_total": mirrors_total,
@@ -585,15 +719,15 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "connected": connected,
         "source_tone": source_tone,
         "local_tone": local_tone,
-        "repositories": db.query(Repository).count(),
-        "policies": db.query(BackupPolicy).count(),
-        "policies_with_recent_success": db.query(BackupPolicy)
+        "repositories": repositories_count,
+        "policies": _policies().count(),
+        "policies_with_recent_success": _policies()
         .filter(BackupPolicy.last_successful_run_at.isnot(None))
         .count(),
-        "policies_failed": db.query(BackupPolicy)
+        "policies_failed": _policies()
         .filter(BackupPolicy.last_status == BackupStatus.failed)
         .count(),
-        "policies_never_succeeded": db.query(BackupPolicy)
+        "policies_never_succeeded": _policies()
         .filter(BackupPolicy.last_successful_run_at.is_(None))
         .count(),
         "snapshots_total": int(snapshots_total),
@@ -601,33 +735,101 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
     from mailfallback.services.setup_state import get_setup_state
 
-    setup_state = get_setup_state(db, user)
+    # The checklist is an admin's first-run helper on the admin view only.
+    setup_state = get_setup_state(db, user) if admin_view else None
 
-    # First-time explainer on the chain hero — shown once, dismissed via
+    # First-time explainer on the route strip — shown once, dismissed via
     # POST /profile/dismiss-chain-explainer which sets this preference.
     show_chain_explainer = not (user.preferences or {}).get("chain_hero_seen", False)
 
-    return templates.TemplateResponse(
-        request=request,
-        name="dashboard.html",
-        context={
-            "user": user,
-            "stats": stats,
-            "chain_summary": chain_summary,
-            "attention": attention,
-            "recent_jobs": recent_jobs,
-            "setup_state": setup_state,
-            "show_chain_explainer": show_chain_explainer,
-            "dot_class": TONE_DOT,
-        },
-    )
+    # Ledger / envelope order: what needs the reader first, then work in
+    # progress, then the quiet ones.
+    def order(a):
+        return (_URGENCY[statuses[a.id].state], (a.name or "").lower())
+
+    mailbox_attention_ids = {a.id for a in accounts if statuses[a.id].needs_attention}
+    # A mailbox whose only problem is a failed off-site backup already sits
+    # under Needs attention (as its backup item): list it there, once.
+    mailbox_attention_ids |= {i["id"] for i in backup_items if i.get("backup")}
+    other_rows = sorted((a for a in accounts if a.id not in mailbox_attention_ids), key=order)
+    envelopes = [
+        {
+            "account": a,
+            "status": statuses[a.id],
+            "item": next(
+                (
+                    i
+                    for i in attention
+                    if i.get("id") == a.id
+                    and i["type"] in ("reauth", "error", "stale")
+                    and not i.get("backup")
+                ),
+                None,
+            ),
+            "backup_items": [i for i in backup_items if i["id"] == a.id],
+        }
+        for a in sorted(accounts, key=order)
+    ]
+
+    return {
+        "user": user,
+        "stats": stats,
+        "statuses": statuses,
+        "chain_summary": chain_summary,
+        "attention": attention,
+        "backup_notes": backup_notes,
+        "other_rows": other_rows,
+        "envelopes": envelopes,
+        "verdict": _verdict(accounts, statuses, backup_items),
+        "recent_jobs": recent_jobs,
+        "setup_state": setup_state,
+        "show_chain_explainer": show_chain_explainer,
+        "dot_class": TONE_DOT,
+    }
+
+
+@router.get("/", response_class=HTMLResponse)
+def dashboard(request: Request, db: Session = Depends(get_db)):
+    """Role-split home: an admin gets the ledger of every mailbox, anyone
+    else gets the owner view of their own (the same page as /mine)."""
+    user = _get_session_user(request, db)
+    if not user:
+        return RedirectResponse("/login")
+    if user.role != UserRole.admin:
+        return _owner_home(request, db, user)
+    context = _dashboard_context(db, user, get_accounts_for_user(db, user), admin_view=True)
+    return templates.TemplateResponse(request=request, name="dashboard.html", context=context)
+
+
+@router.get("/mine", response_class=HTMLResponse)
+def my_mailboxes(request: Request, db: Session = Depends(get_db)):
+    """The owner view of the mailboxes the current user owns or shares
+    through a group. For an admin this is never everyone's mailboxes."""
+    user = _get_session_user(request, db)
+    if not user:
+        return RedirectResponse("/login")
+    return _owner_home(request, db, user)
+
+
+def _owner_home(request: Request, db: Session, user: User):
+    context = _dashboard_context(db, user, get_own_accounts(db, user), admin_view=False)
+    return templates.TemplateResponse(request=request, name="owner_home.html", context=context)
+
+
+SYSTEM_CALM_HTML = (
+    '<span class="health-calm" data-health="calm">'
+    '<span class="mark mark-ok" aria-hidden="true"></span> System normal</span>'
+)
 
 
 @router.get("/partials/system-status", response_class=HTMLResponse)
 def system_status_partial(request: Request, db: Session = Depends(get_db)):
     user = _get_session_user(request, db)
     if not user or user.role.value != "admin":
-        return HTMLResponse("")
+        # Not 200: an empty 200 would swap an empty bar in — the "empty means
+        # calm" state this partial must never produce. A 401 makes core.js show
+        # "Status unavailable" in a tab whose session expired or was demoted.
+        return HTMLResponse("", status_code=401)
 
     from mailfallback.models import BackupPolicy, BackupStatus, JobStatus, RestoreJob
     from mailfallback.services.background_tasks import get_latest_task
@@ -681,7 +883,9 @@ def system_status_partial(request: Request, db: Session = Depends(get_db)):
         or active_backups > 0
     )
     if not has_activity:
-        return HTMLResponse("")
+        # Explicit calm markup, never an empty body: an empty bar can't tell
+        # "nothing is happening" from "the poll never answered".
+        return HTMLResponse(SYSTEM_CALM_HTML)
 
     return templates.TemplateResponse(
         request=request,

@@ -108,7 +108,11 @@ async def dismiss_chain_explainer(request: Request, db: Session = Depends(get_db
     prefs["chain_hero_seen"] = True
     user.preferences = prefs
     db.commit()
-    return RedirectResponse("/", status_code=303)
+    # Back to the page that showed the explainer; allowlisted, never an open
+    # redirect.
+    form = await request.form()
+    target = form.get("next")
+    return RedirectResponse(target if target in ("/", "/mine") else "/", status_code=303)
 
 
 @router.post("/profile/store")

@@ -1,23 +1,30 @@
 {% extends "base.html" %}
+{% import "partials/airmail.html" as mail %}
 {% block title %}Connect a mailbox — MFB{% endblock %}
+{% block body_class %}page-form{% endblock %}
 {% block content %}
-<h2><i data-lucide="plus-circle" class="icon-xl icon-inline"></i>Connect a mailbox</h2>
-<p class="text-muted">Three quick steps. Your data stays on your server.</p>
+<header class="page-head">
+    <div class="page-head-text">
+        <h1 class="page-title">Connect a mailbox</h1>
+        <p class="page-summary">Three quick steps. Your data stays on your server.</p>
+    </div>
+</header>
 
 {% if oauth_providers and (oauth_providers.google or oauth_providers.microsoft) %}
-<script>window._oauthAvailable = {{ oauth_providers | tojson }};</script>
+<script type="application/json" id="oauth-available-data">{{ oauth_providers | tojson }}</script>
 {% endif %}
 
 {% if oauth_failed %}
-<div class="alert-error mt-1" role="alert">
-    <i data-lucide="alert-circle" class="icon-md icon-inline"></i>
-    Authorization didn't complete. Try again or use an app password instead.
+<div class="notice notice-error" role="alert">
+    <i data-lucide="alert-circle" class="icon-md"></i>
+    <p>Authorization didn't complete. Try again or use an app password instead.</p>
 </div>
 {% endif %}
 
 {% if error %}
-<div class="alert-error mt-1" role="alert">
-    <i data-lucide="alert-circle" class="icon-md icon-inline"></i>{{ error }}
+<div class="notice notice-error" role="alert">
+    <i data-lucide="alert-circle" class="icon-md"></i>
+    <p>{{ error }}</p>
 </div>
 {% endif %}
 
@@ -27,37 +34,37 @@
     <li class="wizard-step" data-step="3"><span class="wizard-step-num">3</span>Confirm</li>
 </ol>
 
-<form id="account-form" data-auth="password" onsubmit="return handleAccountSubmit(event)">
+<form id="account-form" data-auth="password" data-submit="handleAccountSubmit" data-args='["$event"]'>
     <input type="hidden" id="provider" name="provider" value="other">
     <input type="hidden" id="auth_type" name="auth_type" value="app_password">
 
     {# ── Step 1: Provider picker ── #}
-    <section class="wizard-pane active" id="wizard-pane-1">
-        <h3 class="mt-1">Which provider hosts your mail?</h3>
-        <p class="text-muted text-small">Pick the right one and we'll fill in the technical bits for you.</p>
-        <div class="provider-grid mt-1">
-            <button type="button" class="provider-card" data-provider="google" onclick="wizardPickProvider(this)">
-                {% with provider="google" %}{% include "partials/provider_logo.html" %}{% endwith %}
+    <section class="wizard-pane sheet active" id="wizard-pane-1">
+        <h2 class="wizard-title">Which provider hosts your mail?</h2>
+        <p class="sheet-lede">Pick the right one and we'll fill in the technical bits for you.</p>
+        <div class="provider-grid">
+            <button type="button" class="provider-card" data-provider="google" data-click="wizardPickProvider">
+                {{ mail.provider_stamp("google") }}
                 <strong>Gmail</strong>
                 <small class="text-muted">Sign in with Google</small>
             </button>
-            <button type="button" class="provider-card" data-provider="microsoft" onclick="wizardPickProvider(this)">
-                {% with provider="microsoft" %}{% include "partials/provider_logo.html" %}{% endwith %}
+            <button type="button" class="provider-card" data-provider="microsoft" data-click="wizardPickProvider">
+                {{ mail.provider_stamp("microsoft") }}
                 <strong>Outlook / Microsoft 365</strong>
                 <small class="text-muted">Sign in with Microsoft</small>
             </button>
-            <button type="button" class="provider-card" data-provider="yahoo" onclick="wizardPickProvider(this)">
-                <i data-lucide="at-sign" class="provider-glyph"></i>
+            <button type="button" class="provider-card" data-provider="yahoo" data-click="wizardPickProvider">
+                {{ mail.provider_stamp("yahoo") }}
                 <strong>Yahoo</strong>
                 <small class="text-muted">App password</small>
             </button>
-            <button type="button" class="provider-card" data-provider="icloud" onclick="wizardPickProvider(this)">
-                <i data-lucide="cloud" class="provider-glyph"></i>
+            <button type="button" class="provider-card" data-provider="icloud" data-click="wizardPickProvider">
+                {{ mail.provider_stamp("icloud") }}
                 <strong>iCloud</strong>
                 <small class="text-muted">App-specific password</small>
             </button>
-            <button type="button" class="provider-card" data-provider="other" onclick="wizardPickProvider(this)">
-                <i data-lucide="server" class="provider-glyph"></i>
+            <button type="button" class="provider-card" data-provider="other" data-click="wizardPickProvider">
+                {{ mail.provider_stamp("other") }}
                 <strong>Other IMAP</strong>
                 <small class="text-muted">Custom IMAP server</small>
             </button>
@@ -65,8 +72,8 @@
     </section>
 
     {# ── Step 2: Sign in ── #}
-    <section class="wizard-pane" id="wizard-pane-2">
-        <h3 class="mt-1" id="wizard-step2-title">Sign in</h3>
+    <section class="wizard-pane sheet" id="wizard-pane-2">
+        <h2 class="wizard-title" id="wizard-step2-title">Sign in</h2>
 
         <div id="wizard-oauth-block" class="hidden">
             <div>
@@ -80,11 +87,11 @@
                 <input type="text" id="oauth_name" placeholder="Personal Gmail">
             </div>
             <p class="mt-05">Click below to authorise MailFallBack with your provider in a new tab. We never see your password.</p>
-            <button type="button" class="icon-btn primary" id="wizard-oauth-btn" onclick="wizardStartOAuth()">
+            <button type="button" class="icon-btn primary" id="wizard-oauth-btn" data-click="wizardStartOAuth" data-args='[]'>
                 <span id="wizard-oauth-label">Sign in</span>
             </button>
             <p class="text-small text-muted mt-05">
-                <a href="#" onclick="wizardSwitchToImap(); return false;">Or sign in with an app password instead →</a>
+                <a href="#" class="link-arrow" data-click="wizardSwitchToImap" data-args='[]' data-prevent>Or sign in with an app password instead <i data-lucide="arrow-right" class="icon-sm"></i></a>
             </p>
         </div>
 
@@ -93,14 +100,14 @@
                 <label for="email_address">Email address</label>
                 <input type="email" id="email_address" name="email_address"
                     placeholder="user@example.com" required autocomplete="email"
-                    onblur="autoDetectProvider()"
+                    data-blur="autoDetectProvider" data-args='[]'
                     value="{{ prefill.email if prefill else '' }}">
             </div>
             <div id="password-section">
                 <label for="credentials">Password</label>
                 <div class="pos-relative">
                     <input type="password" id="credentials" name="credentials" required autocomplete="current-password">
-                    <button type="button" class="pass-toggle" onclick="togglePasswordVisibility()" aria-label="Toggle password visibility">
+                    <button type="button" class="pass-toggle" data-click="togglePasswordVisibility" data-args='[]' aria-label="Toggle password visibility">
                         <i data-lucide="eye" class="icon-md" id="pass-toggle-icon"></i>
                     </button>
                 </div>
@@ -130,7 +137,7 @@
                     </div>
                     <div>
                         <label for="auth_mechs_select">Auth mechanism</label>
-                        <select id="auth_mechs_select" onchange="document.getElementById('auth_mechs').value = this.value">
+                        <select id="auth_mechs_select" data-mirror="#auth_mechs">
                             <option value="">Auto (recommended)</option>
                             <option value="PLAIN">PLAIN</option>
                             <option value="LOGIN">LOGIN</option>
@@ -150,7 +157,7 @@
                 </div>
                 {% endif %}
                 <div class="mt-05">
-                    <a href="#" id="test-without-saving" class="text-small" onclick="testWithoutSaving(); return false;">
+                    <a href="#" id="test-without-saving" class="text-small" data-click="testWithoutSaving" data-args='[]' data-prevent>
                         <i data-lucide="check-circle" class="icon-sm icon-inline"></i>Test connection
                     </a>
                     <span id="check-result" class="text-small"></span>
@@ -159,15 +166,15 @@
         </div>
 
         <div class="wizard-nav mt-1">
-            <button type="button" class="icon-btn" onclick="wizardGoTo(1)">← Back</button>
-            <button type="button" class="icon-btn primary" id="wizard-step2-next" onclick="wizardStep2Next()">Continue →</button>
+            <button type="button" class="icon-btn" data-click="wizardGoTo" data-args='[1]'><i data-lucide="arrow-left" class="icon-sm"></i> Back</button>
+            <button type="button" class="icon-btn primary" id="wizard-step2-next" data-click="wizardStep2Next" data-args='[]'>Continue <i data-lucide="arrow-right" class="icon-sm"></i></button>
         </div>
     </section>
 
     {# ── Step 3: Confirm + name ── #}
-    <section class="wizard-pane" id="wizard-pane-3">
-        <h3 class="mt-1">Almost there</h3>
-        <p class="text-muted text-small">Pick a nickname so you can recognise this mailbox in the list.</p>
+    <section class="wizard-pane sheet" id="wizard-pane-3">
+        <h2 class="wizard-title">Almost there</h2>
+        <p class="sheet-lede">Pick a nickname so you can recognise this mailbox in the list.</p>
 
         <div class="confirm-summary mt-1">
             <strong>Provider:</strong> <span id="wizard-summary-provider">—</span><br>
@@ -180,7 +187,7 @@
         </div>
 
         <div class="wizard-nav mt-1">
-            <button type="button" class="icon-btn" onclick="wizardGoTo(2)">← Back</button>
+            <button type="button" class="icon-btn" data-click="wizardGoTo" data-args='[2]'><i data-lucide="arrow-left" class="icon-sm"></i> Back</button>
             <button type="submit" class="icon-btn primary" id="submit-btn">
                 <i data-lucide="plus" class="icon-md icon-inline" id="submit-icon"></i>
                 <span id="submit-text">Connect mailbox</span>

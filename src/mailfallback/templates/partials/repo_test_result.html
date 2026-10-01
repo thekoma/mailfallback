@@ -1,7 +1,8 @@
+{% import "partials/airmail.html" as mail %}
 {% if ok %}
-<span class="stats-pill"><span class="stats-dot stats-dot-ok"></span>
+<span class="mark-label">{{ mail.mark("mark-ok") }}
     Connection OK{% if count is defined and count is not none %} — {% if count == 0 %}empty repository{% elif count == 1 %}1 existing snapshot prefix{% else %}{{ count }} existing snapshot prefixes{% endif %}{% endif %}
 </span>
 {% else %}
-<span class="stats-pill" title="{{ error }}"><span class="stats-dot stats-dot-error"></span> <span class="stats-pill-truncate">{{ error }}</span></span>
+<span class="mark-label mark-label-error" title="{{ error }}">{{ mail.mark("mark-error") }} <span class="mark-label-truncate">{{ error }}</span></span>
 {% endif %}

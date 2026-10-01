@@ -1,363 +1,392 @@
 {% extends "base.html" %}
+{% import "partials/airmail.html" as mail %}
 {% block title %}Profile — MFB{% endblock %}
+{% block body_class %}page-profile{% endblock %}
 {% block content %}
-<h2><i data-lucide="user" class="icon-xl icon-inline"></i>Profile</h2>
+<header class="page-head">
+    <div class="page-head-text">
+        <h1 class="page-title">Profile</h1>
+        <p class="page-summary"><span>{{ user.username }}</span> <span class="sep" aria-hidden="true">·</span> <span>{{ user.role.value }}</span> <span class="sep" aria-hidden="true">·</span> <span class="num">{{ user.accounts | length }}</span>&nbsp;mailbox{{ "" if user.accounts | length == 1 else "es" }}</p>
+    </div>
+</header>
 
 {% if force_password_change %}
-<div class="alert-error mt-1" role="alert">
-    <i data-lucide="shield-alert" class="icon-md icon-inline"></i>
-    <strong>Change the default admin password before continuing.</strong>
+<div class="notice notice-error" role="alert">
+    <i data-lucide="shield-alert" class="icon-md"></i>
+    <p><strong>Change the default admin password before continuing.</strong>
     The password is the same on every fresh MailFallBack install. Until you
-    change it, every page you try to open will redirect you back here.
+    change it, every page you try to open will redirect you back here.</p>
 </div>
 {% endif %}
 
-<table>
-    <tr><td><i data-lucide="at-sign" class="icon-md icon-inline"></i>Username</td><td>{{ user.username }}</td></tr>
-    <tr><td><i data-lucide="shield" class="icon-md icon-inline"></i>Role</td><td>{{ user.role.value }}</td></tr>
-    <tr><td><i data-lucide="mail" class="icon-md icon-inline"></i>Mailboxes</td><td>{{ user.accounts | length }}</td></tr>
-    <tr><td><i data-lucide="hard-drive" class="icon-md icon-inline"></i>Mail store</td><td>{{ store.name if store else '—' }}</td></tr>
-    <tr>
-        <td><i data-lucide="users" class="icon-md icon-inline"></i>Groups</td>
-        <td>
-            {% if user_groups %}
-            {% for g in user_groups %}<span class="badge badge-admin">{{ g.name }}</span> {% endfor %}
-            {% else %}
-            <span class="text-muted">None</span>
-            {% endif %}
-        </td>
-    </tr>
-</table>
+{# ── Account ── #}
+<section class="sheet" aria-labelledby="account-title">
+    <div class="sheet-head">
+        <h2 class="sheet-title" id="account-title"><i data-lucide="circle-user-round" class="icon-md"></i>Your account</h2>
+    </div>
+    <dl class="kv-rows">
+        <div class="kv-row"><dt>Username</dt><dd>{{ user.username }}</dd></div>
+        <div class="kv-row"><dt>Role</dt><dd>{{ user.role.value }}</dd></div>
+        <div class="kv-row"><dt>Mailboxes</dt><dd class="num">{{ user.accounts | length }}</dd></div>
+        <div class="kv-row"><dt>Mail store</dt><dd>{{ store.name if store else '—' }}</dd></div>
+        <div class="kv-row">
+            <dt>Groups</dt>
+            <dd>
+                {% if user_groups %}
+                {% for g in user_groups %}<span class="tag">{{ g.name }}</span> {% endfor %}
+                {% else %}
+                <span class="text-muted">None</span>
+                {% endif %}
+            </dd>
+        </div>
+    </dl>
 
-{% if selectable_stores %}
-<hr>
-<h3><i data-lucide="hard-drive" class="icon-lg icon-inline"></i>Default mail store</h3>
-<p class="text-muted text-small">New mailboxes will be created on this mail store. Existing mailboxes are not affected.</p>
-<form method="post" action="/profile/store" class="container-narrow">
-    <label for="store_id">Mail store for new mailboxes</label>
-    <select id="store_id" name="store_id">
-        {% for s in selectable_stores %}
-        <option value="{{ s.id }}" {% if s.id == user.store_id %}selected{% endif %}>{{ s.name }} ({{ s.path }})</option>
-        {% endfor %}
-    </select>
-    <button type="submit">
-        <i data-lucide="save" class="icon-md icon-inline"></i>Save
-    </button>
-</form>
-{% endif %}
+    {% if selectable_stores %}
+    <div class="fold">
+        <h3 class="fold-title"><i data-lucide="hard-drive" class="icon-sm"></i>Default mail store</h3>
+        <p class="sheet-lede">New mailboxes will be created on this mail store. Existing mailboxes are not affected.</p>
+        <form method="post" action="/profile/store" class="quick-add-row profile-narrow">
+            <label for="store_id">Mail store for new mailboxes
+                <select id="store_id" name="store_id">
+                    {% for s in selectable_stores %}
+                    <option value="{{ s.id }}" {% if s.id == user.store_id %}selected{% endif %}>{{ s.name }} ({{ s.path }})</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <button type="submit" class="icon-btn primary">
+                <i data-lucide="save" class="icon-sm"></i> Save
+            </button>
+        </form>
+    </div>
+    {% endif %}
+</section>
 
-<hr>
-
-<h3><i data-lucide="bell" class="icon-lg icon-inline"></i>Notification channels</h3>
-<p class="text-muted text-small">
-    Get alerted when a mailbox needs attention — on ntfy, Telegram, Gotify, Discord and
-    <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noopener">80+ other services</a>
-    via <a href="https://github.com/caronc/apprise" target="_blank" rel="noopener">Apprise</a>.
-    Each channel is a single Apprise URL.
-</p>
-
-{# (value, short badge label, badge class, full checkbox label) — from
+{# (value, short tag label, full checkbox label) — from
    notification_service, never a second copy: a key that exists in the service
    but not here has no checkbox, so nobody can subscribe to it. #}
 {% set problem_events = notification_problem_events %}
 {% set activity_events = notification_activity_events %}
 {% set event_options = problem_events + activity_events %}
 
-{% if channels %}
-<div class="notif-cards">
-    {% for ch in channels %}
-    <article class="notif-card{% if not ch.enabled %} channel-off{% endif %}">
-        <div class="notif-card-head">
-            <div class="notif-card-id">
+{# ── Notification channels ── #}
+<section class="sheet" aria-labelledby="notif-title">
+    <div class="sheet-head">
+        <h2 class="sheet-title" id="notif-title"><i data-lucide="bell" class="icon-md"></i>Notification channels</h2>
+    </div>
+    <p class="sheet-lede">
+        Get alerted when a mailbox needs attention — on ntfy, Telegram, Gotify, Discord and
+        <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noopener">80+ other services</a>
+        via <a href="https://github.com/caronc/apprise" target="_blank" rel="noopener">Apprise</a>.
+        Each channel is a single Apprise URL.
+    </p>
+
+    {% if channels %}
+    <ul class="notif-list">
+        {% for ch in channels %}
+        <li class="notif-row{% if not ch.enabled %} channel-off{% endif %}">
+            <div class="notif-row-id">
                 <span class="notif-label">{{ ch.label }}</span>
                 <code class="notif-url">{{ ch.masked_url }}</code>
                 {% if ch.payload_format == 'json' %}
-                <span class="badge badge-disabled notif-format-badge">JSON</span>
+                <span class="tag notif-format-badge">JSON</span>
                 {% endif %}
             </div>
-            <form method="post" action="/profile/notifications/{{ ch.id }}/toggle" class="inline-form">
-                <label class="notif-switch text-small">
+            <form method="post" action="/profile/notifications/{{ ch.id }}/toggle" class="inline-form notif-row-switch">
+                <label class="switch-label">
                     <input type="checkbox" role="switch" {% if ch.enabled %}checked{% endif %}
-                           onchange="this.form.submit()">
+                           data-autosubmit>
                     {{ "Enabled" if ch.enabled else "Disabled" }}
                 </label>
             </form>
-        </div>
-
-        <div class="badge-row notif-card-events">
-            {% for opt in event_options if opt[0] in ch.events %}
-            <span class="badge {{ opt[2] }}">{{ opt[1] }}</span>
-            {% endfor %}
-            {% if not ch.events %}
-            <span class="text-muted text-small">No events selected — this channel won't notify.</span>
-            {% endif %}
-        </div>
-
-        <div class="notif-card-actions">
-            <button hx-post="/profile/notifications/{{ ch.id }}/test" hx-swap="none"
-                    class="icon-btn" title="Send a test notification now">
-                <i data-lucide="send" class="icon-sm"></i> Test
-            </button>
-            <button type="button" class="icon-btn" onclick="toggleRow('edit-{{ ch.id }}')"
-                    title="Edit label, URL and events">
-                <i data-lucide="pencil" class="icon-sm"></i> Edit
-            </button>
-            <form method="post" action="/profile/notifications/{{ ch.id }}/delete" class="inline-form"
-                  data-confirm="Delete channel {{ ch.label }}?"
-                  onsubmit="return confirm(this.dataset.confirm)">
-                <button type="submit" class="icon-btn danger">
-                    <i data-lucide="trash-2" class="icon-sm"></i> Delete
+            <div class="notif-row-events">
+                {% for opt in event_options if opt[0] in ch.events %}
+                <span class="tag">{{ opt[1] }}</span>
+                {% endfor %}
+                {% if not ch.events %}
+                <span class="text-muted text-small">No events selected — this channel won't notify.</span>
+                {% endif %}
+            </div>
+            <div class="notif-row-actions">
+                <button hx-post="/profile/notifications/{{ ch.id }}/test" hx-swap="none"
+                        class="icon-btn" title="Send a test notification now">
+                    <i data-lucide="send" class="icon-sm"></i> Test
                 </button>
-            </form>
-        </div>
+                <button type="button" class="icon-btn" data-click="toggleRow" data-args='["edit-{{ ch.id }}"]'
+                        title="Edit label, URL and events">
+                    <i data-lucide="pencil" class="icon-sm"></i> Edit
+                </button>
+                <form method="post" action="/profile/notifications/{{ ch.id }}/delete" class="inline-form"
+                      data-confirm="Delete channel {{ ch.label }}?">
+                    <button type="submit" class="icon-btn danger">
+                        <i data-lucide="trash-2" class="icon-sm"></i> Delete
+                    </button>
+                </form>
+            </div>
 
-        <form method="post" action="/profile/notifications/{{ ch.id }}/update"
-              id="edit-{{ ch.id }}" class="notif-edit hidden">
-            <label>Label
-                <input type="text" name="label" value="{{ ch.label }}" required>
-            </label>
-            <label>Replace URL
-                <span class="text-muted text-small">— leave blank to keep the current one</span>
-                <input type="text" name="apprise_url" placeholder="Keep current ({{ ch.masked_url }})">
-            </label>
+            <form method="post" action="/profile/notifications/{{ ch.id }}/update"
+                  id="edit-{{ ch.id }}" class="notif-edit hidden">
+                <label>Label
+                    <input type="text" name="label" value="{{ ch.label }}" required>
+                </label>
+                <label>Replace URL
+                    <span class="text-muted text-small">— leave blank to keep the current one</span>
+                    <input type="text" name="apprise_url" placeholder="Keep current ({{ ch.masked_url }})">
+                </label>
+                <div class="notif-event-groups">
+                    <fieldset>
+                        <legend>Problems</legend>
+                        {% for opt in problem_events %}
+                        <label><input type="checkbox" name="events" value="{{ opt[0] }}"
+                               {% if opt[0] in ch.events %}checked{% endif %}> {{ opt[2] }}</label>
+                        {% endfor %}
+                    </fieldset>
+                    <fieldset>
+                        <legend>Activity</legend>
+                        {% for opt in activity_events %}
+                        <label><input type="checkbox" name="events" value="{{ opt[0] }}"
+                               {% if opt[0] in ch.events %}checked{% endif %}> {{ opt[2] }}</label>
+                        {% endfor %}
+                    </fieldset>
+                </div>
+                <label class="notif-format-label">Format
+                    <select name="payload_format" class="notif-format-select">
+                        <option value="text" {% if ch.payload_format != 'json' %}selected{% endif %}>Text</option>
+                        <option value="json" {% if ch.payload_format == 'json' %}selected{% endif %}>JSON</option>
+                    </select>
+                </label>
+                <div class="actions">
+                    <button type="submit" class="icon-btn primary">
+                        <i data-lucide="check" class="icon-sm"></i> Save changes
+                    </button>
+                    <button type="button" class="icon-btn" data-click="toggleRow" data-args='["edit-{{ ch.id }}"]'>Cancel</button>
+                </div>
+            </form>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="notif-empty"><i data-lucide="bell-plus" class="icon-md"></i>
+        <span>No notification channels yet.
+        Add one below to get a ping the moment a mailbox needs attention.</span></p>
+    {% endif %}
+
+    <div class="fold notif-add">
+        <h3 class="fold-title"><i data-lucide="plus" class="icon-sm"></i>Add a channel</h3>
+        <form method="post" action="/profile/notifications" class="profile-form">
+            <div class="profile-fields">
+                <label for="notif_label">Label
+                    <input type="text" id="notif_label" name="label" required placeholder="e.g. Phone (ntfy)">
+                </label>
+                <label for="notif_url">Apprise URL
+                    <input type="text" id="notif_url" name="apprise_url" required placeholder="e.g. ntfy://ntfy.sh/your-topic">
+                </label>
+            </div>
+
+            <details class="notif-examples">
+                <summary><i data-lucide="lightbulb" class="icon-sm icon-inline"></i>URL examples &amp; formats</summary>
+                <p class="text-muted text-small notif-docs-line">
+                    Replace the placeholders with your own tokens. Browse the
+                    <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noopener">full list of supported services</a>
+                    for the exact URL format. Click an example to copy it.
+                </p>
+                <dl class="notif-example-grid">
+                    <dt>
+                        <i data-lucide="bell" class="icon-sm icon-inline"></i>
+                        <a href="https://github.com/caronc/apprise/wiki/Notify_ntfy" target="_blank" rel="noopener">ntfy</a>
+                    </dt>
+                    <dd><code class="copyable" data-copy="ntfy://ntfy.sh/your-topic" title="Click to copy">ntfy://ntfy.sh/your-topic</code></dd>
+
+                    <dt>
+                        <i data-lucide="send" class="icon-sm icon-inline"></i>
+                        <a href="https://github.com/caronc/apprise/wiki/Notify_telegram" target="_blank" rel="noopener">Telegram</a>
+                    </dt>
+                    <dd><code class="copyable" data-copy="tgram://bottoken/ChatID" title="Click to copy">tgram://bottoken/ChatID</code></dd>
+
+                    <dt>
+                        <i data-lucide="server" class="icon-sm icon-inline"></i>
+                        <a href="https://github.com/caronc/apprise/wiki/Notify_gotify" target="_blank" rel="noopener">Gotify</a>
+                    </dt>
+                    <dd><code class="copyable" data-copy="gotify://gotify.example.com/apptoken" title="Click to copy">gotify://gotify.example.com/apptoken</code></dd>
+
+                    <dt>
+                        <i data-lucide="message-circle" class="icon-sm icon-inline"></i>
+                        <a href="https://github.com/caronc/apprise/wiki/Notify_discord" target="_blank" rel="noopener">Discord</a>
+                    </dt>
+                    <dd><code class="copyable" data-copy="discord://webhook_id/webhook_token" title="Click to copy">discord://webhook_id/webhook_token</code></dd>
+                </dl>
+            </details>
+
             <div class="notif-event-groups">
                 <fieldset>
                     <legend>Problems</legend>
                     {% for opt in problem_events %}
-                    <label><input type="checkbox" name="events" value="{{ opt[0] }}"
-                           {% if opt[0] in ch.events %}checked{% endif %}> {{ opt[3] }}</label>
+                    <label><input type="checkbox" name="events" value="{{ opt[0] }}"> {{ opt[2] }}</label>
                     {% endfor %}
                 </fieldset>
                 <fieldset>
                     <legend>Activity</legend>
                     {% for opt in activity_events %}
-                    <label><input type="checkbox" name="events" value="{{ opt[0] }}"
-                           {% if opt[0] in ch.events %}checked{% endif %}> {{ opt[3] }}</label>
+                    <label><input type="checkbox" name="events" value="{{ opt[0] }}"> {{ opt[2] }}</label>
                     {% endfor %}
                 </fieldset>
             </div>
+
             <label class="notif-format-label">Format
                 <select name="payload_format" class="notif-format-select">
-                    <option value="text" {% if ch.payload_format != 'json' %}selected{% endif %}>Text</option>
-                    <option value="json" {% if ch.payload_format == 'json' %}selected{% endif %}>JSON</option>
+                    <option value="text" selected>Text</option>
+                    <option value="json">JSON</option>
                 </select>
             </label>
-            <div class="actions">
-                <button type="submit" class="icon-btn primary">
-                    <i data-lucide="check" class="icon-sm"></i> Save changes
-                </button>
-                <button type="button" class="icon-btn" onclick="toggleRow('edit-{{ ch.id }}')">Cancel</button>
-            </div>
+            <p class="text-muted text-small notif-format-hint">JSON sends a machine-readable body for webhooks / automations.</p>
+
+            <button type="submit" class="icon-btn primary">
+                <i data-lucide="plus" class="icon-sm"></i> Add channel
+            </button>
         </form>
-    </article>
-    {% endfor %}
-</div>
-{% else %}
-<div class="notif-empty">
-    <i data-lucide="bell-plus" class="icon-xl"></i>
-    <p class="notif-empty-text">No notification channels yet.<br>
-        Add one below to get a ping the moment a mailbox needs attention.</p>
-</div>
-{% endif %}
+    </div>
+</section>
 
-<article class="notif-add">
-    <h4><i data-lucide="plus" class="icon-md icon-inline"></i>Add a channel</h4>
-    <form method="post" action="/profile/notifications">
-        <label for="notif_label">Label</label>
-        <input type="text" id="notif_label" name="label" required placeholder="e.g. Phone (ntfy)">
+{# ── Access tokens ── #}
+<section class="sheet" aria-labelledby="tokens-title">
+    <div class="sheet-head">
+        <h2 class="sheet-title" id="tokens-title"><i data-lucide="key" class="icon-md"></i>Access tokens</h2>
+    </div>
+    <p class="sheet-lede">
+        A token works as an IMAP password for this account, so an app or an agent can
+        read your mail without your login password. Revoke it any time. See the
+        <a href="https://thekoma.github.io/mailfallback/guides/agent-api/" target="_blank" rel="noopener">agent API guide</a>
+        for what a token can do.
+    </p>
 
-        <label for="notif_url">Apprise URL</label>
-        <input type="text" id="notif_url" name="apprise_url" required placeholder="e.g. ntfy://ntfy.sh/your-topic">
-
-        <details class="notif-examples">
-            <summary><i data-lucide="lightbulb" class="icon-sm icon-inline"></i>URL examples &amp; formats</summary>
-            <p class="text-muted text-small notif-docs-line">
-                Replace the placeholders with your own tokens. Browse the
-                <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noopener">full list of supported services</a>
-                for the exact URL format. Click an example to copy it.
-            </p>
-            <dl class="notif-example-grid">
-                <dt>
-                    <i data-lucide="bell" class="icon-sm icon-inline"></i>
-                    <a href="https://github.com/caronc/apprise/wiki/Notify_ntfy" target="_blank" rel="noopener">ntfy</a>
-                </dt>
-                <dd><code class="copyable" data-copy="ntfy://ntfy.sh/your-topic" title="Click to copy">ntfy://ntfy.sh/your-topic</code></dd>
-
-                <dt>
-                    <i data-lucide="send" class="icon-sm icon-inline"></i>
-                    <a href="https://github.com/caronc/apprise/wiki/Notify_telegram" target="_blank" rel="noopener">Telegram</a>
-                </dt>
-                <dd><code class="copyable" data-copy="tgram://bottoken/ChatID" title="Click to copy">tgram://bottoken/ChatID</code></dd>
-
-                <dt>
-                    <i data-lucide="server" class="icon-sm icon-inline"></i>
-                    <a href="https://github.com/caronc/apprise/wiki/Notify_gotify" target="_blank" rel="noopener">Gotify</a>
-                </dt>
-                <dd><code class="copyable" data-copy="gotify://gotify.example.com/apptoken" title="Click to copy">gotify://gotify.example.com/apptoken</code></dd>
-
-                <dt>
-                    <i data-lucide="message-circle" class="icon-sm icon-inline"></i>
-                    <a href="https://github.com/caronc/apprise/wiki/Notify_discord" target="_blank" rel="noopener">Discord</a>
-                </dt>
-                <dd><code class="copyable" data-copy="discord://webhook_id/webhook_token" title="Click to copy">discord://webhook_id/webhook_token</code></dd>
-            </dl>
-        </details>
-
-        <div class="notif-event-groups">
-            <fieldset>
-                <legend>Problems</legend>
-                {% for opt in problem_events %}
-                <label><input type="checkbox" name="events" value="{{ opt[0] }}"> {{ opt[3] }}</label>
-                {% endfor %}
-            </fieldset>
-            <fieldset>
-                <legend>Activity</legend>
-                {% for opt in activity_events %}
-                <label><input type="checkbox" name="events" value="{{ opt[0] }}"> {{ opt[3] }}</label>
-                {% endfor %}
-            </fieldset>
-        </div>
-
-        <label class="notif-format-label">Format
-            <select name="payload_format" class="notif-format-select">
-                <option value="text" selected>Text</option>
-                <option value="json">JSON</option>
-            </select>
-        </label>
-        <p class="text-muted text-small notif-format-hint">JSON sends a machine-readable body for webhooks / automations.</p>
-
-        <button type="submit">
-            <i data-lucide="plus" class="icon-md icon-inline"></i>Add channel
+    {% if new_token %}
+    <div class="slip token-reveal" role="status">
+        <h3 class="fold-title"><i data-lucide="check" class="icon-sm"></i>Token created</h3>
+        <p class="text-small">Copy it now — it is shown once and cannot be recovered.</p>
+        <code class="slip-value token-value copyable" data-copy="{{ new_token }}" title="Click to copy">{{ new_token }}</code>
+        <button type="button" class="icon-btn" data-copy="{{ new_token }}">
+            <i data-lucide="copy" class="icon-sm"></i> Copy token
         </button>
-    </form>
-</article>
-
-<hr>
-
-<h3><i data-lucide="key" class="icon-lg icon-inline"></i>Access tokens</h3>
-
-<p class="text-muted text-small">
-    A token works as an IMAP password for this account, so an app or an agent can
-    read your mail without your login password. Revoke it any time. See the
-    <a href="https://thekoma.github.io/mailfallback/guides/agent-api/" target="_blank" rel="noopener">agent API guide</a>
-    for what a token can do.
-</p>
-
-{% if new_token %}
-<article class="token-reveal">
-    <h4><i data-lucide="check" class="icon-md icon-inline"></i>Token created</h4>
-    <p class="text-small">Copy it now — it is shown once and cannot be recovered.</p>
-    <code class="token-value copyable" data-copy="{{ new_token }}" title="Click to copy">{{ new_token }}</code>
-</article>
-{% endif %}
-
-{% if tokens %}
-<table>
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>Scopes</th>
-            <th>Created</th>
-            <th>Last used</th>
-            <th>Expires</th>
-            <th></th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for t in tokens %}
-        <tr{% if t.revoked_at %} class="channel-off"{% endif %}>
-            <td>{{ t.name }}</td>
-            <td class="text-small">{{ t.scopes }}</td>
-            <td class="text-small">{{ t.created_at.strftime('%Y-%m-%d') if t.created_at else '—' }}</td>
-            <td class="text-small">
-                {{ (t.last_used_at | time_ago) if t.last_used_at else 'never' }}
-            </td>
-            <td class="text-small">
-                {% if t.revoked_at %}revoked
-                {% elif t.expires_at %}{{ t.expires_at.strftime('%Y-%m-%d') }}
-                {% else %}never{% endif %}
-            </td>
-            <td>
-                {% if not t.revoked_at %}
-                <form method="post" action="/profile/tokens/{{ t.id }}/revoke" class="inline-form"
-                      data-confirm="Revoke token {{ t.name }}? Anything using it stops working."
-                      onsubmit="return confirm(this.dataset.confirm)">
-                    <button type="submit" class="icon-btn danger" title="Revoke this token">
-                        <i data-lucide="ban" class="icon-sm"></i> Revoke
-                    </button>
-                </form>
-                {% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
-{% else %}
-<p class="text-muted">No access tokens yet. Create one to let an app or agent read your mail.</p>
-{% endif %}
-
-<article class="notif-add">
-    <h4><i data-lucide="plus" class="icon-md icon-inline"></i>Create a token</h4>
-    <form method="post" action="/profile/tokens">
-        <label for="token_name">Name</label>
-        <input type="text" id="token_name" name="name" required placeholder="e.g. Hermes Agent">
-
-        <fieldset>
-            <legend>Scopes</legend>
-            {% for scope in valid_scopes %}
-            <label for="scope_{{ loop.index }}">
-                <input type="checkbox" id="scope_{{ loop.index }}" name="scopes" value="{{ scope }}"
-                       {% if scope == 'imap' %}checked{% endif %}>
-                <code>{{ scope }}</code>
-                <span class="text-muted text-small">
-                    {% if scope == 'imap' %}— IMAP access: log in as this mailbox from a mail client or app
-                    {% elif scope == 'mail:read' %}— read API: search, and fetch messages and attachments
-                    {% elif scope == 'sync:trigger' %}— start a sync and read its status
-                    {% endif %}
-                </span>
-            </label>
-            {% endfor %}
-        </fieldset>
-
-        <label for="token_ttl">Expires after</label>
-        <select id="token_ttl" name="ttl_days">
-            <option value="">Never</option>
-            <option value="30">30 days</option>
-            <option value="90">90 days</option>
-            <option value="365">1 year</option>
-        </select>
-
-        <button type="submit">
-            <i data-lucide="key" class="icon-md icon-inline"></i>Create token
-        </button>
-    </form>
-</article>
-
-<hr>
-
-<h3><i data-lucide="key-round" class="icon-lg icon-inline"></i>{% if user.password_hash %}Change password{% else %}Set a password{% endif %}</h3>
-
-{% if error %}
-<script>document.addEventListener('DOMContentLoaded', function() { showToast('{{ error }}', 'error'); });</script>
-{% endif %}
-{% if success %}
-<script>document.addEventListener('DOMContentLoaded', function() { showToast('{{ success }}', 'success'); });</script>
-{% endif %}
-
-<form method="post" action="/profile/password" class="container-narrow">
-    {% if user.password_hash %}
-    <label for="current_password">Current password</label>
-    <input type="password" id="current_password" name="current_password" required>
+    </div>
     {% endif %}
 
-    <label for="new_password">{% if user.password_hash %}New password{% else %}Password{% endif %}</label>
-    <input type="password" id="new_password" name="new_password" required minlength="8">
+    {% if tokens %}
+    <div class="table-wrap ledger-wrap ledger-flat">
+    <table class="ledger ledger-tokens">
+        <caption class="sr-only">Access tokens</caption>
+        <thead>
+            <tr>
+                <th scope="col" class="cell-wrap">Name</th>
+                <th scope="col">Scopes</th>
+                <th scope="col">Created</th>
+                <th scope="col">Last used</th>
+                <th scope="col">Expires</th>
+                <th scope="col" class="ledger-action"><span class="sr-only">Actions</span></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in tokens %}
+            <tr class="ledger-row{% if t.revoked_at %} channel-off row-disabled{% endif %}">
+                <td class="cell-wrap ledger-mailbox"><span class="ledger-name">{{ t.name }}</span></td>
+                <td class="cell-wrap token-scopes">{% for s in (t.scopes or '').split(',') if s %}<span class="tag">{{ s }}</span> {% endfor %}</td>
+                <td class="num">{{ t.created_at.strftime('%Y-%m-%d') if t.created_at else '—' }}</td>
+                <td class="num">
+                    {{ (t.last_used_at | time_ago) if t.last_used_at else 'never' }}
+                </td>
+                <td class="num">
+                    {% if t.revoked_at %}{{ mail.stamp({"badge": "stamp-muted", "icon": "ban", "spin": false, "label": "revoked"}) }}
+                    {% elif t.expires_at %}{{ t.expires_at.strftime('%Y-%m-%d') }}
+                    {% else %}never{% endif %}
+                </td>
+                <td class="ledger-action">
+                    {% if not t.revoked_at %}
+                    <form method="post" action="/profile/tokens/{{ t.id }}/revoke" class="inline-form"
+                          data-confirm="Revoke token {{ t.name }}? Anything using it stops working.">
+                        <button type="submit" class="icon-btn danger" title="Revoke this token">
+                            <i data-lucide="ban" class="icon-sm"></i> Revoke
+                        </button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="text-muted text-small">No access tokens yet. Create one to let an app or agent read your mail.</p>
+    {% endif %}
 
-    <label for="confirm_password">Confirm {% if user.password_hash %}new {% endif %}password</label>
-    <input type="password" id="confirm_password" name="confirm_password" required minlength="8">
+    <div class="fold">
+        <h3 class="fold-title"><i data-lucide="plus" class="icon-sm"></i>Create a token</h3>
+        <form method="post" action="/profile/tokens" class="profile-form">
+            <label for="token_name" class="profile-narrow">Name
+                <input type="text" id="token_name" name="name" required placeholder="e.g. Hermes Agent">
+            </label>
 
-    <button type="submit">
-        <i data-lucide="save" class="icon-md icon-inline"></i>{% if user.password_hash %}Change password{% else %}Set password{% endif %}
-    </button>
-</form>
+            <fieldset class="token-scope-set">
+                <legend>Scopes</legend>
+                {% for scope in valid_scopes %}
+                <label for="scope_{{ loop.index }}">
+                    <input type="checkbox" id="scope_{{ loop.index }}" name="scopes" value="{{ scope }}"
+                           {% if scope == 'imap' %}checked{% endif %}>
+                    <code>{{ scope }}</code>
+                    <span class="text-muted text-small">
+                        {% if scope == 'imap' %}— IMAP access: log in as this mailbox from a mail client or app
+                        {% elif scope == 'mail:read' %}— read API: search, and fetch messages and attachments
+                        {% elif scope == 'sync:trigger' %}— start a sync and read its status
+                        {% endif %}
+                    </span>
+                </label>
+                {% endfor %}
+            </fieldset>
+
+            <label for="token_ttl" class="profile-narrow">Expires after
+                <select id="token_ttl" name="ttl_days">
+                    <option value="">Never</option>
+                    <option value="30">30 days</option>
+                    <option value="90">90 days</option>
+                    <option value="365">1 year</option>
+                </select>
+            </label>
+
+            <button type="submit" class="icon-btn primary">
+                <i data-lucide="key" class="icon-sm"></i> Create token
+            </button>
+        </form>
+    </div>
+</section>
+
+{# ── Password ── #}
+<section class="sheet" aria-labelledby="password-title">
+    <div class="sheet-head">
+        <h2 class="sheet-title" id="password-title"><i data-lucide="key-round" class="icon-md"></i>{% if user.password_hash %}Change password{% else %}Set a password{% endif %}</h2>
+    </div>
+
+    {% if error %}
+    <span hidden data-toast="{{ error }}" data-toast-kind="error"></span>
+    {% endif %}
+    {% if success %}
+    <span hidden data-toast="{{ success }}" data-toast-kind="success"></span>
+    {% endif %}
+
+    <form method="post" action="/profile/password" class="profile-form profile-narrow">
+        {% if user.password_hash %}
+        <label for="current_password">Current password
+            <input type="password" id="current_password" name="current_password" required>
+        </label>
+        {% endif %}
+
+        <label for="new_password">{% if user.password_hash %}New password{% else %}Password{% endif %}
+            <input type="password" id="new_password" name="new_password" required minlength="8">
+        </label>
+
+        <label for="confirm_password">Confirm {% if user.password_hash %}new {% endif %}password
+            <input type="password" id="confirm_password" name="confirm_password" required minlength="8">
+        </label>
+
+        <button type="submit" class="icon-btn primary">
+            <i data-lucide="save" class="icon-sm"></i> {% if user.password_hash %}Change password{% else %}Set password{% endif %}
+        </button>
+    </form>
+</section>
 {% endblock %}

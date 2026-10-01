@@ -1,0 +1,55 @@
+{#- Airmail component kit — the only place these shapes are spelled out.
+    Import with: {% import "partials/airmail.html" as mail %}
+
+    stamp(st)        the hand stamp for a MailboxStatus / JobOutcome-like
+                     object (badge, icon, spin, label). The SHAPE comes from
+                     its stamp-<tone> class, so state reads from shape + icon
+                     + text, never colour alone.
+    postmark(dt)     the circular date stamp: when the local backup was last
+                     copied. Honest: no date when nothing was ever copied.
+    postmark_line(dt) the same date on one line, for ledger rows.
+    provider_stamp(provider)  the corner postage stamp, neutral marks only.
+    mark(cls)        a small tone mark (shape per tone) beside a text label.
+-#}
+
+{%- macro stamp(st, suffix="", title=none, label=none) -%}
+<span class="stamp {{ st.badge }}"{% if title %} title="{{ title }}"{% endif %}><i data-lucide="{{ st.icon }}" class="icon-sm{% if st.spin %} spin{% endif %}"></i> {{ label if label is not none else st.label }}{{ suffix }}</span>
+{%- endmacro -%}
+
+{%- macro postmark(dt, label="Last copied", size="") -%}
+<div class="postmark{% if size %} postmark-{{ size }}{% endif %}{% if not dt %} postmark-blank{% endif %}" data-postmark="{{ dt | iso }}">
+    <span class="postmark-cancel" aria-hidden="true"></span>
+    <span class="postmark-disc">
+        <span class="postmark-label">{{ label }}</span>
+        {%- if dt %}
+        <time class="postmark-when" datetime="{{ dt | iso }}"><span class="postmark-date">{{ dt | postmark_date }}</span><span class="postmark-time">{{ dt | postmark_time }}<span class="postmark-zone"> UTC</span></span></time>
+        {%- else %}
+        <span class="postmark-date postmark-none">Not copied yet</span>
+        {%- endif %}
+    </span>
+</div>
+{%- endmacro -%}
+
+{%- macro postmark_line(dt) -%}
+{%- if dt -%}
+<time class="postmark-line" datetime="{{ dt | iso }}" data-postmark-line><span class="postmark-date">{{ dt | postmark_date }}</span> <span class="postmark-sep" aria-hidden="true">·</span> <span class="postmark-time">{{ dt | postmark_time }}<span class="postmark-zone"> UTC</span></span></time>
+{%- else -%}
+<span class="postmark-line postmark-none">Not copied yet</span>
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro provider_stamp(provider) -%}
+{%- set _providers = {
+    "google": ("Google", "mail"),
+    "microsoft": ("Microsoft", "inbox"),
+    "yahoo": ("Yahoo", "mail-open"),
+    "icloud": ("iCloud", "cloud"),
+    "protonmail": ("Proton", "shield"),
+} -%}
+{%- set p = _providers.get(provider or "", ("IMAP", "server")) -%}
+<span class="provider-stamp" title="{{ p[0] }}"><span class="provider-stamp-face"><i data-lucide="{{ p[1] }}" class="icon-md" aria-hidden="true"></i><span class="provider-stamp-name">{{ p[0] }}</span></span></span>
+{%- endmacro -%}
+
+{%- macro mark(cls) -%}
+<span class="mark {{ cls }}" aria-hidden="true"></span>
+{%- endmacro -%}

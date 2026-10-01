@@ -76,7 +76,7 @@ def test_migrating_beats_everything(db_session, default_store):
     s = _resolve(a)
     assert s.state == MailboxState.migrating
     assert s.tone == Tone.active
-    assert s.badge == "badge-syncing" and s.icon == "loader"
+    assert s.badge == "stamp-active" and s.icon == "loader"
     assert not s.needs_attention and s.action is None
 
 
@@ -85,7 +85,7 @@ def test_suspended_beats_error_and_is_not_attention(db_session, default_store):
     s = _resolve(a)
     assert s.state == MailboxState.suspended
     assert s.tone == Tone.muted
-    assert s.badge == "badge-disabled" and s.icon == "pause-circle"
+    assert s.badge == "stamp-muted" and s.icon == "pause-circle"
     assert not s.needs_attention and s.action is None
 
 
@@ -104,7 +104,7 @@ def test_needs_reauth_is_sign_in_needed_with_reconnect(db_session, default_store
     assert s.tone == Tone.attention
     assert s.action == NextAction.reconnect
     assert s.needs_attention
-    assert s.badge == "badge-warning" and s.icon == "key-round"
+    assert s.badge == "stamp-attention" and s.icon == "key-round"
     assert not s.signed_in
     assert s.detail == "Google sign-in expired. Reconnect to resume syncing."
 
@@ -114,7 +114,7 @@ def test_oauth_without_credentials_is_sign_in_needed(db_session, default_store):
     s = _resolve(a)
     assert s.state == MailboxState.sign_in_needed
     assert s.action == NextAction.reconnect
-    assert s.badge == "badge-warning"
+    assert s.badge == "stamp-attention"
     # Never synced: the consent flow never finished, nothing "expired".
     assert s.detail == "Microsoft sign-in not completed. Connect to start syncing."
 
@@ -177,7 +177,7 @@ def test_plain_error_is_red_with_retry(db_session, default_store):
     assert s.tone == Tone.error
     assert s.action == NextAction.retry
     assert s.needs_attention
-    assert s.badge == "badge-error" and s.icon == "alert-circle"
+    assert s.badge == "stamp-error" and s.icon == "alert-circle"
     # Unclassified: MFB's own sentence, never the raw last_error.
     assert s.detail == "The last sync failed."
     assert "boom" not in s.detail
@@ -223,7 +223,7 @@ def test_pause_beats_error(db_session, default_store):
     assert s.state == MailboxState.paused
     assert s.tone == Tone.active
     assert not s.needs_attention
-    assert s.badge == "badge-info" and s.icon == "pause-circle"
+    assert s.badge == "stamp-active" and s.icon == "pause-circle"
     assert s.resumes_at == NOW + timedelta(hours=2)
 
 
@@ -261,7 +261,7 @@ def test_user_stop_is_muted_stopped_not_error(db_session, default_store):
     assert s.state == MailboxState.stopped
     assert s.tone == Tone.muted
     assert not s.needs_attention and s.action is None
-    assert s.badge == "badge-disabled" and s.icon == "circle-slash"
+    assert s.badge == "stamp-muted" and s.icon == "circle-slash"
     assert s.detail == "The last sync was stopped. The next scheduled sync runs normally."
     a.sync_schedule = None
     assert _resolve(a, last_job=job).detail == (
@@ -274,7 +274,7 @@ def test_running_before_initial_complete_is_first_sync_with_spin(db_session, def
     s = _resolve(a)
     assert s.state == MailboxState.first_sync
     assert s.tone == Tone.active
-    assert s.badge == "badge-info" and s.icon == "loader" and s.spin
+    assert s.badge == "stamp-active" and s.icon == "loader" and s.spin
     assert not s.needs_attention
 
 
@@ -282,7 +282,7 @@ def test_running_after_initial_complete_is_syncing(db_session, default_store):
     a = _acct(db_session, default_store, sync_state=SyncState.syncing, **_done())
     s = _resolve(a)
     assert s.state == MailboxState.syncing
-    assert s.badge == "badge-syncing" and s.icon == "loader" and not s.spin
+    assert s.badge == "stamp-active" and s.icon == "loader" and not s.spin
     assert s.label == "Syncing"
 
 
@@ -291,7 +291,7 @@ def test_idle_initial_started_is_initial_sync_not_attention(db_session, default_
     s = _resolve(a)
     assert s.state == MailboxState.initial_sync
     assert s.tone == Tone.active
-    assert s.badge == "badge-info" and s.icon == "download"
+    assert s.badge == "stamp-active" and s.icon == "download"
     assert not s.needs_attention
     assert s.detail == "First full sync incomplete"
 
@@ -320,7 +320,7 @@ def test_initial_sync_without_progress_for_7_days_is_stalled_attention(db_sessio
     assert s.label == "Initial sync stalled"
     assert s.needs_attention
     assert s.action == NextAction.sync_now
-    assert s.badge == "badge-warning" and s.icon == "alert-triangle"
+    assert s.badge == "stamp-attention" and s.icon == "alert-triangle"
     assert s.detail == "The initial sync has not progressed for over 7 days."
 
 
@@ -329,7 +329,7 @@ def test_never_started_is_waiting(db_session, default_store):
     s = _resolve(a)
     assert s.state == MailboxState.waiting
     assert s.tone == Tone.muted
-    assert s.badge == "badge-disabled" and s.icon == "clock"
+    assert s.badge == "stamp-muted" and s.icon == "clock"
     assert not s.needs_attention and s.action is None
 
 
@@ -341,7 +341,7 @@ def test_stale_after_seven_days_needs_attention(db_session, default_store):
     assert s.label == "Out of date"
     assert s.needs_attention
     assert s.action == NextAction.sync_now
-    assert s.badge == "badge-warning" and s.icon == "clock"
+    assert s.badge == "stamp-attention" and s.icon == "clock"
     assert s.detail == "Last sync was 10 days ago."
     # six days is still current
     a.last_sync_at = NOW - timedelta(days=6)
@@ -354,7 +354,7 @@ def test_current_is_ok_idle(db_session, default_store):
     assert s.state == MailboxState.current
     assert s.tone == Tone.ok
     assert s.label == "Up to date"
-    assert s.badge == "badge-idle" and s.icon == "check-circle"
+    assert s.badge == "stamp-ok" and s.icon == "check-circle"
     assert not s.needs_attention and s.action is None
     assert s.signed_in
     assert s.last_success_at == NOW - timedelta(minutes=5)
@@ -449,15 +449,15 @@ def test_latest_finished_jobs_by_account_ignores_pending_and_running_and_handles
 
 
 _JOB_ROWS = [
-    ({"status": JobStatus.completed}, Tone.ok, "synced", "badge-idle", "check-circle", False),
-    ({"status": JobStatus.running}, Tone.active, "syncing", "badge-syncing", "loader", True),
-    ({"status": JobStatus.pending}, Tone.muted, "queued", "badge-disabled", "clock", False),
-    ({"status": JobStatus.cancelled}, Tone.muted, "queued", "badge-disabled", "clock", False),
+    ({"status": JobStatus.completed}, Tone.ok, "synced", "stamp-ok", "check-circle", False),
+    ({"status": JobStatus.running}, Tone.active, "syncing", "stamp-active", "loader", True),
+    ({"status": JobStatus.pending}, Tone.muted, "queued", "stamp-muted", "clock", False),
+    ({"status": JobStatus.cancelled}, Tone.muted, "queued", "stamp-muted", "clock", False),
     (
         {"status": JobStatus.failed, "signal": "SIGTERM"},
         Tone.muted,
         "stopped",
-        "badge-disabled",
+        "stamp-muted",
         "circle-slash",
         False,
     ),
@@ -465,7 +465,7 @@ _JOB_ROWS = [
         {"status": JobStatus.failed, "log": "Sync blocked: account is suspended"},
         Tone.muted,
         "skipped",
-        "badge-disabled",
+        "stamp-muted",
         "circle-slash",
         False,
     ),
@@ -473,7 +473,7 @@ _JOB_ROWS = [
         {"status": JobStatus.failed, "log": TOKEN_REFRESH_FAILED},
         Tone.attention,
         "sign-in failed",
-        "badge-warning",
+        "stamp-attention",
         "key-round",
         False,
     ),
@@ -481,7 +481,7 @@ _JOB_ROWS = [
         {"status": JobStatus.failed, "failure_kind": "budget_paused"},
         Tone.active,
         "paused (daily limit)",
-        "badge-info",
+        "stamp-active",
         "pause-circle",
         False,
     ),
@@ -489,7 +489,7 @@ _JOB_ROWS = [
         {"status": JobStatus.failed, "failure_kind": "throttled"},
         Tone.active,
         "paused (provider throttling)",
-        "badge-info",
+        "stamp-active",
         "pause-circle",
         False,
     ),
@@ -497,7 +497,7 @@ _JOB_ROWS = [
         {"status": JobStatus.failed, "failure_kind": "transient"},
         Tone.active,
         "paused (temporary error)",
-        "badge-info",
+        "stamp-active",
         "pause-circle",
         False,
     ),
@@ -505,7 +505,7 @@ _JOB_ROWS = [
         {"status": JobStatus.failed, "failure_kind": "interrupted"},
         Tone.active,
         "interrupted",
-        "badge-info",
+        "stamp-active",
         "pause-circle",
         False,
     ),
@@ -513,16 +513,16 @@ _JOB_ROWS = [
         {"status": JobStatus.failed, "failure_kind": "error"},
         Tone.error,
         "failed",
-        "badge-error",
+        "stamp-error",
         "x-circle",
         False,
     ),
-    ({"status": JobStatus.failed}, Tone.error, "failed", "badge-error", "x-circle", False),
+    ({"status": JobStatus.failed}, Tone.error, "failed", "stamp-error", "x-circle", False),
     (
         {"status": JobStatus.failed, "failure_kind": "brand-new-kind"},
         Tone.error,
         "failed",
-        "badge-error",
+        "stamp-error",
         "x-circle",
         False,
     ),
@@ -738,7 +738,7 @@ def test_job_outcome_blocked_is_skipped_and_token_failure_is_amber():
     o = resolve_job_outcome(
         SyncJob(account_id="a", status=JobStatus.failed, log=TOKEN_REFRESH_FAILED)
     )
-    assert o.tone == Tone.attention and o.badge == "badge-warning"
+    assert o.tone == Tone.attention and o.badge == "stamp-attention"
 
 
 # --- review round 1 ----------------------------------------------------------
@@ -861,4 +861,4 @@ def test_runtime_cap_kill_resolves_red_not_stopped(db_session, default_store):
     s = _resolve(a, last_job=job)
     assert s.state == MailboxState.error and s.tone == Tone.error
     o = resolve_job_outcome(job)
-    assert (o.label, o.badge) == ("failed", "badge-error")
+    assert (o.label, o.badge) == ("failed", "stamp-error")

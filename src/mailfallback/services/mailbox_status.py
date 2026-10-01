@@ -76,13 +76,15 @@ class NextAction(StrEnum):
 # follow-up.
 STALE_AFTER = timedelta(days=7)
 
-# The one tone → stats-dot class map; passed to templates as `dot_class`.
+# The one tone → tone-mark class map; passed to templates as `dot_class`.
+# Presentation only: each tone draws a different SHAPE (style.css "Tone
+# marks"), so a mark never reads from colour alone.
 TONE_DOT = {
-    Tone.ok.value: "stats-dot-ok",
-    Tone.active.value: "stats-dot-syncing",
-    Tone.attention.value: "stats-dot-warning",
-    Tone.error.value: "stats-dot-error",
-    Tone.muted.value: "",
+    Tone.ok.value: "mark-ok",
+    Tone.active.value: "mark-active",
+    Tone.attention.value: "mark-attention",
+    Tone.error.value: "mark-error",
+    Tone.muted.value: "mark-muted",
 }
 
 # Honest copy per pause reason — chip tooltips + panel headlines.
@@ -123,7 +125,7 @@ class MailboxStatus:
     # Independent of precedence: False iff not is_authenticated, or needs_reauth,
     # or (error AND oauth2 AND last_error == TOKEN_REFRESH_FAILED).
     signed_in: bool
-    badge: str  # CSS badge class
+    badge: str  # CSS stamp class (stamp-<tone>): presentation only
     icon: str  # Lucide icon name
     spin: bool  # icon gets the `spin` class
     last_success_at: datetime | None  # account.last_sync_at, tz-aware
@@ -353,17 +355,15 @@ def resolve_mailbox_status(
 
     # 1-3: identity / permission problems.
     if account.migrating or owner_migrating:
-        return make(MailboxState.migrating, Tone.active, "Migrating", "badge-syncing", "loader")
+        return make(MailboxState.migrating, Tone.active, "Migrating", "stamp-active", "loader")
     if account.suspended:
-        return make(
-            MailboxState.suspended, Tone.muted, "Suspended", "badge-disabled", "pause-circle"
-        )
+        return make(MailboxState.suspended, Tone.muted, "Suspended", "stamp-muted", "pause-circle")
     if not signed_in:
         return make(
             MailboxState.sign_in_needed,
             Tone.attention,
             "Sign-in needed",
-            "badge-warning",
+            "stamp-attention",
             "key-round",
             action=NextAction.reconnect,
             detail=_sign_in_detail(account),
@@ -377,12 +377,12 @@ def resolve_mailbox_status(
                 MailboxState.first_sync,
                 Tone.active,
                 "Initial sync",
-                "badge-info",
+                "stamp-active",
                 "loader",
                 spin=True,
                 detail=_INITIAL_DETAIL,
             )
-        return make(MailboxState.syncing, Tone.active, "Syncing", "badge-syncing", "loader")
+        return make(MailboxState.syncing, Tone.active, "Syncing", "stamp-active", "loader")
 
     # 6-7: how the last run ended.
     if is_error and stopped_job and not long_unsynced:
@@ -395,7 +395,7 @@ def resolve_mailbox_status(
             MailboxState.stopped,
             Tone.muted,
             "Stopped",
-            "badge-disabled",
+            "stamp-muted",
             "circle-slash",
             detail=detail,
         )
@@ -410,7 +410,7 @@ def resolve_mailbox_status(
             MailboxState.error,
             Tone.error,
             "Sync failed",
-            "badge-error",
+            "stamp-error",
             "alert-circle",
             action=action,
             detail=_error_detail(account),
@@ -433,7 +433,7 @@ def resolve_mailbox_status(
                 MailboxState.initial_stalled,
                 Tone.attention,
                 label,
-                "badge-warning",
+                "stamp-attention",
                 "alert-triangle",
                 action=action,
                 detail=detail,
@@ -443,7 +443,7 @@ def resolve_mailbox_status(
             MailboxState.stale,
             Tone.attention,
             "Out of date",
-            "badge-warning",
+            "stamp-attention",
             "clock",
             action=action,
             detail=f"Last sync was {(now - last_success).days} days ago.",
@@ -456,7 +456,7 @@ def resolve_mailbox_status(
             MailboxState.paused,
             Tone.active,
             "Paused",
-            "badge-info",
+            "stamp-active",
             "pause-circle",
             detail=PAUSE_TOOLTIPS.get(pause_reason, _GENERIC_PAUSE_DETAIL),
         )
@@ -468,7 +468,7 @@ def resolve_mailbox_status(
                 MailboxState.initial_sync,
                 Tone.active,
                 "Initial sync",
-                "badge-info",
+                "stamp-active",
                 "download",
                 detail=_INITIAL_DETAIL,
             )
@@ -476,10 +476,10 @@ def resolve_mailbox_status(
             MailboxState.waiting,
             Tone.muted,
             "Waiting for first sync",
-            "badge-disabled",
+            "stamp-muted",
             "clock",
         )
-    return make(MailboxState.current, Tone.ok, "Up to date", "badge-idle", "check-circle")
+    return make(MailboxState.current, Tone.ok, "Up to date", "stamp-ok", "check-circle")
 
 
 _PAUSE_KINDS = {
@@ -494,24 +494,26 @@ def resolve_job_outcome(job: SyncJob) -> JobOutcome:
     """How one sync run ended, for Recent Activity and Sync History. Pure."""
     status = job.status
     if _is(status, JobStatus.completed):
-        return JobOutcome(Tone.ok, "synced", "badge-idle", "check-circle", False)
+        return JobOutcome(Tone.ok, "synced", "stamp-ok", "check-circle", False)
     if _is(status, JobStatus.running):
-        return JobOutcome(Tone.active, "syncing", "badge-syncing", "loader", True)
+        return JobOutcome(Tone.active, "syncing", "stamp-active", "loader", True)
     if not _is(status, JobStatus.failed):
         # pending, and cancelled (no sync code path sets it; kept for totality)
-        return JobOutcome(Tone.muted, "queued", "badge-disabled", "clock", False)
+        return JobOutcome(Tone.muted, "queued", "stamp-muted", "clock", False)
 
     kind = job.failure_kind
     if kind is None:
         if job.signal:
-            return JobOutcome(Tone.muted, "stopped", "badge-disabled", "circle-slash", False)
+            return JobOutcome(Tone.muted, "stopped", "stamp-muted", "circle-slash", False)
         if job.log in _BLOCKED_LOGS:
-            return JobOutcome(Tone.muted, "skipped", "badge-disabled", "circle-slash", False)
+            return JobOutcome(Tone.muted, "skipped", "stamp-muted", "circle-slash", False)
         if job.log == TOKEN_REFRESH_FAILED:
-            return JobOutcome(Tone.attention, "sign-in failed", "badge-warning", "key-round", False)
+            return JobOutcome(
+                Tone.attention, "sign-in failed", "stamp-attention", "key-round", False
+            )
     elif kind in _PAUSE_KINDS:
-        return JobOutcome(Tone.active, _PAUSE_KINDS[kind], "badge-info", "pause-circle", False)
-    return JobOutcome(Tone.error, "failed", "badge-error", "x-circle", False)
+        return JobOutcome(Tone.active, _PAUSE_KINDS[kind], "stamp-active", "pause-circle", False)
+    return JobOutcome(Tone.error, "failed", "stamp-error", "x-circle", False)
 
 
 def latest_finished_jobs_by_account(db: Session, account_ids: list[str]) -> dict[str, SyncJob]:
