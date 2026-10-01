@@ -1,3 +1,65 @@
+## [2026.10.0] - 2026-10-01
+
+### Dependencies
+
+- Update docker/login-action digest to dbcb813 *(deps)*
+- Update docker/setup-buildx-action digest to f87e599 *(deps)*
+- Update softprops/action-gh-release digest to efb3536 *(deps)*
+- Update orhun/git-cliff-action digest to a9a9552 *(deps)*
+- Update roundcube/roundcubemail docker tag to v1.7.4 *(deps)*
+- Update helm release common to v5.2.1 *(deps)*
+- Update astral-sh/setup-uv action to v10 *(deps)*
+- Update dovecot/dovecot docker tag to v2.4.5 *(deps)*
+- Bump vendored Alpine to 3.17.4 and Lucide to 1.49.0 *(deps)*
+- Update actions/deploy-pages digest to 368f825 *(deps)*
+- Update docker/build-push-action digest to c3c9e26 *(deps)*
+
+### Documentation
+
+- Record the airmail design system and its direction contract *(design)*
+
+### Features
+
+- Redesign the web UI as airmail stationery *(ui)*
+
+### Other
+
+- Merge pull request #265 from thekoma/feat/redesign-airmail
+
+feat(ui): redesign the web UI as airmail stationery
+- Merge pull request #223 from thekoma/renovate/docker-login-action-digest
+
+chore(deps): update docker/login-action digest to dbcb813
+- Merge pull request #232 from thekoma/renovate/docker-setup-buildx-action-digest
+
+chore(deps): update docker/setup-buildx-action digest to f87e599
+- Merge pull request #242 from thekoma/renovate/softprops-action-gh-release-digest
+
+chore(deps): update softprops/action-gh-release digest to efb3536
+- Merge pull request #243 from thekoma/renovate/orhun-git-cliff-action-digest
+
+chore(deps): update orhun/git-cliff-action digest to a9a9552
+- Merge pull request #229 from thekoma/renovate/roundcube-roundcubemail-1.x
+
+chore(deps): update roundcube/roundcubemail docker tag to v1.7.4
+- Merge pull request #231 from thekoma/renovate/common-5.x
+
+chore(deps): update helm release common to v5.2.1
+- Merge pull request #230 from thekoma/renovate/astral-sh-setup-uv-10.x
+
+chore(deps): update astral-sh/setup-uv action to v10
+- Merge pull request #241 from thekoma/renovate/dovecot-dovecot-2.x
+
+chore(deps): update dovecot/dovecot docker tag to v2.4.5
+- Merge pull request #269 from thekoma/chore/vendor-bumps-and-docs
+
+chore(deps): bump vendored Alpine to 3.17.4 and Lucide to 1.49.0
+- Merge pull request #267 from thekoma/renovate/actions-deploy-pages-digest
+
+chore(deps): update actions/deploy-pages digest to 368f825
+- Merge pull request #268 from thekoma/renovate/docker-build-push-action-digest
+
+chore(deps): update docker/build-push-action digest to c3c9e26
 ## [2026.09.3] - 2026-09-30
 
 ### Fixes
