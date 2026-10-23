@@ -1,3 +1,65 @@
+## [2026.10.1] - 2026-10-23
+
+### Dependencies
+
+- Update actions/setup-python digest to 6d4fd22 *(deps)*
+- Update apache/tika docker tag to v3.3.3.0 *(deps)*
+- Update helm release common to v5.3.0 *(deps)*
+- Update astral-sh/setup-uv action to v10.3.2 *(deps)*
+- Update roundcube/roundcubemail docker tag to v1.7.5 *(deps)*
+- Update dependency htmx.org to v2.0.11 *(deps)*
+- Update dependency alpinejs to v3.17.5 *(deps)*
+- Update dependency lucide to v1.61.0 *(deps)*
+- Ship and test on Python 3.15 (#274) *(deps)*
+
+### Maintenance
+
+- Pin Python 3.14; uv picked 3.15 and watchfiles fails to build *(lint)*
+- Sync htmx.min.js to 2.0.11 *(vendor)*
+- Sync alpine.min.js to 3.17.5 *(vendor)*
+- Sync lucide.min.js to 1.61.0 *(vendor)*
+- Enable lock file maintenance (#274) *(renovate)*
+
+### Other
+
+- Merge pull request #279 from thekoma/ci/pin-lint-python
+
+ci(lint): pin Python 3.14
+- Merge branch 'main' into renovate/actions-setup-python-digest
+- Merge pull request #278 from thekoma/renovate/actions-setup-python-digest
+
+chore(deps): update actions/setup-python digest to 6d4fd22
+- Merge branch 'main' into renovate/tika-monorepo
+- Merge pull request #277 from thekoma/renovate/tika-monorepo
+
+chore(deps): update apache/tika docker tag to v3.3.3.0
+- Merge branch 'main' into renovate/common-5.x
+- Merge pull request #273 from thekoma/renovate/common-5.x
+
+chore(deps): update helm release common to v5.3.0
+- Merge branch 'main' into renovate/astral-sh-setup-uv-10.x
+- Merge pull request #272 from thekoma/renovate/astral-sh-setup-uv-10.x
+
+chore(deps): update astral-sh/setup-uv action to v10.3.2
+- Merge branch 'main' into renovate/roundcube-roundcubemail-1.x
+- Merge pull request #275 from thekoma/renovate/roundcube-roundcubemail-1.x
+
+chore(deps): update roundcube/roundcubemail docker tag to v1.7.5
+- Merge branch 'main' into renovate/htmx.org-2.x
+- Merge pull request #270 from thekoma/renovate/htmx.org-2.x
+
+chore(deps): update dependency htmx.org to v2.0.11
+- Merge branch 'main' into renovate/alpinejs-3.x
+- Merge pull request #276 from thekoma/renovate/alpinejs-3.x
+
+chore(deps): update dependency alpinejs to v3.17.5
+- Merge branch 'main' into renovate/lucide-monorepo
+- Merge pull request #271 from thekoma/renovate/lucide-monorepo
+
+chore(deps): update dependency lucide to v1.61.0
+- Merge pull request #281 from thekoma/chore/python-3.15
+
+chore(deps): ship and test on Python 3.15
 ## [2026.10.0] - 2026-10-01
 
 ### Dependencies
