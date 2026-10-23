@@ -93,7 +93,7 @@ Each pass uses `subagent_type: "general-purpose"` and gets ONLY the design doc (
 
 ```
 <<<COMPREHENSION_START>>>
-You are a fresh reader with no prior context. Below is a design doc for a feature in the MailFallBack (MFB) — a self-hosted email backup service: Python 3.14 FastAPI + PostgreSQL wrapping mbsync/isync to back IMAP mailboxes up to Maildir, served read-only via Dovecot and Roundcube repo. Do NOT critique it yet. Your job is to verify the doc reads clearly to someone who walks in cold.
+You are a fresh reader with no prior context. Below is a design doc for a feature in the MailFallBack (MFB) — a self-hosted email backup service: Python 3.15 FastAPI + PostgreSQL wrapping mbsync/isync to back IMAP mailboxes up to Maildir, served read-only via Dovecot and Roundcube repo. Do NOT critique it yet. Your job is to verify the doc reads clearly to someone who walks in cold.
 
 Output two short sections in this order:
 
@@ -121,7 +121,7 @@ DESIGN DOC:
 
 ```
 <<<DESIGN_START>>>
-You are a fresh reviewer with no prior context. Below is a design doc for a feature in the MailFallBack (MFB) — a self-hosted email backup service: Python 3.14 FastAPI + PostgreSQL wrapping mbsync/isync to back IMAP mailboxes up to Maildir, served read-only via Dovecot and Roundcube repo (CLAUDE.md at the repo root has the architecture including the versioned agent API and MCP server, the Principal/scope model, account ownership and group visibility, the sync worker/scheduler with its budget and failure classification, the Dovecot ACL/namespace contract, and the UUID Maildir layout).
+You are a fresh reviewer with no prior context. Below is a design doc for a feature in the MailFallBack (MFB) — a self-hosted email backup service: Python 3.15 FastAPI + PostgreSQL wrapping mbsync/isync to back IMAP mailboxes up to Maildir, served read-only via Dovecot and Roundcube repo (CLAUDE.md at the repo root has the architecture including the versioned agent API and MCP server, the Principal/scope model, account ownership and group visibility, the sync worker/scheduler with its budget and failure classification, the Dovecot ACL/namespace contract, and the UUID Maildir layout).
 
 Your job: read the design doc, then read the surfaces it claims to touch, and find holes BEFORE implementation starts. Specifically:
 
@@ -156,7 +156,7 @@ Output: numbered list of gaps, with file:line citations where applicable. End wi
 
 ```
 <<<READINESS_START>>>
-You are a fresh implementer with no prior context. Below is a design doc for a feature in the MailFallBack (MFB) — a self-hosted email backup service: Python 3.14 FastAPI + PostgreSQL wrapping mbsync/isync to back IMAP mailboxes up to Maildir, served read-only via Dovecot and Roundcube repo. Imagine you've been told: "Implement this. First pass. No follow-up questions allowed." Could you?
+You are a fresh implementer with no prior context. Below is a design doc for a feature in the MailFallBack (MFB) — a self-hosted email backup service: Python 3.15 FastAPI + PostgreSQL wrapping mbsync/isync to back IMAP mailboxes up to Maildir, served read-only via Dovecot and Roundcube repo. Imagine you've been told: "Implement this. First pass. No follow-up questions allowed." Could you?
 
 For every interface, file path, function signature, API request/response shape, DB column, queue argument, component prop, message type, and verification criterion the doc claims, ask:
 - Could I write the corresponding code without asking the author anything?
