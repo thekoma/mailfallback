@@ -1,7 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    ":automergePatch",
+    ":automergeMinor",
+    ":automergePr",
+    ":automergeRequireAllStatusChecks"
   ],
   "ignorePaths": [
     "**/node_modules/**",
@@ -12,8 +16,21 @@
     "**/__fixtures__/**"
   ],
   "lockFileMaintenance": {
-    "enabled": true
+    "enabled": true,
+    "automerge": true
   },
+  "vulnerabilityAlerts": {
+    "automerge": true,
+    "labels": ["security"]
+  },
+  "packageRules": [
+    {
+      "description": "The Python interpreter moves .python-version, docker/Dockerfile and the CI matrix together, and a new minor needs cp3XX wheels for every pin in uv.lock (see #281: eight transitive packages had none). Minor bumps of python therefore wait for a human even though :automergeMinor would take them; patch releases still automerge. Listed after the presets on purpose: the last matching rule wins. Both names are needed: matchPackageNames compares packageName, which is `python` for the docker image but `actions/python-versions` for the setup-python `python-version` input; the short name alone left the CI side automerging (verified with renovate's rule engine).",
+      "matchPackageNames": ["python", "actions/python-versions"],
+      "matchUpdateTypes": ["minor", "major"],
+      "automerge": false
+    }
+  ],
   "customManagers": [
     {
       "customType": "regex",
