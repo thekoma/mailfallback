@@ -23,10 +23,9 @@ jobs:
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: false
-          # Unpinned, uv picks the newest interpreter allowed by requires-python
-          # (>=3.14), i.e. 3.15, and watchfiles' PyO3 build fails on it.
-          python-version: "3.14"
 
+      # uv takes the interpreter from .python-version, the same version
+      # docker/Dockerfile ships; Renovate bumps both in one PR.
       - name: Install dependencies
         run: uv sync --frozen --extra dev
 
@@ -61,12 +60,6 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # Only the version we actually ship: docker/Dockerfile is
-        # python:3.14-slim. Testing 3.12/3.13 exercised versions that never
-        # reach a user while leaving the released one untested.
-        python-version: ["3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -74,8 +67,12 @@ jobs:
         with:
           enable-cache: false
 
+      # Only the version we actually ship: .python-version, which matches
+      # docker/Dockerfile's base image. Testing older versions exercised
+      # interpreters that never reach a user while leaving the released one
+      # untested.
       - name: Install dependencies
-        run: uv sync --frozen --extra dev --python ${{ matrix.python-version }}
+        run: uv sync --frozen --extra dev
 
       - name: Test
         run: uv run pytest tests/ -n auto -v --tb=short

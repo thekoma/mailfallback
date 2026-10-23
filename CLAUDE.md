@@ -35,7 +35,7 @@ Each command stops short of committing. Authorize the commit explicitly when rea
 
 ## Tech Stack
 
-- **Backend**: Python 3.14+ (the version the container ships and the only one CI tests), FastAPI, SQLAlchemy, Alembic, APScheduler
+- **Backend**: Python 3.15+ (the version the container ships and the only one CI tests; `.python-version` and `docker/Dockerfile` must agree, and Renovate bumps both in one PR), FastAPI, SQLAlchemy, Alembic, APScheduler
 - **Frontend**: Jinja2 templates, HTMX, Pico CSS, Lucide icons
 - **Database**: PostgreSQL (only supported backend)
 - **Sync**: mbsync/isync (subprocess)
@@ -147,7 +147,7 @@ docker compose exec mailfallback uv run alembic upgrade head
 
 ## Key Patterns
 
-- **TemplateResponse**: Use `request=request, name="template.html", context={...}` (Python 3.14 Starlette API)
+- **TemplateResponse**: Use `request=request, name="template.html", context={...}` (Python 3.15 Starlette API)
 - **Auth check in UI routes**: Use `_get_session_user(request, db)` helper — checks session, queries User, verifies `user.enabled`, returns `User | None`
 - **Admin check**: `user.role.value != "admin"` -> redirect to `/`; in service layer compare against `UserRole.admin` enum directly
 - **Field allowlists**: Update functions use `_UPDATABLE_*_FIELDS` sets to restrict which columns can be changed (see `account_service.py`, `user_service.py`, `store_service.py`)

@@ -62,7 +62,7 @@ The goldfish gets ONLY the symptom + repro from Step 1. It does NOT get your hyp
 
 ```
 <<<DIAG_START>>>
-Independent diagnosis of a bug in this repo (MailFallBack / MFB, a self-hosted email backup service: a Python 3.14 FastAPI + PostgreSQL app that wraps mbsync/isync to back IMAP mailboxes up to Maildir and serves them read-only through Dovecot and Roundcube; CLAUDE.md at the repo root has the full architecture).
+Independent diagnosis of a bug in this repo (MailFallBack / MFB, a self-hosted email backup service: a Python 3.15 FastAPI + PostgreSQL app that wraps mbsync/isync to back IMAP mailboxes up to Maildir and serves them read-only through Dovecot and Roundcube; CLAUDE.md at the repo root has the full architecture).
 
 Symptom: <FILL IN from Step 1>
 Repro: <FILL IN from Step 1>
