@@ -11,6 +11,9 @@
     "**/tests/**",
     "**/__fixtures__/**"
   ],
+  "lockFileMaintenance": {
+    "enabled": true
+  },
   "customManagers": [
     {
       "customType": "regex",
