@@ -1,3 +1,8 @@
+## [2026.11.0] - 2026-11-12
+
+### Features
+
+- Expose backup state and optional monitoring alerts (#309) *(metrics)*
 ## [2026.10.1] - 2026-10-23
 
 ### Dependencies
