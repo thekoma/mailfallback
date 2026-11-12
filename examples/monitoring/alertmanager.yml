@@ -1,0 +1,13 @@
+# Merge this route into your existing Alertmanager configuration.
+# Replace the webhook URL before enabling; this example is not auto-installed.
+route:
+  receiver: mailfallback-webhook
+  group_by: [alertname, mfb_deployment, policy_id, repository_id]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+receivers:
+  - name: mailfallback-webhook
+    webhook_configs:
+      - url: https://alerts.example.com/mailfallback
+        send_resolved: true

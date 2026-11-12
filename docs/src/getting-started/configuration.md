@@ -102,7 +102,7 @@ See the [OAuth Providers guide](../admin-guide/oauth-providers.md) for setup ins
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MAILFALLBACK_METRICS_API_KEY` | _(empty)_ | API key for the `/metrics` endpoint. When set, Prometheus must send this key in the `Authorization: Bearer <key>` header. When empty, the metrics endpoint is unprotected. |
+| `MAILFALLBACK_METRICS_API_KEY` | _(empty)_ | API key for the `/metrics` endpoint. When set, Prometheus must send this key in the `Authorization: Bearer <key>` header. When empty, the metrics endpoint denies access (401). |
 
 ## Example .env File
 

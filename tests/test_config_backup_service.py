@@ -244,6 +244,25 @@ class TestImport:
 
 class TestRunConfigBackup:
     @patch("mailfallback.services.config_backup_service.restic_service")
+    def test_success_timestamp_survives_failure_and_export(
+        self, mock_restic, db_session, populated
+    ):
+        repo = populated["repo"]
+        repo.config_backup_passphrase = _enc("a-strong-passphrase")
+        db_session.commit()
+        mock_restic.init_repo.return_value = True
+        assert cbs.run_config_backup(db_session, repo)["ok"]
+        db_session.refresh(repo)
+        success = repo.last_config_backup_success_at
+        assert success == repo.last_config_backup_at
+        mock_restic.run_backup.side_effect = RuntimeError("storage unavailable")
+        assert not cbs.run_config_backup(db_session, repo)["ok"]
+        db_session.expire_all()
+        assert repo.last_config_backup_success_at == success
+        exported = cbs.build_export(db_session)["tables"]["backup_destinations"][0]
+        assert exported["last_config_backup_success_at"] == success.isoformat()
+
+    @patch("mailfallback.services.config_backup_service.restic_service")
     def test_success_updates_status(self, mock_restic, db_session, populated):
         repo = populated["repo"]
         repo.config_backup_enabled = True

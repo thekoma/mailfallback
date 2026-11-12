@@ -417,6 +417,7 @@ class Repository(Base):
     config_backup_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     config_backup_passphrase = Column(String, nullable=True)  # Fernet-encrypted at rest
     last_config_backup_at = Column(DateTime(timezone=True), nullable=True)
+    last_config_backup_success_at = Column(DateTime(timezone=True), nullable=True)
     last_config_backup_status = Column(String, nullable=True)  # "ok" | "failed"
     last_config_backup_error = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)

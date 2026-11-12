@@ -1,0 +1,68 @@
+{{- if .Values.metrics.prometheusRule.enabled }}
+{{- $scope := printf "mfb_deployment=%q" (printf "%s/%s" .Release.Namespace .Release.Name) }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-backups
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: {{ .Release.Name }}.backups
+      rules:
+        - alert: MailFallbackBackupStale
+          expr: >-
+            (time() - mailfallback_backup_last_success_timestamp{ {{- $scope -}} } > {{ .Values.metrics.prometheusRule.maxAgeSeconds }})
+            and on (mfb_deployment, job, instance, policy_id, account_id)
+            (mailfallback_backup_policy_enabled{ {{- $scope -}} } == 1)
+          for: {{ .Values.metrics.prometheusRule.staleFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: "Mailbox policy has no recent recorded successful backup"
+        - alert: MailFallbackBackupNotStarting
+          expr: >-
+            (time() - mailfallback_backup_last_run_timestamp{ {{- $scope -}} } > {{ .Values.metrics.prometheusRule.maxAgeSeconds }})
+            and on (mfb_deployment, job, instance, policy_id, account_id)
+            (mailfallback_backup_policy_enabled{ {{- $scope -}} } == 1)
+          for: {{ .Values.metrics.prometheusRule.noRunFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: "Mailbox policy has no recent recorded run start"
+        - alert: MailFallbackBackupFailed
+          expr: >-
+            (mailfallback_backup_last_status{ {{- $scope -}},status="failed"} == 1)
+            and on (mfb_deployment, job, instance, policy_id, account_id)
+            (mailfallback_backup_policy_enabled{ {{- $scope -}} } == 1)
+          for: {{ .Values.metrics.prometheusRule.failedFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: "Mailbox backup last run failed"
+        - alert: MailFallbackConfigBackupStale
+          expr: >-
+            (time() - mailfallback_config_backup_last_success_timestamp{ {{- $scope -}} } > {{ .Values.metrics.prometheusRule.maxAgeSeconds }})
+            and on (mfb_deployment, job, instance, repository_id)
+            (mailfallback_config_backup_enabled{ {{- $scope -}} } == 1)
+          for: {{ .Values.metrics.prometheusRule.configStaleFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: "Configuration backup has no recent recorded success"
+        - alert: MailFallbackConfigBackupFailed
+          expr: >-
+            (mailfallback_config_backup_last_status{ {{- $scope -}},status="failed"} == 1)
+            and on (mfb_deployment, job, instance, repository_id)
+            (mailfallback_config_backup_enabled{ {{- $scope -}} } == 1)
+          for: {{ .Values.metrics.prometheusRule.failedFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: "Configuration backup last run failed"
+        - alert: MailFallbackScrapeUnavailable
+          expr: up{ {{- $scope -}} } == 0
+          for: {{ .Values.metrics.prometheusRule.scrapeFor }}
+          labels: {severity: warning}
+          annotations:
+            summary: "MailFallBack metrics scrape unavailable"
+{{- end }}

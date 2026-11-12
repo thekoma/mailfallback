@@ -82,13 +82,17 @@ Export the current MFB configuration (accounts, users, groups, stores) as a JSON
 
 MFB exposes metrics at `/metrics` for Prometheus scraping:
 
-- `mailfallback_accounts_total` - total account count
-- `mailfallback_accounts_error` - accounts in error state
-- `mailfallback_sync_jobs_total` - sync job counts by status
-- `mailfallback_messages_total` - total backed-up messages
-- `mailfallback_storage_bytes` - total maildir storage used
+- `mailfallback_accounts_total` — total account count
+- `mailfallback_jobs_pending` — pending sync jobs
+- `mailfallback_sync_total{account,status}` — gauge of retained sync history, **not** a cumulative counter; do not use `rate()` or `increase()` on it
+- `mailfallback_sync_last_success_timestamp{account}` — last recorded sync success
+- `mailfallback_sync_duration_seconds{account}` — latest completed sync duration
+- `mailfallback_maildir_size_bytes{account}` — mailbox disk usage
+- `mailfallback_info{version}` — build version
 
-Protect the endpoint with `MAILFALLBACK_METRICS_API_KEY`. Prometheus sends the key as a Bearer token in the Authorization header:
+Sync labels use account display names, which need not be unique. The backup metrics below use UUIDs instead.
+
+Set `MAILFALLBACK_METRICS_API_KEY` to enable access. Without a configured key, the endpoint returns 401. Prometheus sends the key as a Bearer token in the Authorization header:
 
 ```yaml
 # prometheus.yml
@@ -98,3 +102,73 @@ scrape_configs:
     static_configs:
       - targets: ['mailfallback:8000']
 ```
+
+### Backup gauges
+
+Mailbox-policy gauges use `policy_id` and `account_id` labels:
+
+| Metric | Meaning |
+| --- | --- |
+| `mailfallback_backup_last_success_timestamp` | Unix seconds of last recorded successful backup; `0` means no known success |
+| `mailfallback_backup_last_run_timestamp` | Unix seconds of last recorded run start; `0` means no known start |
+| `mailfallback_backup_last_status{status}` | One-hot `idle`, `running`, `completed`, `failed` status |
+| `mailfallback_backup_snapshot_count` | Cached snapshot count; refresh can fail independently of backup success |
+| `mailfallback_backup_last_duration_seconds` | Duration of latest successfully completed job; omitted if no timed completed job exists |
+| `mailfallback_backup_policy_enabled` | `1` enabled, `0` disabled |
+
+These describe **lifetime policy history**, not the contents or health of the current destination. Repointing a policy preserves history; old snapshots and success timestamps may belong to its previous repository. There is deliberately no destination label on these gauges. Use repository inspection to verify a new destination's contents.
+
+Configuration-backup gauges use `repository_id`:
+
+- `mailfallback_config_backup_last_success_timestamp` — last successful completion in Unix seconds, preserved through later failures; `0` means unknown.
+- `mailfallback_config_backup_last_status{status}` — one-hot `ok`, `failed`, `unknown`.
+- `mailfallback_config_backup_enabled` — `1` enabled, `0` disabled.
+
+Disabled entities retain their series; accounts without a policy emit no policy series. Migration 030 seeds configuration last success only when the previous recorded status is `ok`. A zero timestamp does not prove a backup never succeeded before an upgrade. Scrapes only read the database; they do not contact restic or storage. Labels exclude names, secrets, URLs and error text. Access to `/metrics` remains instance-wide and requires the dedicated metrics key, not a user's access token.
+
+For optional Helm resources, standalone configuration and receiver setup, see [Monitoring and alerts](monitoring.md).
+
+### Example alerts
+
+These examples assume daily schedules. Adjust age thresholds and `for` periods to your schedules and first-run grace. `for` tracks how long Prometheus observes the condition; it is not an application-side timer. Restrict selectors to the relevant scrape job, and include `job` and `instance` in joins to keep different MFB instances separate.
+
+```yaml
+groups:
+  - name: mailfallback-backups
+    rules:
+      - alert: MailFallbackBackupStale
+        expr: |
+          (time() - mailfallback_backup_last_success_timestamp{job="mailfallback"} > 26 * 3600)
+          and on (job, instance, policy_id, account_id)
+          (mailfallback_backup_policy_enabled{job="mailfallback"} == 1)
+        for: 1h
+      - alert: MailFallbackBackupNotStarting
+        expr: |
+          (time() - mailfallback_backup_last_run_timestamp{job="mailfallback"} > 26 * 3600)
+          and on (job, instance, policy_id, account_id)
+          (mailfallback_backup_policy_enabled{job="mailfallback"} == 1)
+        for: 26h
+      - alert: MailFallbackBackupFailed
+        expr: |
+          (mailfallback_backup_last_status{job="mailfallback",status="failed"} == 1)
+          and on (job, instance, policy_id, account_id)
+          (mailfallback_backup_policy_enabled{job="mailfallback"} == 1)
+        for: 5m
+      - alert: MailFallbackConfigBackupStale
+        expr: |
+          (time() - mailfallback_config_backup_last_success_timestamp{job="mailfallback"} > 26 * 3600)
+          and on (job, instance, repository_id)
+          (mailfallback_config_backup_enabled{job="mailfallback"} == 1)
+        for: 26h
+      - alert: MailFallbackConfigBackupFailed
+        expr: |
+          (mailfallback_config_backup_last_status{job="mailfallback",status="failed"} == 1)
+          and on (job, instance, repository_id)
+          (mailfallback_config_backup_enabled{job="mailfallback"} == 1)
+        for: 5m
+      - alert: MailFallbackScrapeUnavailable
+        expr: up{job="mailfallback"} == 0
+        for: 5m
+```
+
+A zero success timestamp also satisfies the stale expression: the `for` period supplies the initial grace. The example policy stale alert therefore warns after one hour without a known success; choose a longer grace for newly configured daily policies if needed. `BackupNotStarting` indicates no recent start, not proof of scheduler failure. A deleted scrape target needs separate monitoring of target discovery because it can disappear from `up` entirely.

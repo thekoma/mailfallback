@@ -180,6 +180,27 @@ service:
     ports:
       http: {port: 9998}
   {{- end }}
+{{- if .Values.metrics.serviceMonitor.enabled }}
+serviceMonitor:
+  backup-metrics:
+    enabled: true
+    service:
+      identifier: main
+    labels: {{ .Values.metrics.serviceMonitor.labels | toYaml | nindent 6 }}
+    endpoints:
+      - port: http
+        path: /metrics
+        interval: {{ .Values.metrics.serviceMonitor.interval }}
+        scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
+        authorization:
+          type: Bearer
+          credentials:
+            name: {{ .Values.metrics.serviceMonitor.secretName | default (include "mailfallback.appSecretName" .) | quote }}
+            key: {{ .Values.metrics.serviceMonitor.secretKey | quote }}
+        relabelings:
+          - targetLabel: mfb_deployment
+            replacement: {{ printf "%s/%s" .Release.Namespace .Release.Name | quote }}
+{{- end }}
 persistence:
   maildirs:
     {{- if .Values.storage.maildirs.existingClaim }}
