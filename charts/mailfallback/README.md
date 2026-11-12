@@ -6,6 +6,21 @@ Maildir and serves them read-only over IMAP as a fallback.
 
 Source & docs: https://github.com/thekoma/mailfallback
 
+## Optional monitoring
+
+Set `metrics.serviceMonitor.enabled: true` and `metrics.prometheusRule.enabled: true`
+to create an authenticated ServiceMonitor and six backup/scrape alert rules.
+Both default to false and require an existing Prometheus Operator installation.
+Set each resource's `labels` to match your Prometheus selectors. The metrics token
+is read from `MAILFALLBACK_METRICS_API_KEY` in the app environment Secret; no token
+is embedded in monitoring manifests. Rules are scoped to namespace/release via
+the scrape's `mfb_deployment` label. Thresholds default to daily backups.
+
+See [Monitoring and alerts](../../docs/src/admin-guide/monitoring.md) and
+[example configurations](../../examples/monitoring/) for thresholds, Secret
+references, standalone Prometheus and Alertmanager routing. This chart does not
+install a monitoring stack or modify Alertmanager receivers.
+
 ## Step-by-step deployment
 
 An end-to-end walkthrough for a fresh cluster install. Each step links to the

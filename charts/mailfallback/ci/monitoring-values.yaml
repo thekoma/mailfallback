@@ -1,0 +1,13 @@
+webmail:
+  enabled: false
+tika:
+  enabled: false
+metrics:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: monitoring
+  prometheusRule:
+    enabled: true
+    labels:
+      release: monitoring

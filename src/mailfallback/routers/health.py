@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from mailfallback.dependencies import get_db
 from mailfallback.models import Account, JobStatus, SyncJob
+from mailfallback.services.backup_metrics import render_backup_metrics
 from mailfallback.version import __version__
 
 router = APIRouter(tags=["health"])
@@ -116,4 +117,4 @@ def metrics(request: Request, db: Session = Depends(get_db)):
             duration = (latest_completed.completed_at - latest_completed.started_at).total_seconds()
             SYNC_DURATION.labels(account=account.name).set(duration)
 
-    return generate_latest(registry).decode()
+    return generate_latest(registry).decode() + render_backup_metrics(db)

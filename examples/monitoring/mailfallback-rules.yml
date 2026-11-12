@@ -1,0 +1,55 @@
+groups:
+- name: mailfallback.backups
+  rules:
+  - alert: MailFallbackBackupStale
+    expr: (time() - mailfallback_backup_last_success_timestamp{mfb_deployment="mailfallback/mailfallback"}
+      > 93600) and on (mfb_deployment, job, instance, policy_id, account_id) (mailfallback_backup_policy_enabled{mfb_deployment="mailfallback/mailfallback"}
+      == 1)
+    for: 1h
+    labels:
+      severity: warning
+    annotations:
+      summary: Mailbox policy has no recent recorded successful backup
+  - alert: MailFallbackBackupNotStarting
+    expr: (time() - mailfallback_backup_last_run_timestamp{mfb_deployment="mailfallback/mailfallback"}
+      > 93600) and on (mfb_deployment, job, instance, policy_id, account_id) (mailfallback_backup_policy_enabled{mfb_deployment="mailfallback/mailfallback"}
+      == 1)
+    for: 26h
+    labels:
+      severity: warning
+    annotations:
+      summary: Mailbox policy has no recent recorded run start
+  - alert: MailFallbackBackupFailed
+    expr: (mailfallback_backup_last_status{mfb_deployment="mailfallback/mailfallback",status="failed"}
+      == 1) and on (mfb_deployment, job, instance, policy_id, account_id) (mailfallback_backup_policy_enabled{mfb_deployment="mailfallback/mailfallback"}
+      == 1)
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: Mailbox backup last run failed
+  - alert: MailFallbackConfigBackupStale
+    expr: (time() - mailfallback_config_backup_last_success_timestamp{mfb_deployment="mailfallback/mailfallback"}
+      > 93600) and on (mfb_deployment, job, instance, repository_id) (mailfallback_config_backup_enabled{mfb_deployment="mailfallback/mailfallback"}
+      == 1)
+    for: 26h
+    labels:
+      severity: warning
+    annotations:
+      summary: Configuration backup has no recent recorded success
+  - alert: MailFallbackConfigBackupFailed
+    expr: (mailfallback_config_backup_last_status{mfb_deployment="mailfallback/mailfallback",status="failed"}
+      == 1) and on (mfb_deployment, job, instance, repository_id) (mailfallback_config_backup_enabled{mfb_deployment="mailfallback/mailfallback"}
+      == 1)
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: Configuration backup last run failed
+  - alert: MailFallbackScrapeUnavailable
+    expr: up{mfb_deployment="mailfallback/mailfallback"} == 0
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: MailFallBack metrics scrape unavailable

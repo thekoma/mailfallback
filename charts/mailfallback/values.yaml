@@ -70,6 +70,27 @@ mcp:
   # the Origin check, which a Host-validating proxy alone does not replace.
   dnsRebindingProtection: true
 
+# -- Requires an existing Prometheus Operator installation; creates no monitoring stack.
+metrics:
+  serviceMonitor:
+    enabled: false
+    labels: {}
+    interval: 60s
+    scrapeTimeout: 10s
+    # -- Empty uses the app env Secret; key must contain the same token as MFB.
+    secretName: ""
+    secretKey: MAILFALLBACK_METRICS_API_KEY  # pragma: allowlist secret — key name, not a token
+  prometheusRule:
+    enabled: false
+    labels: {}
+    # -- Daily schedule defaults; tune for your backup schedules.
+    maxAgeSeconds: 93600
+    staleFor: 1h
+    noRunFor: 26h
+    configStaleFor: 26h
+    failedFor: 5m
+    scrapeFor: 5m
+
 initImage:
   repository: docker.io/library/busybox
   # renovate: datasource=docker depName=docker.io/library/busybox

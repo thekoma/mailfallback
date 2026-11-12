@@ -4,6 +4,7 @@
 
 import subprocess
 import sys
+from pathlib import Path
 
 import yaml
 
@@ -176,6 +177,51 @@ check(
     envfrom_names(inline_deps["mailfallback-webmail"]) == {"mailfallback-roundcube-env"},
     "inline: webmail envFrom wrong",
 )
+
+# Monitoring is opt-in; selectors and credential references must match the app.
+check(
+    not by(docs_min, "ServiceMonitor") and not by(docs_min, "PrometheusRule"),
+    "monitoring rendered by default",
+)
+monitoring = render("monitoring-values.yaml")
+monitors = list(by(monitoring, "ServiceMonitor").values())
+rules = list(by(monitoring, "PrometheusRule").values())
+check(
+    len(monitors) == 1 and len(rules) == 1, "monitoring: expected ServiceMonitor and PrometheusRule"
+)
+if monitors and rules:
+    monitor = monitors[0]
+    svc = by(monitoring, "Service")["mailfallback"]
+    check(
+        all(
+            svc["metadata"]["labels"].get(k) == v
+            for k, v in monitor["spec"]["selector"]["matchLabels"].items()
+        ),
+        "monitor selector misses app Service",
+    )
+    endpoint = monitor["spec"]["endpoints"][0]
+    check(endpoint["port"] == "http" and endpoint["path"] == "/metrics", "monitor endpoint wrong")
+    check(
+        endpoint["authorization"]["credentials"]
+        == {"name": "mailfallback-env", "key": "MAILFALLBACK_METRICS_API_KEY"},
+        "monitor credentials must reference app secret",
+    )
+    check(
+        monitor["metadata"]["labels"].get("release") == "monitoring",
+        "monitor selection labels missing",
+    )
+    example_rules = yaml.safe_load(Path("examples/monitoring/mailfallback-rules.yml").read_text())
+    check(rules[0]["spec"] == example_rules, "standalone alert rules drifted from Helm defaults")
+    alerts = rules[0]["spec"]["groups"][0]["rules"]
+    check(len(alerts) == 6, "expected six backup and scrape alerts")
+    check(
+        all('mfb_deployment="mailfallback/mailfallback"' in r["expr"] for r in alerts),
+        "alerts must be scoped to deployment",
+    )
+    check(
+        rules[0]["metadata"]["labels"].get("release") == "monitoring",
+        "rule selection labels missing",
+    )
 
 if failures:
     print("FAILED:\n" + "\n".join(f" - {f}" for f in failures))

@@ -130,10 +130,15 @@ jobs:
         run: |
           pip install pyyaml
           python3 scripts/assert_chart_render.py
+      - name: Validate monitoring rules and routing
+        run: |
+          docker run --rm --entrypoint /bin/promtool -v "$PWD/examples/monitoring:/work:ro" -w /work prom/prometheus@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06 check rules mailfallback-rules.yml
+          docker run --rm --entrypoint /bin/promtool -v "$PWD/examples/monitoring:/work:ro" -w /work prom/prometheus@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06 test rules rules.test.yml
+          docker run --rm --entrypoint /bin/amtool -v "$PWD/examples/monitoring:/work:ro" prom/alertmanager@sha256:e638797febd034838eca8b98cdbd46f951e9bf7f178777aa8669167406a9946c check-config /work/alertmanager.yml
       - name: Kubeconform
         run: |
           curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
-          for f in minimal full existing-claims inline-secrets; do
+          for f in minimal full existing-claims inline-secrets monitoring; do
             helm template mailfallback charts/mailfallback -n mailfallback -f charts/mailfallback/ci/${f}-values.yaml \
               | ./kubeconform -strict -ignore-missing-schemas -summary
           done

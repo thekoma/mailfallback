@@ -1,0 +1,53 @@
+rule_files:
+  - mailfallback-rules.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'mailfallback_backup_last_status{mfb_deployment="mailfallback/mailfallback",job="mfb",instance="a",policy_id="p1",account_id="a1",status="failed"}'
+        values: '1+0x10'
+      - series: 'mailfallback_backup_policy_enabled{mfb_deployment="mailfallback/mailfallback",job="mfb",instance="a",policy_id="p1",account_id="a1"}'
+        values: '1+0x10'
+      # Same policy ID elsewhere must not enable this disabled deployment instance.
+      - series: 'mailfallback_backup_last_status{mfb_deployment="mailfallback/mailfallback",job="mfb",instance="b",policy_id="p1",account_id="a1",status="failed"}'
+        values: '1+0x10'
+      - series: 'mailfallback_backup_policy_enabled{mfb_deployment="mailfallback/mailfallback",job="mfb",instance="b",policy_id="p1",account_id="a1"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: MailFallbackBackupFailed
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: MailFallbackBackupFailed
+        exp_alerts:
+          - exp_labels:
+              mfb_deployment: mailfallback/mailfallback
+              job: mfb
+              instance: a
+              policy_id: p1
+              account_id: a1
+              status: failed
+              severity: warning
+            exp_annotations:
+              summary: Mailbox backup last run failed
+  - interval: 1m
+    input_series:
+      - series: 'mailfallback_config_backup_last_success_timestamp{mfb_deployment="mailfallback/mailfallback",job="mfb",instance="a",repository_id="r1"}'
+        values: '0+0x3300'
+      - series: 'mailfallback_config_backup_enabled{mfb_deployment="mailfallback/mailfallback",job="mfb",instance="a",repository_id="r1"}'
+        values: '1+0x3300'
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: MailFallbackConfigBackupStale
+        exp_alerts: []
+      - eval_time: 54h
+        alertname: MailFallbackConfigBackupStale
+        exp_alerts:
+          - exp_labels:
+              mfb_deployment: mailfallback/mailfallback
+              job: mfb
+              instance: a
+              repository_id: r1
+              severity: warning
+            exp_annotations:
+              summary: Configuration backup has no recent recorded success

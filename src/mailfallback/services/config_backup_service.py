@@ -251,7 +251,7 @@ def _utcnow() -> datetime.datetime:
 def run_config_backup(db: Session, repository: Repository) -> dict:
     """Export, encrypt, and snapshot the configuration into __mfb_config__.
 
-    Sets last_config_backup_at/status ("ok"|"failed") and last_config_backup_error.
+    Sets last attempt/status/error; advances last_config_backup_success_at only on success.
     """
     from mailfallback.services.repo_inventory import CONFIG_PREFIX
 
@@ -270,6 +270,7 @@ def run_config_backup(db: Session, repository: Repository) -> dict:
             restic_service.run_backup(repository, CONFIG_PREFIX, file_path, tags=["mfb:config"])
             restic_service.apply_retention(repository, CONFIG_PREFIX, "custom", keep_daily=30)
         repository.last_config_backup_at = _utcnow()
+        repository.last_config_backup_success_at = repository.last_config_backup_at
         repository.last_config_backup_status = "ok"
         repository.last_config_backup_error = None
         db.commit()
